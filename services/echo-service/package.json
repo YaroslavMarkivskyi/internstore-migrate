@@ -1,5 +1,5 @@
 {
-  "name": "@internstore/auth-backend",
+  "name": "@internstore/echo-service",
   "version": "0.1.0",
   "private": true,
   "type": "module",

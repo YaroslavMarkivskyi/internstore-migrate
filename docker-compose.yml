@@ -45,8 +45,8 @@ services:
     ports:
       - "6379:6379"
 
-  gateway:
-    build: ./services/gateway
+  auth-backend:
+    build: ./services/auth-backend
     environment:
       PORT: "3000"
       # Must match Keycloak's KC_HOSTNAME-pinned `iss` claim exactly.
@@ -56,10 +56,63 @@ services:
       KEYCLOAK_JWKS_URI: http://keycloak:8080/realms/internstore/protocol/openid-connect/certs
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       INTERNAL_TOKEN_TTL_SECONDS: "60"
+      REDIS_URL: redis://redis:6379
     ports:
+      # Exposed directly too, for testing /me and /auth/verify without
+      # going through nginx (see scripts/test-auth-flows.sh).
       - "3000:3000"
     depends_on:
       - keycloak
+      - redis
+
+  echo-service:
+    build: ./services/echo-service
+    environment:
+      PORT: "4000"
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET — this is the
+      # shared secret every internal service validates the Gateway-minted
+      # token against, without calling back to auth-backend or Keycloak.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+    # Not exposed on the host — only reachable through nginx, same as any
+    # other real domain service would be.
+
+  catalog-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: catalog
+      POSTGRES_USER: catalog
+      POSTGRES_PASSWORD: catalog
+    volumes:
+      - catalog_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  catalog:
+    build: ./services/catalog
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://catalog:catalog@catalog-db:5432/catalog
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as echo-service.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+    depends_on:
+      catalog-db:
+        condition: service_healthy
+    # Not exposed on the host — only reachable through nginx, same as
+    # echo-service.
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "8082:8080"
+      - "8443:8443"
+    depends_on:
+      - auth-backend
+      - echo-service
+      - catalog
 
 volumes:
   keycloak_db_data:
+  catalog_db_data:

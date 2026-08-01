@@ -90,8 +90,14 @@ acceptance criteria this was validated against.
   on boot (`start-dev --import-realm`), pre-seeded with one `customer` and
   one `admin` test user
 - `redis` — Gateway sessions / guest carts (unchanged from prior design)
-- `gateway` — validates external tokens via JWKS, mints internal tokens
-  ([services/gateway](../../services/gateway))
+- `auth-backend` — validates external tokens via JWKS, mints internal tokens
+  ([services/auth-backend](../../services/auth-backend))
+- `nginx` — on-prem Gateway entry point: TLS termination, `auth_request` to
+  `auth-backend`, routing to domain services
+  ([nginx](../../nginx))
+- `echo-service` — stub domain service used to verify the end-to-end
+  request path until real domain services exist
+  ([services/echo-service](../../services/echo-service))
 
 [scripts/test-auth-flows.sh](../../scripts/test-auth-flows.sh) exercises
 AUTH-02 through AUTH-05 end-to-end against the compose stack for both roles.
