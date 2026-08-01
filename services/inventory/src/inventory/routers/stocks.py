@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from inventory.auth import require_admin
+from inventory.auth import get_internal_claims, require_admin
 from inventory.db import get_session
 from inventory.models import Stock, StockItem
 from inventory.schemas import (
@@ -139,7 +139,11 @@ async def move_stock_item(
     return dest_item
 
 
-@router.post("/check-availability", response_model=CheckAvailabilityResponse)
+@router.post(
+    "/check-availability",
+    response_model=CheckAvailabilityResponse,
+    dependencies=[Depends(get_internal_claims)],
+)
 async def check_availability(
     payload: CheckAvailabilityRequest,
     session: Annotated[AsyncSession, Depends(get_session)],

@@ -13,11 +13,11 @@ class InternalClaims(BaseModel):
 
 
 # Mirrors auth-backend's createInternalTokenVerifier
-# (services/auth-backend/src/auth/internalToken.ts) and catalog's copy of the
-# same. Every domain service validates the Gateway-minted internal token
-# locally against the shared HMAC secret — no call back to auth-backend or
-# Keycloak. Never trust X-User-Id/X-User-Role headers directly; only the
-# claims that come out of this verification.
+# (services/auth-backend/src/auth/internalToken.ts) and catalog's/inventory's
+# copies of the same. Every domain service validates the Gateway-minted
+# internal token locally against the shared HMAC secret — no call back to
+# auth-backend or Keycloak. Never trust X-User-Id/X-User-Role headers
+# directly; only the claims that come out of this verification.
 def verify_internal_token(token: str, secret: str) -> InternalClaims:
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"], issuer=ISSUER)
@@ -42,11 +42,3 @@ def get_internal_claims(
         return verify_internal_token(x_internal_token, secret)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid internal token") from exc
-
-
-def require_admin(
-    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
-) -> InternalClaims:
-    if claims.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin role required")
-    return claims

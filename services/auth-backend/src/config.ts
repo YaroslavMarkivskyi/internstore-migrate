@@ -12,8 +12,10 @@ export interface GatewayConfig {
   keycloakJwksUri: string;
   internalTokenSecret: string;
   internalTokenTtlSeconds: number;
-  // Not used yet — reserved for the /logout denylist (see auth/revocation.ts).
-  redisUrl?: string;
+  // Used by the /logout denylist (see auth/revocation.ts) and the guest
+  // cart session store (see auth/guestSession.ts) — mandatory since guest
+  // checkout now depends on it.
+  redisUrl: string;
 }
 
 export function loadConfig(): GatewayConfig {
@@ -23,6 +25,6 @@ export function loadConfig(): GatewayConfig {
     keycloakJwksUri: requireEnv("KEYCLOAK_JWKS_URI"),
     internalTokenSecret: requireEnv("INTERNAL_TOKEN_SECRET"),
     internalTokenTtlSeconds: Number(process.env.INTERNAL_TOKEN_TTL_SECONDS ?? "60"),
-    redisUrl: process.env.REDIS_URL,
+    redisUrl: requireEnv("REDIS_URL"),
   };
 }

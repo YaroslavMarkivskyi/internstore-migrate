@@ -42,11 +42,15 @@ which mirrors `services/catalog/src/catalog/auth.py`).
   `{"to_stock_id", "quantity"}`. Moves quantity from `itemId` (must belong to
   `{id}`) to the destination stock, upserting there. 404 if the stock or item
   doesn't exist, 422 on insufficient quantity or same-stock move. (STO-03)
-- `POST /stocks/check-availability` — the sync contract Orders will call at
-  checkout. Body: `{"items": [{"product_id", "quantity"}, ...]}`. Returns
-  per-product `available` (summed across all stocks) and `sufficient`, plus a
-  top-level `sufficient` that's true only if every line item is. Documented
-  in [libs/contracts/inventory/check-availability.md](../../libs/contracts/inventory/check-availability.md).
+- `POST /stocks/check-availability` — the sync contract Orders calls at
+  checkout. Requires a valid `X-Internal-Token` (any role — customer, admin,
+  or guest — since any of them can check out; see
+  [services/orders](../orders)), forwarded by Orders from the caller's own
+  token rather than a synthetic Orders-service identity. Body:
+  `{"items": [{"product_id", "quantity"}, ...]}`. Returns per-product
+  `available` (summed across all stocks) and `sufficient`, plus a top-level
+  `sufficient` that's true only if every line item is. Documented in
+  [libs/contracts/inventory/check-availability.md](../../libs/contracts/inventory/check-availability.md).
 
 Not in scope for this ticket (see the task write-up): reservation
 (ORDC-04) and its Kafka consumer/producer wiring with Orders, subscribing to

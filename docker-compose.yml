@@ -130,6 +130,43 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # catalog.
 
+  orders-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+    volumes:
+      - orders_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  orders:
+    build: ./services/orders
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://orders:orders@orders-db:5432/orders
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as catalog/inventory.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      # Container-to-container address on the compose network — bypasses
+      # nginx for this one synchronous inter-service call (see
+      # libs/contracts/inventory/check-availability.md).
+      INVENTORY_BASE_URL: http://inventory:8000
+      INVENTORY_TIMEOUT_SECONDS: "5.0"
+    depends_on:
+      orders-db:
+        condition: service_healthy
+      # Deliberately no dependency on `inventory` — Orders should boot and
+      # serve cart endpoints fine even if Inventory is briefly unavailable;
+      # checkout correctly 503s in that case instead of the whole service
+      # failing to start. No `kafka` dependency either — no Kafka code
+      # exists in Orders yet (reservation saga is a later ticket).
+    # Not exposed on the host — only reachable through nginx, same as
+    # catalog/inventory.
+
   nginx:
     build: ./nginx
     ports:
@@ -140,6 +177,7 @@ services:
       - echo-service
       - catalog
       - inventory
+      - orders
 
   kafka:
     image: apache/kafka:3.7.0
@@ -186,4 +224,5 @@ volumes:
   keycloak_db_data:
   catalog_db_data:
   inventory_db_data:
+  orders_db_data:
   kafka_data:

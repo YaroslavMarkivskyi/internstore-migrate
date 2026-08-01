@@ -88,4 +88,32 @@ for user in "customer@example.com:Customer123:customer" "admin@example.com:Admin
     || fail "$EMAIL password restore"
 done
 
-echo "All AUTH-02..05 checks passed."
+echo "--- Testing guest session fallback (/auth/verify) ---"
+
+# No Authorization header, X-Original-URI outside the guest allowlist -> 401.
+# (This script talks to auth-backend directly, bypassing nginx, so it must
+# synthesize the X-Original-URI header nginx would normally set.)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/auth/verify" \
+  -H "X-Original-URI: /api/orders/orders")
+[ "$STATUS" = "401" ] || fail "guest fallback allowed on a non-allowlisted path (got $STATUS)"
+pass "guest fallback rejected outside the allowlist"
+
+# No Authorization header, allowlisted path -> 200 + Set-Cookie + a fresh guest identity.
+RESPONSE_HEADERS=$(curl -s -D - -o /dev/null "$GATEWAY_URL/auth/verify" \
+  -H "X-Original-URI: /api/orders/cart")
+echo "$RESPONSE_HEADERS" | grep -qi '^HTTP/.* 200' || fail "guest fallback did not return 200"
+GUEST_COOKIE=$(echo "$RESPONSE_HEADERS" | grep -i '^set-cookie:' | sed -E 's/^[Ss]et-[Cc]ookie: ([^;]+);.*/\1/' | tr -d '\r')
+[ -n "$GUEST_COOKIE" ] || fail "guest fallback did not set a cookie"
+GUEST_ID=$(echo "$RESPONSE_HEADERS" | grep -i '^x-user-id:' | cut -d' ' -f2 | tr -d '\r')
+GUEST_ROLE=$(echo "$RESPONSE_HEADERS" | grep -i '^x-user-role:' | cut -d' ' -f2 | tr -d '\r')
+[ "$GUEST_ROLE" = "guest" ] || fail "guest fallback role mismatch (got '$GUEST_ROLE')"
+pass "guest fallback issues a cookie + role=guest internal token"
+
+# Same cookie, second request -> same guest identity reused, no new cookie.
+RESPONSE_HEADERS_2=$(curl -s -D - -o /dev/null "$GATEWAY_URL/auth/verify" \
+  -H "X-Original-URI: /api/orders/checkout" -H "Cookie: $GUEST_COOKIE")
+GUEST_ID_2=$(echo "$RESPONSE_HEADERS_2" | grep -i '^x-user-id:' | cut -d' ' -f2 | tr -d '\r')
+[ "$GUEST_ID_2" = "$GUEST_ID" ] || fail "guest identity not reused across requests with the same cookie"
+pass "guest identity reused via cookie across requests (AUTH guest fallback)"
+
+echo "All AUTH-02..05 + guest fallback checks passed."

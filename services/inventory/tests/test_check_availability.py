@@ -15,6 +15,7 @@ async def test_check_availability_sufficient(client, admin_token):
     resp = await client.post(
         "/stocks/check-availability",
         json={"items": [{"product_id": product_id, "quantity": 10}]},
+        headers=headers,
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -34,6 +35,7 @@ async def test_check_availability_insufficient(client, admin_token):
     resp = await client.post(
         "/stocks/check-availability",
         json={"items": [{"product_id": product_id, "quantity": 10}]},
+        headers=headers,
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -42,10 +44,11 @@ async def test_check_availability_insufficient(client, admin_token):
     assert body["items"][0]["sufficient"] is False
 
 
-async def test_check_availability_unknown_product_is_zero_available(client):
+async def test_check_availability_unknown_product_is_zero_available(client, customer_token):
     resp = await client.post(
         "/stocks/check-availability",
         json={"items": [{"product_id": str(uuid.uuid4()), "quantity": 1}]},
+        headers={"x-internal-token": customer_token},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -74,6 +77,7 @@ async def test_check_availability_partial_across_multiple_products(client, admin
                 {"product_id": insufficient_product, "quantity": 5},
             ]
         },
+        headers=headers,
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -81,3 +85,20 @@ async def test_check_availability_partial_across_multiple_products(client, admin
     by_product = {i["product_id"]: i["sufficient"] for i in body["items"]}
     assert by_product[sufficient_product] is True
     assert by_product[insufficient_product] is False
+
+
+async def test_check_availability_requires_internal_token(client):
+    resp = await client.post(
+        "/stocks/check-availability",
+        json={"items": [{"product_id": str(uuid.uuid4()), "quantity": 1}]},
+    )
+    assert resp.status_code == 401
+
+
+async def test_check_availability_guest_token_allowed(client, guest_token):
+    resp = await client.post(
+        "/stocks/check-availability",
+        json={"items": [{"product_id": str(uuid.uuid4()), "quantity": 1}]},
+        headers={"x-internal-token": guest_token},
+    )
+    assert resp.status_code == 200

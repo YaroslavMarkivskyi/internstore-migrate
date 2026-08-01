@@ -17,8 +17,13 @@ for acceptance criteria.
   that's the contract both nginx and ALB expect:
   - `200` with `X-User-Id`, `X-User-Role`, `X-Internal-Token` response
     headers on a valid, non-revoked token.
+  - `200` with the same headers (`X-User-Role: guest`) and a
+    `Set-Cookie: is_guest_id=...` when no `Authorization` header is present
+    **and** the request targets a guest-allowed path — see "Guest sessions"
+    below.
   - `401` with no body otherwise (missing header, bad signature, expired,
-    wrong `iss`/`aud`, or revoked).
+    wrong `iss`/`aud`, revoked, or an unauthenticated request outside the
+    guest-allowed paths).
 
 ## Why this is portable to AWS ALB, unchanged
 
@@ -51,9 +56,41 @@ the same network could set those. `createInternalTokenVerifier` in
 [src/auth/internalToken.ts](src/auth/internalToken.ts) is the reusable piece
 every domain service needs; see echo-service for a minimal example.
 
-## Redis (not wired yet)
+## Guest sessions
 
-`REDIS_URL` is accepted and threaded through to
+[services/orders](../orders)'s cart (ORDC-01) and checkout (ORDC-02) need to
+work for unauthenticated shoppers, not just Keycloak-registered customers —
+there was no pre-existing session mechanism for this in the repo, so
+`/auth/verify` gained one fallback branch (see
+[src/auth/guestSession.ts](src/auth/guestSession.ts) and the guest branch in
+[src/index.ts](src/index.ts)):
+
+- Only granted on paths under `/api/orders/cart` or `/api/orders/checkout`
+  (nginx forwards the original request path as `X-Original-URI` — see
+  [nginx/nginx.conf](../../nginx/nginx.conf)). Every other path still 401s
+  with no `Authorization` header, exactly as before — in particular,
+  `/api/orders/orders` (order history) is deliberately **not** guest-allowed:
+  a guest can check out but must register/log in to see past orders.
+- On first hit, mints a random `guest_id`, stores it in Redis
+  (`guest_session:<guest_id>`, 7-day TTL, not refreshed on reuse) and returns
+  it as an `is_guest_id` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`).
+- On a later hit with a still-valid cookie, reuses the same `guest_id` — same
+  cart, same identity — without minting a new one.
+- Either way, mints a normal internal token with `role: "guest"` and
+  `sub: <guest_id>`, exactly like the customer/admin path. Downstream
+  services (Orders, and now Inventory's `check-availability`, since it
+  forwards the caller's token — see [services/orders/README.md](../orders/README.md))
+  treat `guest` as a third valid role, not a special case.
+- Redis errors here are not swallowed — they propagate into the same
+  try/catch that already turns invalid/expired tokens into a `401`, so a
+  Redis outage fails closed instead of minting an unpersisted identity.
+
+## Redis
+
+`REDIS_URL` is required (`requireEnv`, not optional) since guest sessions
+depend on it. It's also threaded through to
 [src/auth/revocation.ts](src/auth/revocation.ts), which currently always
-reports "not revoked". This is a placeholder for the `/logout` denylist
-(AUTH-05) — real revocation checks land together with the logout endpoint.
+reports "not revoked" — a placeholder for the `/logout` denylist (AUTH-05);
+real revocation checks land together with the logout endpoint. The two
+Redis usages are unrelated: guest sessions use a `guest_session:` key
+prefix, revocation will use its own.
