@@ -1,5 +1,9 @@
 import uuid
 
+from sqlalchemy import select
+
+from orders.models import OutboxEvent
+
 CHECKOUT_PAYLOAD = {
     "contact_name": "Jane Doe",
     "contact_email": "jane@example.com",
@@ -33,6 +37,17 @@ async def test_checkout_happy_path_creates_order_and_clears_cart(client, custome
     assert fake_inventory_client.last_call is not None
     _, forwarded_token = fake_inventory_client.last_call
     assert forwarded_token == customer_token
+
+    # outbox: an OrderCreated row was staged in the same transaction as the
+    # Order — this is what the background worker publishes, not a direct
+    # Kafka call from the request path.
+    async with client.app.state.session_factory() as session:
+        result = await session.execute(select(OutboxEvent).where(OutboxEvent.event_type == "OrderCreated"))
+        outbox_rows = result.scalars().all()
+    assert len(outbox_rows) == 1
+    assert outbox_rows[0].published_at is None
+    assert outbox_rows[0].payload["order_id"] == body["id"]
+    assert outbox_rows[0].payload["items"] == [{"product_id": product_id, "quantity": 2}]
 
 
 async def test_checkout_insufficient_stock_returns_409_and_creates_no_order(

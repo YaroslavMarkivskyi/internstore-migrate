@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, Enum as SAEnum, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orders.db import Base
@@ -10,9 +10,11 @@ from orders.db import Base
 
 class OrderStatus(str, enum.Enum):
     NEW = "new"
-    # Pending/Paid/Done/Cancelled/Rejected are added by the reservation-saga
-    # ticket that follows this one — a native enum keeps that an additive
-    # migration rather than a restructuring of this column.
+    PENDING = "pending"
+    PAID = "paid"
+    DONE = "done"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
 
 
 class Cart(Base):
@@ -77,3 +79,20 @@ class OrderItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
 
     order: Mapped["Order"] = relationship(back_populates="items")
+
+
+class OutboxEvent(Base):
+    """Transactional outbox: written in the same DB transaction as the
+    domain change it announces, published to Kafka by a background poller
+    that marks `published_at` once the send succeeds. Guarantees an event
+    is never lost between commit and publish (at the cost of possible
+    redelivery on a crash between publish and marking published — Inventory
+    consumers must be idempotent)."""
+
+    __tablename__ = "outbox_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

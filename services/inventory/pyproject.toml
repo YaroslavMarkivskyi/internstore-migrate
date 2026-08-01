@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.2",
     "pyjwt>=2.9.0",
+    "aiokafka>=0.14.0",
 ]
 
 [dependency-groups]

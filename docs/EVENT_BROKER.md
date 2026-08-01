@@ -37,5 +37,26 @@ docker compose up -d kafka kafka-topic-init
 ```
 
 This only proves the broker/topics are reachable — no consumer business
-logic exists yet. That lands with each domain service (Inventory, Orders,
-Telemetry, Chat) as it's built.
+logic exists yet for Telemetry/Chat. Orders and Inventory now have real
+producers/consumers implementing the reservation saga (transactional
+outbox on both sides, idempotent consumers) — see
+[scripts/test-reservation-saga.sh](../scripts/test-reservation-saga.sh) for
+an end-to-end run against the real broker.
+
+## Known, accepted gaps (dev-only stage)
+
+- **No Kafka auth/ACL.** `PLAINTEXT` listeners, no per-service credentials —
+  same trust model as the rest of the compose stack. Same class of issue as
+  the pre-existing internal-token note in
+  [services/orders/README.md](../services/orders/README.md#internal-token-forwarding-to-inventory):
+  acceptable for a solo-developer/learning-scale local stack, needs
+  revisiting before any prod/AWS configuration.
+- **`check-availability` doesn't account for `reserved_quantity`.** Once the
+  reservation saga (Orders outbox → Inventory idempotent consumer) is
+  reserving stock, `check-availability` (used by Orders' checkout pre-check)
+  still sums each product's raw `quantity`, unaware of how much is already
+  held by other in-flight orders' reservations. This is a UX gap, not a
+  correctness bug — Inventory's actual reservation logic never oversells —
+  but it means checkout can pass its optimistic pre-check and still land
+  `Rejected` once the real reservation runs. Candidate follow-up: should
+  `check-availability` subtract `reserved_quantity`?

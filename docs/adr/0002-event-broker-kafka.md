@@ -73,6 +73,19 @@ Deliberately out of scope for this ADR/task:
   its own DB and publishes an event in the same logical operation.
 - Consumer idempotency — needed once real consumer code exists.
 
+### Update: reservation saga implemented
+
+Orders and Inventory now both implement the choreography this ADR
+anticipated: each has its own `outbox_events` table + background poller (a
+crash between commit and publish can't lose an event on either side),
+Inventory's consumers are idempotent via a `processed_events` ledger keyed
+on `event_id`, and Orders' consumer uses guarded status transitions
+(`WHERE status = <expected>`) — naturally idempotent under redelivery
+without needing its own ledger. See
+[EVENT_BROKER.md](../EVENT_BROKER.md#known-accepted-gaps-dev-only-stage)
+for the two gaps accepted alongside this: no Kafka auth/ACL, and
+`check-availability` not accounting for `reserved_quantity`.
+
 ## Consequences
 
 - One more stateful service to operate locally (Kafka + its volume).

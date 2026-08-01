@@ -10,6 +10,7 @@ from orders.auth import InternalClaims, get_internal_claims
 from orders.db import get_session
 from orders.inventory_client import InventoryClient, InventoryUnavailableError, get_inventory_client
 from orders.models import Cart, Order, OrderItem
+from orders.outbox import add_outbox_event
 from orders.schemas import (
     CheckoutInsufficientStockItem,
     CheckoutInsufficientStockResponse,
@@ -69,6 +70,23 @@ async def checkout(
 
     for item in list(cart.items):
         await session.delete(item)
+
+    # Flush so order.id (a Python-side default, only assigned at INSERT
+    # time) is populated before we build the outbox payload referencing it.
+    await session.flush()
+
+    # Same transaction as the Order insert — the outbox pattern's whole
+    # point is that Postgres's atomicity, not a second network call, is
+    # what guarantees this event is never lost.
+    add_outbox_event(
+        session,
+        "OrderCreated",
+        {
+            "order_id": str(order.id),
+            "owner_id": order.owner_id,
+            "items": [{"product_id": str(item.product_id), "quantity": item.quantity} for item in order.items],
+        },
+    )
 
     await session.commit()
     await session.refresh(order, attribute_names=["items"])
