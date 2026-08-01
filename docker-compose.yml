@@ -103,6 +103,33 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # echo-service.
 
+  inventory-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: inventory
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+    volumes:
+      - inventory_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  inventory:
+    build: ./services/inventory
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://inventory:inventory@inventory-db:5432/inventory
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as catalog.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+    # Not exposed on the host — only reachable through nginx, same as
+    # catalog.
+
   nginx:
     build: ./nginx
     ports:
@@ -112,6 +139,7 @@ services:
       - auth-backend
       - echo-service
       - catalog
+      - inventory
 
   kafka:
     image: apache/kafka:3.7.0
@@ -157,4 +185,5 @@ services:
 volumes:
   keycloak_db_data:
   catalog_db_data:
+  inventory_db_data:
   kafka_data:
