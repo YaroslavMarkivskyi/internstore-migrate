@@ -23,6 +23,7 @@ async def client():
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
+        kafka_bootstrap_servers="kafka.invalid:9092",
     )
     session_factory = make_session_factory(settings.database_url)
 
@@ -35,6 +36,7 @@ async def client():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        ac.app = app  # tests that need direct DB access go via ac.app.state.session_factory
         yield ac
 
     await engine.dispose()

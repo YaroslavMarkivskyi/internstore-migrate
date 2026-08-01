@@ -23,6 +23,7 @@ class StockItemRead(BaseModel):
     stock_id: uuid.UUID
     product_id: uuid.UUID
     quantity: int
+    is_unavailable: bool
 
 
 class StockItemCreate(BaseModel):

@@ -6,6 +6,11 @@ from fastapi import FastAPI
 
 from inventory.config import Settings, load_settings
 from inventory.consumers.order_events import GROUP_ID, TOPIC as ORDER_EVENTS_TOPIC, make_dispatch
+from inventory.consumers.telemetry_events import (
+    GROUP_ID as TELEMETRY_EVENTS_GROUP_ID,
+    TOPIC as TELEMETRY_EVENTS_TOPIC,
+    make_dispatch as make_telemetry_dispatch,
+)
 from inventory.db import make_session_factory
 from inventory.kafka import KafkaEventProducer, run_consumer_loop
 from inventory.outbox_worker import run_outbox_worker
@@ -33,16 +38,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             make_dispatch(app.state.session_factory, settings.reservation_ttl_seconds),
         )
     )
+    telemetry_consumer_task = asyncio.create_task(
+        run_consumer_loop(
+            settings.kafka_bootstrap_servers,
+            TELEMETRY_EVENTS_TOPIC,
+            TELEMETRY_EVENTS_GROUP_ID,
+            make_telemetry_dispatch(app.state.session_factory),
+        )
+    )
     expiry_task = asyncio.create_task(
         run_reservation_expiry_checker(app.state.session_factory, settings.reservation_check_interval_seconds)
     )
 
+    tasks = (outbox_task, consumer_task, telemetry_consumer_task, expiry_task)
     try:
         yield
     finally:
-        for task in (outbox_task, consumer_task, expiry_task):
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(outbox_task, consumer_task, expiry_task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         await producer.stop()
 
 

@@ -23,6 +23,15 @@ class ProductCreate(BaseModel):
     max_temperature: float | None = None
 
 
+class ProductUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=250)
+    price: float | None = Field(default=None, gt=0)
+    category_id: uuid.UUID | None = None
+    description: str | None = Field(default=None, max_length=500)
+    min_temperature: float | None = None
+    max_temperature: float | None = None
+
+
 class ProductRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

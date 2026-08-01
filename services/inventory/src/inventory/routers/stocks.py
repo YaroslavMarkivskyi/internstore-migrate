@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from inventory.auth import get_internal_claims, require_admin
 from inventory.db import get_session
 from inventory.models import Stock, StockItem
+from inventory.outbox import add_outbox_event
 from inventory.schemas import (
     AvailabilityResultItem,
     CheckAvailabilityRequest,
@@ -87,6 +88,8 @@ async def receive_stock_item(
         item = StockItem(stock_id=stock_id, product_id=payload.product_id, quantity=payload.quantity)
         session.add(item)
 
+    add_outbox_event(session, "ItemAdded", {"stock_id": str(stock_id), "product_id": str(payload.product_id)})
+
     await session.commit()
     await session.refresh(item)
     return item
@@ -133,6 +136,12 @@ async def move_stock_item(
             quantity=payload.quantity,
         )
         session.add(dest_item)
+
+    add_outbox_event(
+        session,
+        "ItemAdded",
+        {"stock_id": str(payload.to_stock_id), "product_id": str(source_item.product_id)},
+    )
 
     await session.commit()
     await session.refresh(dest_item)

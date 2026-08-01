@@ -15,11 +15,16 @@ which mirrors `services/catalog/src/catalog/auth.py`).
 
 ## Data model
 
-- `Stock` — a warehouse/store. `temperature` is nullable/pending until a
-  future Telemetry subscription populates it — not implemented here.
+- `Stock` — a warehouse/store. `temperature` is nullable/pending — still not
+  populated here; Telemetry keeps its own timeseries keyed by this same
+  `Stock.id` rather than writing back into this column (see
+  [services/telemetry](../telemetry)).
 - `StockItem` — quantity of a product at a given stock. `product_id` is a
   bare UUID referencing Catalog's `Product.id`; there is no foreign key to
   Catalog's database, and this service never validates the product exists.
+  `is_unavailable` is set by the `telemetry-events` consumer on
+  `TemperatureThresholdViolated` and never cleared automatically — an admin
+  restocking/replacing the item is expected to address it.
 
 ## Endpoints
 
@@ -52,10 +57,20 @@ which mirrors `services/catalog/src/catalog/auth.py`).
   `sufficient` that's true only if every line item is. Documented in
   [libs/contracts/inventory/check-availability.md](../../libs/contracts/inventory/check-availability.md).
 
-Not in scope for this ticket (see the task write-up): reservation
-(ORDC-04) and its Kafka consumer/producer wiring with Orders, subscribing to
-`TemperatureThresholdViolated` from Telemetry, and the STO-01 fingerprint/NFC
-part of EP-08/09.
+Not in scope for this ticket (see the task write-up): the STO-01
+fingerprint/NFC part of EP-08/09.
+
+## Kafka
+
+- Producer (outbox): `ItemAdded` on `inventory-events`, staged on the same
+  commit as `POST /stocks/{id}/items` and the destination side of
+  `POST /stocks/{id}/items/{itemId}/move` — Telemetry consumes this to build
+  its `{store_id, product_id}` threshold cache.
+- Consumer: `telemetry-events` → `TemperatureThresholdViolated` sets the
+  matching `StockItem.is_unavailable = true`. Idempotent via the existing
+  `processed_events` ledger; a redelivery after an admin manually cleared
+  the flag is a no-op (see
+  [src/inventory/consumers/telemetry_events.py](src/inventory/consumers/telemetry_events.py)).
 
 ## Auth
 

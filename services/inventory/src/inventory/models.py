@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from inventory.db import Base
@@ -38,6 +38,10 @@ class StockItem(Base):
     # means checkout can optimistically pass its pre-check and still land
     # Rejected once the real reservation accounts for stock already held.
     reserved_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Set by the telemetry-events consumer on TemperatureThresholdViolated;
+    # never cleared automatically — an admin restocking/replacing the item
+    # is expected to address it (no TemperatureNormalized handling here).
+    is_unavailable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     stock: Mapped["Stock"] = relationship(back_populates="items")
 

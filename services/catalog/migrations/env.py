@@ -8,7 +8,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from catalog.db import Base
-from catalog.models import Category, Product  # noqa: F401  (registers models on Base.metadata)
+from catalog.models import Category, OutboxEvent, Product  # noqa: F401  (registers models on Base.metadata)
 
 config = context.config
 

@@ -23,6 +23,7 @@ topics per event type.
 | `order-events` | `OrderCreated`, `PaymentConfirmed`, `OrderRejected`, `OrderCancelled` | Orders service |
 | `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired` | Inventory service |
 | `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized` | Telemetry service |
+| `catalog-events` | `ProductThresholdUpdated` | Catalog service |
 | `chat-events` | `UnreadMessageReceived` | Chat service (future) |
 
 All topics: 1 partition, replication factor 1 (single broker, no HA at this
@@ -71,3 +72,16 @@ an end-to-end run against the real broker.
   keys/external dependency for local dev and CI, at the cost of needing a
   real provider (SES/Resend/etc.) wired in before any prod/AWS deploy. See
   [services/notifications/README.md](../services/notifications/README.md).
+- **`telemetry-simulator` generates synthetic data, not a real DHT22
+  sensor.** It's a small container that POSTs random-walk readings around a
+  configurable base temperature to Telemetry's `/measurements` endpoint on
+  the same 5-minute cadence a real device would use — good enough to
+  exercise the violation-detection logic and `test-telemetry-saga.sh`, but
+  it never talks to real hardware. Same class of gap as the two above:
+  acceptable for local dev, needs a real ingestion path (MQTT/device
+  gateway/etc.) before any prod deploy. Relatedly, violation detection
+  itself runs on a 5-minute timer rather than true stream processing —
+  acceptable at this measurement cadence, but it means a violation is
+  detected up to one check-interval late, not the instant the underlying
+  condition becomes true. See
+  [services/telemetry/README.md](../services/telemetry/README.md).

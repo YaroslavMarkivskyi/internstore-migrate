@@ -1,9 +1,12 @@
 # catalog
 
 Categories and products for InternStore. First domain service split out of
-the monolith — chosen because it has zero coupling to other domain services
-(no events published/consumed, no sync calls to Orders/Inventory). Its own
-Postgres database, no shared tables with any other service.
+the monolith, originally with zero coupling to other domain services; it
+now publishes `ProductThresholdUpdated` on `catalog-events` (transactional
+outbox, same pattern as Inventory/Orders) so Telemetry can cache each
+product's temperature threshold locally — see
+[services/telemetry](../telemetry). Its own Postgres database, no shared
+tables with any other service.
 
 Python/FastAPI/SQLAlchemy(async)/Alembic, unlike
 [services/auth-backend](../auth-backend) and
@@ -24,9 +27,25 @@ onto the same stack. Domain services going forward use this stack.
   required (`name` 2-250 chars, `price` > 0); `description` (≤500 chars),
   `min_temperature`, `max_temperature` optional. 422 on an unknown
   `category_id`.
+- `PATCH /products/{id}` — admin-only. Body: any subset of
+  `name`/`price`/`category_id`/`description`/`min_temperature`/`max_temperature`
+  (partial update — only fields present are applied). 404 if not found, 422
+  on an unknown `category_id`. If `min_temperature` or `max_temperature`
+  actually change, stages `ProductThresholdUpdated` on the outbox in the
+  same transaction as the update.
 
 Search (SEARCH-01/02), photo upload (PROD-06/07), and filtering/sorting
 (FILT-01/03) are explicitly out of scope for this cut.
+
+## Kafka
+
+Producer only (no consumers): `ProductThresholdUpdated` on `catalog-events`,
+staged via the transactional outbox
+([src/catalog/outbox.py](src/catalog/outbox.py) +
+[src/catalog/outbox_worker.py](src/catalog/outbox_worker.py)) in the same
+commit as the `PATCH /products/{id}` update that changed a temperature
+field — same pattern as Inventory/Orders' outbox. Telemetry is the only
+consumer today (see [services/telemetry](../telemetry)).
 
 ## Auth
 

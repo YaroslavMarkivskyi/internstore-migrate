@@ -97,8 +97,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://catalog:catalog@catalog-db:5432/catalog
       # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as echo-service.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       catalog-db:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as
     # echo-service.
@@ -181,6 +184,58 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory.
 
+  telemetry-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: telemetry
+    volumes:
+      - telemetry_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  telemetry:
+    build: ./services/telemetry
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://telemetry:telemetry@telemetry-db:5432/telemetry
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as catalog/inventory.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Short dev/test values so test-telemetry-saga.sh doesn't have to wait
+      # a full 5 minutes for a detection cycle or a real hour for the
+      # sustained-violation window — same pattern as inventory's
+      # RESERVATION_TTL_SECONDS/RESERVATION_CHECK_INTERVAL_SECONDS.
+      # Settings.py's own defaults are the realistic 300s/3600s for
+      # anywhere else this service runs.
+      VIOLATION_CHECK_INTERVAL_SECONDS: "5"
+      VIOLATION_WINDOW_SECONDS: "20"
+    depends_on:
+      telemetry-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    # Not exposed on the host — only reachable through nginx, same as
+    # catalog/inventory/orders.
+
+  telemetry-simulator:
+    build: ./services/telemetry/simulator
+    environment:
+      TELEMETRY_URL: http://telemetry:8000
+      STORE_ID: 11111111-1111-1111-1111-111111111111
+      BASE_TEMPERATURE: "4.0"
+      TEMP_VARIANCE: "0.5"
+      INTERVAL_SECONDS: "300"
+    depends_on:
+      telemetry:
+        condition: service_started
+    # Dev-only synthetic data source — not a real DHT22 sensor. See
+    # docs/EVENT_BROKER.md's accepted-gaps section.
+
   mailpit:
     image: axllent/mailpit:v1.20
     ports:
@@ -220,6 +275,7 @@ services:
       - catalog
       - inventory
       - orders
+      - telemetry
 
   kafka:
     image: apache/kafka:3.7.0
@@ -258,7 +314,7 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
-        for topic in order-events inventory-events telemetry-events chat-events; do
+        for topic in order-events inventory-events telemetry-events catalog-events chat-events; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$$topic" --partitions 1 --replication-factor 1
         done
 
@@ -267,4 +323,5 @@ volumes:
   catalog_db_data:
   inventory_db_data:
   orders_db_data:
+  telemetry_db_data:
   kafka_data:
