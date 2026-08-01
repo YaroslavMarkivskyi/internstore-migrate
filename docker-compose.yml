@@ -181,6 +181,34 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory.
 
+  mailpit:
+    image: axllent/mailpit:v1.20
+    ports:
+      # Web UI + REST API only — exposed to the host so
+      # scripts/test-notifications-saga.sh (and manual inspection) can
+      # reach it. SMTP itself (1025) is deliberately NOT published to the
+      # host: only notifications, on the compose network, sends mail.
+      - "8025:8025"
+    # Dev-only SMTP stub — see docs/EVENT_BROKER.md's accepted-gaps
+    # section and services/notifications/README.md. Swap for a real
+    # provider (SES/etc.) before any prod/AWS deploy.
+
+  notifications:
+    build: ./services/notifications
+    environment:
+      PORT: "8000"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    # Not exposed on the host, and deliberately not routed through nginx —
+    # this service has no Gateway route and no synchronous callers, pure
+    # Kafka consumer + SMTP sender. See services/notifications/README.md.
+
   nginx:
     build: ./nginx
     ports:

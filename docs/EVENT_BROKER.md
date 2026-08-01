@@ -20,7 +20,7 @@ topics per event type.
 
 | Topic | Events | Producer |
 |---|---|---|
-| `order-events` | `OrderCreated`, `PaymentConfirmed`, `OrderCancelled` | Orders service |
+| `order-events` | `OrderCreated`, `PaymentConfirmed`, `OrderRejected`, `OrderCancelled` | Orders service |
 | `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired` | Inventory service |
 | `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized` | Telemetry service |
 | `chat-events` | `UnreadMessageReceived` | Chat service (future) |
@@ -28,6 +28,11 @@ topics per event type.
 All topics: 1 partition, replication factor 1 (single broker, no HA at this
 stage). Created automatically by the `kafka-topic-init` compose service on
 `docker compose up -d`.
+
+Notifications consumes all four topics (dispatching on `eventType`, same as
+every other consumer here) and is the first pure event consumer in the
+system: no Gateway route, no synchronous callers or callees. See
+[services/notifications/README.md](../services/notifications/README.md).
 
 ## Verifying the broker is alive
 
@@ -60,3 +65,9 @@ an end-to-end run against the real broker.
   but it means checkout can pass its optimistic pre-check and still land
   `Rejected` once the real reservation runs. Candidate follow-up: should
   `check-availability` subtract `reserved_quantity`?
+- **Mailpit, not a real email provider.** Notifications sends via Mailpit, a
+  local SMTP stub with a web UI/REST API — no real inbox is ever reached.
+  Same accepted dev-only trade-off as the two gaps above: avoids real API
+  keys/external dependency for local dev and CI, at the cost of needing a
+  real provider (SES/Resend/etc.) wired in before any prod/AWS deploy. See
+  [services/notifications/README.md](../services/notifications/README.md).

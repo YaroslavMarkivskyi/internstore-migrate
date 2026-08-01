@@ -39,6 +39,8 @@ async def pay_order(
         "PaymentConfirmed",
         {
             "order_id": str(order.id),
+            "contact_email": order.contact_email,
+            "contact_name": order.contact_name,
             "items": [{"product_id": str(item.product_id), "quantity": item.quantity} for item in order.items],
         },
     )
