@@ -74,3 +74,15 @@ First domain service split out of the monolith:
   other domain services). Reachable through nginx at `/api/catalog/*`.
   Unlike the gateway pieces above, domain services going forward use this
   stack rather than TypeScript/Fastify — see the service's README for why.
+
+## Event broker
+
+Kafka (KRaft mode, single node) backs the choreographed Orders/Inventory
+reservation saga and other cross-service events. Decision, topic list, and
+connection details: [docs/adr/0002-event-broker-kafka.md](docs/adr/0002-event-broker-kafka.md)
+and [docs/EVENT_BROKER.md](docs/EVENT_BROKER.md).
+
+```bash
+docker compose up -d kafka kafka-topic-init
+./scripts/test-kafka-smoke.sh
+```
