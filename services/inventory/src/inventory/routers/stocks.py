@@ -12,6 +12,7 @@ from inventory.schemas import (
     AvailabilityResultItem,
     CheckAvailabilityRequest,
     CheckAvailabilityResponse,
+    StockCreate,
     StockItemCreate,
     StockItemMove,
     StockItemRead,
@@ -32,6 +33,22 @@ async def _get_stock_or_404(session: AsyncSession, stock_id: uuid.UUID) -> Stock
 async def list_stocks(session: Annotated[AsyncSession, Depends(get_session)]) -> list[Stock]:
     result = await session.execute(select(Stock).order_by(Stock.name))
     return list(result.scalars().all())
+
+
+@router.post("", response_model=StockRead, status_code=201, dependencies=[Depends(require_admin)])
+async def create_stock(
+    payload: StockCreate,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Stock:
+    existing = await session.execute(select(Stock).where(Stock.name == payload.name))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Stock name already exists")
+
+    stock = Stock(name=payload.name, temperature=payload.temperature)
+    session.add(stock)
+    await session.commit()
+    await session.refresh(stock)
+    return stock
 
 
 @router.get("/{stock_id}/items", response_model=list[StockItemRead])

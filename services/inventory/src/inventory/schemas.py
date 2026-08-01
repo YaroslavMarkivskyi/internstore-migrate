@@ -3,6 +3,11 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class StockCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    temperature: float | None = None
+
+
 class StockRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

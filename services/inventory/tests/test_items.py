@@ -5,8 +5,8 @@ from tests.conftest import create_stock
 
 async def test_list_items_consolidates_across_stocks(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    stock_a = await create_stock(client, name="A")
-    stock_b = await create_stock(client, name="B")
+    stock_a = await create_stock(client, admin_token, name="Stock A")
+    stock_b = await create_stock(client, admin_token, name="Stock B")
     product_id = str(uuid.uuid4())
 
     await client.post(f"/stocks/{stock_a}/items", json={"product_id": product_id, "quantity": 5}, headers=headers)
@@ -22,8 +22,8 @@ async def test_list_items_consolidates_across_stocks(client, admin_token):
 
 async def test_list_items_filter_by_stock_id(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    stock_a = await create_stock(client, name="A")
-    stock_b = await create_stock(client, name="B")
+    stock_a = await create_stock(client, admin_token, name="Stock A")
+    stock_b = await create_stock(client, admin_token, name="Stock B")
     product_a = str(uuid.uuid4())
     product_b = str(uuid.uuid4())
 
@@ -39,7 +39,7 @@ async def test_list_items_filter_by_stock_id(client, admin_token):
 
 async def test_list_items_filter_by_quantity_range(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    stock_id = await create_stock(client)
+    stock_id = await create_stock(client, admin_token)
     low = str(uuid.uuid4())
     high = str(uuid.uuid4())
 

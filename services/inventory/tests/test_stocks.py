@@ -9,8 +9,52 @@ async def test_list_stocks_empty(client):
     assert resp.json() == []
 
 
-async def test_list_stocks(client):
-    await create_stock(client, name="Warehouse A")
+async def test_create_stock_requires_admin(client, customer_token):
+    resp = await client.post(
+        "/stocks",
+        json={"name": "Warehouse A"},
+        headers={"x-internal-token": customer_token},
+    )
+    assert resp.status_code == 403
+
+
+async def test_create_stock_as_admin_succeeds(client, admin_token):
+    resp = await client.post(
+        "/stocks",
+        json={"name": "Warehouse A", "temperature": 4.5},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["name"] == "Warehouse A"
+    assert body["temperature"] == 4.5
+
+
+async def test_create_stock_missing_token(client):
+    resp = await client.post("/stocks", json={"name": "Warehouse A"})
+    assert resp.status_code == 401
+
+
+async def test_create_stock_duplicate_name_rejected(client, admin_token):
+    headers = {"x-internal-token": admin_token}
+    first = await client.post("/stocks", json={"name": "Warehouse A"}, headers=headers)
+    assert first.status_code == 201
+
+    second = await client.post("/stocks", json={"name": "Warehouse A"}, headers=headers)
+    assert second.status_code == 409
+
+
+async def test_create_stock_name_too_short(client, admin_token):
+    resp = await client.post(
+        "/stocks",
+        json={"name": "A"},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 422
+
+
+async def test_list_stocks(client, admin_token):
+    await create_stock(client, admin_token, name="Warehouse A")
     resp = await client.get("/stocks")
     assert resp.status_code == 200
     body = resp.json()
@@ -24,8 +68,8 @@ async def test_list_stock_items_not_found(client):
     assert resp.status_code == 404
 
 
-async def test_receive_stock_item_requires_admin(client, customer_token):
-    stock_id = await create_stock(client)
+async def test_receive_stock_item_requires_admin(client, customer_token, admin_token):
+    stock_id = await create_stock(client, admin_token)
     resp = await client.post(
         f"/stocks/{stock_id}/items",
         json={"product_id": str(uuid.uuid4()), "quantity": 5},
@@ -35,7 +79,7 @@ async def test_receive_stock_item_requires_admin(client, customer_token):
 
 
 async def test_receive_stock_item_as_admin_succeeds(client, admin_token):
-    stock_id = await create_stock(client)
+    stock_id = await create_stock(client, admin_token)
     product_id = str(uuid.uuid4())
     resp = await client.post(
         f"/stocks/{stock_id}/items",
@@ -49,7 +93,7 @@ async def test_receive_stock_item_as_admin_succeeds(client, admin_token):
 
 
 async def test_receive_stock_item_accumulates_quantity(client, admin_token):
-    stock_id = await create_stock(client)
+    stock_id = await create_stock(client, admin_token)
     product_id = str(uuid.uuid4())
     headers = {"x-internal-token": admin_token}
 
@@ -74,7 +118,7 @@ async def test_receive_stock_item_unknown_stock(client, admin_token):
 
 
 async def test_list_stock_items(client, admin_token):
-    stock_id = await create_stock(client)
+    stock_id = await create_stock(client, admin_token)
     product_id = str(uuid.uuid4())
     await client.post(
         f"/stocks/{stock_id}/items",
@@ -90,8 +134,8 @@ async def test_list_stock_items(client, admin_token):
 
 
 async def test_move_stock_item_requires_admin(client, customer_token, admin_token):
-    src = await create_stock(client, name="Src")
-    dst = await create_stock(client, name="Dst")
+    src = await create_stock(client, admin_token, name="Src")
+    dst = await create_stock(client, admin_token, name="Dst")
     product_id = str(uuid.uuid4())
     created = await client.post(
         f"/stocks/{src}/items",
@@ -110,8 +154,8 @@ async def test_move_stock_item_requires_admin(client, customer_token, admin_toke
 
 async def test_move_stock_item_as_admin_succeeds(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    src = await create_stock(client, name="Src")
-    dst = await create_stock(client, name="Dst")
+    src = await create_stock(client, admin_token, name="Src")
+    dst = await create_stock(client, admin_token, name="Dst")
     product_id = str(uuid.uuid4())
     created = await client.post(
         f"/stocks/{src}/items", json={"product_id": product_id, "quantity": 5}, headers=headers
@@ -135,8 +179,8 @@ async def test_move_stock_item_as_admin_succeeds(client, admin_token):
 
 async def test_move_stock_item_insufficient_quantity(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    src = await create_stock(client, name="Src")
-    dst = await create_stock(client, name="Dst")
+    src = await create_stock(client, admin_token, name="Src")
+    dst = await create_stock(client, admin_token, name="Dst")
     product_id = str(uuid.uuid4())
     created = await client.post(
         f"/stocks/{src}/items", json={"product_id": product_id, "quantity": 5}, headers=headers
@@ -153,7 +197,7 @@ async def test_move_stock_item_insufficient_quantity(client, admin_token):
 
 async def test_move_stock_item_same_stock_rejected(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    stock_id = await create_stock(client)
+    stock_id = await create_stock(client, admin_token)
     product_id = str(uuid.uuid4())
     created = await client.post(
         f"/stocks/{stock_id}/items", json={"product_id": product_id, "quantity": 5}, headers=headers
@@ -170,8 +214,8 @@ async def test_move_stock_item_same_stock_rejected(client, admin_token):
 
 async def test_move_stock_item_not_found(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    src = await create_stock(client, name="Src")
-    dst = await create_stock(client, name="Dst")
+    src = await create_stock(client, admin_token, name="Src")
+    dst = await create_stock(client, admin_token, name="Dst")
 
     resp = await client.post(
         f"/stocks/{src}/items/{uuid.uuid4()}/move",

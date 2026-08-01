@@ -5,8 +5,8 @@ from tests.conftest import create_stock
 
 async def test_check_availability_sufficient(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    stock_a = await create_stock(client, name="A")
-    stock_b = await create_stock(client, name="B")
+    stock_a = await create_stock(client, admin_token, name="Stock A")
+    stock_b = await create_stock(client, admin_token, name="Stock B")
     product_id = str(uuid.uuid4())
 
     await client.post(f"/stocks/{stock_a}/items", json={"product_id": product_id, "quantity": 5}, headers=headers)
@@ -26,7 +26,7 @@ async def test_check_availability_sufficient(client, admin_token):
 
 async def test_check_availability_insufficient(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    stock_id = await create_stock(client)
+    stock_id = await create_stock(client, admin_token)
     product_id = str(uuid.uuid4())
 
     await client.post(f"/stocks/{stock_id}/items", json={"product_id": product_id, "quantity": 3}, headers=headers)
@@ -55,7 +55,7 @@ async def test_check_availability_unknown_product_is_zero_available(client):
 
 async def test_check_availability_partial_across_multiple_products(client, admin_token):
     headers = {"x-internal-token": admin_token}
-    stock_id = await create_stock(client)
+    stock_id = await create_stock(client, admin_token)
     sufficient_product = str(uuid.uuid4())
     insufficient_product = str(uuid.uuid4())
 

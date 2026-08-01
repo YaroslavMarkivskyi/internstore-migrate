@@ -21,12 +21,11 @@ which mirrors `services/catalog/src/catalog/auth.py`).
   bare UUID referencing Catalog's `Product.id`; there is no foreign key to
   Catalog's database, and this service never validates the product exists.
 
-Stocks have no create/write endpoint in this cut — they're provisioned
-out-of-band (physical store setup), not through Inventory's HTTP surface.
-
 ## Endpoints
 
 - `GET /health` — liveness check.
+- `POST /stocks` — admin-only. Body: `{"name": "..."}` (2-100 chars,
+  unique), `temperature` optional. 409 on duplicate name.
 - `GET /stocks` — public, list stocks with `temperature` (`null` until
   Telemetry integration lands).
 - `GET /stocks/{id}/items` — public, list stock items for one stock. 404 if
@@ -87,6 +86,15 @@ docker compose up -d inventory-db inventory
 Reachable through nginx at `/api/inventory/*` (see
 [nginx/nginx.conf](../../nginx/nginx.conf)), not exposed on the host
 directly — same pattern as catalog.
+
+End-to-end smoke test against the real gateway with real Keycloak-issued
+tokens (401/403/201/200 through nginx, quantity accumulation, move, and all
+three check-availability outcomes):
+
+```bash
+docker compose up -d --build inventory-db inventory nginx
+./scripts/verify-inventory-gateway.sh
+```
 
 ## Migrations
 
