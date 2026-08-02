@@ -54,6 +54,12 @@ services:
       # Internal Docker network path — faster, and JWKS content doesn't
       # depend on which hostname you fetch it from.
       KEYCLOAK_JWKS_URI: http://keycloak:8080/realms/internstore/protocol/openid-connect/certs
+      # Used for AUTH-05 token introspection (see auth/revocation.py) —
+      # matches the confidential client in keycloak/realm-export.json
+      # (internstore-web is public and has no secret, so it can't
+      # authenticate an introspection call).
+      KEYCLOAK_CLIENT_ID: internstore-backend
+      KEYCLOAK_CLIENT_SECRET: dev-only-keycloak-client-secret-change-me
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       INTERNAL_TOKEN_TTL_SECONDS: "60"
       REDIS_URL: redis://redis:6379

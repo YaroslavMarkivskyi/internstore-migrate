@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
 
+from auth_backend.auth.revocation import RevocationChecker
 from auth_backend.config import Settings
 from auth_backend.main import create_app
 
@@ -100,9 +101,22 @@ async def client(monkeypatch, redis, rsa_keypair):
         lambda self, token: _FakeSigningKey(public_pem),
     )
 
+    # No real Keycloak introspection endpoint in unit tests either — default
+    # every token to "active" so tests unrelated to revocation don't depend
+    # on Keycloak reachability. test_revocation.py overrides this per test
+    # (via the same `monkeypatch` fixture) to exercise the revoked /
+    # unreachable / cached paths.
+    async def _default_introspect(self: RevocationChecker, token: str) -> bool:
+        del self, token
+        return False
+
+    monkeypatch.setattr(RevocationChecker, "_introspect", _default_introspect)
+
     settings = Settings(
         keycloak_issuer=KEYCLOAK_ISSUER,
         keycloak_jwks_uri="http://keycloak.invalid/realms/internstore/protocol/openid-connect/certs",
+        keycloak_client_id="test-client",
+        keycloak_client_secret="test-client-secret",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
         internal_token_ttl_seconds=60,
         redis_url="redis://redis.invalid:6379",
@@ -116,10 +130,9 @@ async def client(monkeypatch, redis, rsa_keypair):
     app.state.redis = redis
     from auth_backend.auth.external_token import ExternalTokenVerifier
     from auth_backend.auth.guest_session import GuestSessionStore
-    from auth_backend.auth.revocation import RevocationChecker
 
     app.state.guest_session_store = GuestSessionStore(redis)
-    app.state.revocation_checker = RevocationChecker(redis)
+    app.state.revocation_checker = RevocationChecker(settings)
     app.state.external_token_verifier = ExternalTokenVerifier(settings.keycloak_issuer, settings.keycloak_jwks_uri)
 
     transport = ASGITransport(app=app)

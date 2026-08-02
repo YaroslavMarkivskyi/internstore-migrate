@@ -110,12 +110,27 @@ and the guest branch in
 ## Redis
 
 `REDIS_URL` is required (not optional) since guest sessions depend on it.
-It's also threaded through to
-[src/auth_backend/auth/revocation.py](src/auth_backend/auth/revocation.py),
-which currently always reports "not revoked" — a placeholder for the
-`/logout` denylist (AUTH-05); real revocation checks land together with the
-logout endpoint. The two Redis usages are unrelated: guest sessions use a
-`guest_session:` key prefix, revocation will use its own.
+
+## Revocation (AUTH-05)
+
+[src/auth_backend/auth/revocation.py](src/auth_backend/auth/revocation.py)
+checks every Keycloak access token against Keycloak's RFC 7662 token
+introspection endpoint on `/auth/verify`, so a revoked token (logout, admin
+disable, compromised session) is rejected instead of staying valid until its
+own `exp`. This is a deliberate reversal of the original "no synchronous
+call per request" AUTH-03/AUTH-05 constraint (see
+[docs/requirements/AUTH.md](../../docs/requirements/AUTH.md)) — introspection
+results are cached in-memory for up to 30s (keyed by `sha256(token)`, never
+the raw token) so the added Keycloak round trip is amortized across repeated
+`/auth/verify` calls for the same token rather than paid on every request.
+Introspection failures (non-200, unreachable Keycloak) fail closed — treated
+as revoked rather than silently trusting the token.
+
+`KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET` authenticate the introspection
+request and must match a confidential client in the Keycloak realm
+(`internstore-backend` in `keycloak/realm-export.json` — the browser-facing
+`internstore-web` client is public and has no secret, so it can't be used
+here).
 
 ## Local dev without Docker
 

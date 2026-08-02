@@ -44,10 +44,18 @@ Update this file if a different source of truth (Jira/Linear) supersedes it.
 
 - A logout request revokes the refresh token (and, per Keycloak session
   semantics, the associated session) at Keycloak.
-- Access tokens already issued remain valid until natural expiry (short TTL,
-  target ≤5 min) — there is no per-request revocation check, consistent with
-  AUTH-03's "no synchronous call per request" constraint.
 - A revoked refresh token can no longer be used to mint new access tokens.
+- Access tokens already issued are checked on every `/auth/verify` call via
+  Keycloak's token introspection endpoint (RFC 7662), so a revoked token is
+  rejected immediately rather than remaining valid until its own `exp`. This
+  supersedes the original "no per-request revocation check" design —
+  AUTH-03's "no synchronous call back to Keycloak per request" constraint
+  still applies to signature/`exp`/`iss`/`aud` validation, which stays local
+  via JWKS, but no longer to revocation status.
+- Introspection results are cached for up to 30s per token, bounding the
+  worst-case revocation-propagation window to that cache TTL instead of the
+  access token's full remaining lifetime. Introspection failures (Keycloak
+  unreachable or erroring) fail closed: the token is treated as revoked.
 
 ## Roles
 

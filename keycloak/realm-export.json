@@ -63,6 +63,20 @@
       ],
       "webOrigins": ["+"],
       "fullScopeAllowed": true
+    },
+    {
+      "clientId": "internstore-backend",
+      "name": "InternStore auth-backend (AUTH-05 token introspection)",
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "secret": "dev-only-keycloak-client-secret-change-me",
+      "redirectUris": [],
+      "webOrigins": [],
+      "fullScopeAllowed": false
     }
   ],
   "users": [

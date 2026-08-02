@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.redis = redis
     app.state.guest_session_store = GuestSessionStore(redis)
-    app.state.revocation_checker = RevocationChecker(redis)
+    app.state.revocation_checker = RevocationChecker(settings)
     app.state.external_token_verifier = ExternalTokenVerifier(settings.keycloak_issuer, settings.keycloak_jwks_uri)
 
     try:
@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         try:
             claims = verifier.verify(external_token)
-            if await revocation_checker.is_revoked(claims.sub):
+            if await revocation_checker.is_revoked(external_token):
                 return Response(status_code=401)
             internal_token = mint_internal_token(
                 MintableClaims(sub=claims.sub, role=claims.role),
