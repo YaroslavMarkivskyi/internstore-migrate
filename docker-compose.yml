@@ -300,6 +300,90 @@ services:
     # this service has no Gateway route and no synchronous callers, pure
     # Kafka consumer + SMTP sender. See services/notifications/README.md.
 
+  chat-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: chat
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: chat
+    volumes:
+      - chat_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      # Both exposed to the host: 9000 is the S3 API — chat's
+      # MINIO_PUBLIC_BASE_URL points a browser at this directly so it can
+      # load attachment_url images (documented dev gap, see
+      # services/chat/README.md — a real S3/CloudFront/signed-URL setup
+      # replaces this in prod). 9001 is the web console, for manual
+      # inspection only.
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/chat-attachments &&
+        mc anonymous set download local/chat-attachments
+    # One-shot: creates the chat-attachments bucket and makes it
+    # public-read within the docker network (per the ticket) — mirrors
+    # kafka-topic-init's one-shot-provisioning-sidecar pattern.
+
+  chat:
+    build: ./services/chat
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://chat:chat@chat-db:5432/chat
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
+      # other domain service.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      OUTBOX_POLL_INTERVAL_SECONDS: "1.0"
+      # Shared with auth-backend — Redis pub/sub + presence sets live under
+      # a chat:-prefixed key namespace, isolated from auth-backend's
+      # guest_session: keys on the same instance.
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_BASE_URL: http://localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: chat-attachments
+    depends_on:
+      chat-db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # Not exposed on the host — only reachable through nginx, same as
+    # catalog/inventory/orders/telemetry/security. nginx's /ws/ and
+    # /api/chat/ locations address this container as chat:8000.
+
   nginx:
     build: ./nginx
     ports:
@@ -313,6 +397,7 @@ services:
       - orders
       - telemetry
       - security
+      - chat
 
   kafka:
     image: apache/kafka:3.7.0
@@ -362,4 +447,6 @@ volumes:
   orders_db_data:
   telemetry_db_data:
   security_db_data:
+  chat_db_data:
+  minio_data:
   kafka_data:

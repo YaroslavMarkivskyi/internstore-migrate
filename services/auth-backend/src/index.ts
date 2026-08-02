@@ -12,11 +12,22 @@ const mintInternalToken = createInternalTokenIssuer(config.internalTokenSecret, 
 const isRevoked = createRevocationChecker(config.redisUrl);
 const guestSessionStore = createGuestSessionStore(config.redisUrl);
 
-// Cart/checkout are reachable without a Keycloak login — these are the
-// only paths /auth/verify grants a role=guest fallback token for. Order
-// history (/api/orders/orders) is deliberately NOT included: a guest can
-// check out but must register/log in to see past orders.
-const GUEST_ALLOWED_PATH_PREFIXES = ["/api/orders/cart", "/api/orders/checkout"];
+// Cart/checkout, chat, and chat attachment uploads are reachable without a
+// Keycloak login — these are the only paths /auth/verify grants a
+// role=guest fallback token for. Order history (/api/orders/orders) is
+// deliberately NOT included: a guest can check out but must register/log
+// in to see past orders. /ws/room and /api/chat/rooms are shared by both
+// guest-usable paths (WS connect, attachment upload) and admin-only ones
+// (GET /rooms, DELETE /rooms/:id) — that's fine, chat's own
+// require_admin dependency rejects a guest token on the admin-only routes;
+// this allowlist only controls whether auth-backend issues a guest
+// fallback token at all, not what that token is allowed to do downstream.
+const GUEST_ALLOWED_PATH_PREFIXES = [
+  "/api/orders/cart",
+  "/api/orders/checkout",
+  "/ws/room",
+  "/api/chat/rooms",
+];
 const GUEST_COOKIE_NAME = "is_guest_id";
 
 function isGuestAllowedPath(originalUri: string): boolean {

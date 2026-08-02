@@ -24,7 +24,7 @@ topics per event type.
 | `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired` | Inventory service |
 | `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized` | Telemetry service |
 | `catalog-events` | `ProductThresholdUpdated` | Catalog service |
-| `chat-events` | `UnreadMessageReceived` | Chat service (future) |
+| `chat-events` | `UnreadMessageReceived` | Chat service |
 
 All topics: 1 partition, replication factor 1 (single broker, no HA at this
 stage). Created automatically by the `kafka-topic-init` compose service on
@@ -37,7 +37,7 @@ consistency), so every auth attempt is written straight to Security's own
 DB via `POST /auth/fingerprint` / `POST /auth/nfc`. See
 [services/security/README.md](../services/security/README.md).
 
-Notifications consumes all four topics (dispatching on `eventType`, same as
+Notifications consumes all five topics (dispatching on `eventType`, same as
 every other consumer here) and is the first pure event consumer in the
 system: no Gateway route, no synchronous callers or callees. See
 [services/notifications/README.md](../services/notifications/README.md).
@@ -49,12 +49,13 @@ docker compose up -d kafka kafka-topic-init
 ./scripts/test-kafka-smoke.sh
 ```
 
-This only proves the broker/topics are reachable — no consumer business
-logic exists yet for Telemetry/Chat. Orders and Inventory now have real
-producers/consumers implementing the reservation saga (transactional
+This only proves the broker/topics are reachable. Orders and Inventory have
+real producers/consumers implementing the reservation saga (transactional
 outbox on both sides, idempotent consumers) — see
 [scripts/test-reservation-saga.sh](../scripts/test-reservation-saga.sh) for
-an end-to-end run against the real broker.
+an end-to-end run against the real broker. Chat is a producer-only client of
+`chat-events` (transactional outbox, same pattern) — see
+[scripts/test-chat-saga.sh](../scripts/test-chat-saga.sh).
 
 ## Known, accepted gaps (dev-only stage)
 

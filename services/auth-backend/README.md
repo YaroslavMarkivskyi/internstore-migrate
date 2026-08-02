@@ -65,7 +65,11 @@ there was no pre-existing session mechanism for this in the repo, so
 [src/auth/guestSession.ts](src/auth/guestSession.ts) and the guest branch in
 [src/index.ts](src/index.ts)):
 
-- Only granted on paths under `/api/orders/cart` or `/api/orders/checkout`
+- Only granted on paths under `/api/orders/cart`, `/api/orders/checkout`,
+  `/ws/room` (Chat's WebSocket connect), or `/api/chat/rooms` (Chat's
+  attachment upload — also covers Chat's admin-only REST routes at the
+  gateway-allowlist level, but those are still rejected downstream by
+  Chat's own admin check, see [services/chat/README.md](../chat/README.md))
   (nginx forwards the original request path as `X-Original-URI` — see
   [nginx/nginx.conf](../../nginx/nginx.conf)). Every other path still 401s
   with no `Authorization` header, exactly as before — in particular,
