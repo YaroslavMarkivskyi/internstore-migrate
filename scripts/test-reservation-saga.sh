@@ -107,7 +107,7 @@ pass "POST /orders/:id/pay -> paid"
 poll_until 30 "item_quantity '$ADMIN_TOKEN' '$PRODUCT_A'" "7" \
   "PaymentConfirmed -> (real Kafka) -> Inventory decrements -> quantity 10 -> 7"
 
-echo "=== 2. Reservation-time insufficient stock -> rejected (real Kafka, exercises the documented check-availability/reserved_quantity gap) ==="
+echo "=== 2. Reservation-time insufficient stock -> rejected upfront (STR-129: check-availability subtracts reserved_quantity) ==="
 PRODUCT_B=$(python3 -c "import uuid; print(uuid.uuid4())")
 seed_stock "$ADMIN_TOKEN" "$PRODUCT_B" 5
 
@@ -119,18 +119,23 @@ ORDER_B1=$($CURL -X POST "$GATEWAY_URL/checkout" -H "Authorization: Bearer $CUST
 poll_until 30 "order_status '$CUSTOMER_TOKEN' '$ORDER_B1'" "pending" \
   "first order for product B reserves the full quantity (5) -> pending"
 
-# check-availability still sees raw quantity=5 (it doesn't know 5 is
-# already held by order B1's reservation) so this second checkout is
-# accepted synchronously — the real reservation attempt is what fails.
+# STR-129 fixed check-availability to subtract reserved_quantity, so it now
+# correctly sees 0 effectively-available stock (5 held by order B1's
+# reservation) and Orders rejects the second checkout synchronously with
+# 409, instead of accepting it and only failing later via the async
+# reservation saga.
 $CURL -X POST "$GATEWAY_URL/cart" -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
   -d "{\"product_id\": \"$PRODUCT_B\", \"quantity\": 5}" >/dev/null
-ORDER_B2=$($CURL -X POST "$GATEWAY_URL/checkout" -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
-  -d '{"contact_name": "Saga Customer", "contact_email": "customer@example.com", "payment_method": "card"}' | jq -r .id)
-[ -n "$ORDER_B2" ] && [ "$ORDER_B2" != "null" ] || fail "second checkout for product B did not return an order id"
-pass "second checkout for product B accepted synchronously (status=new) despite no stock actually being free"
+CHECKOUT_B2_STATUS=$($CURL -o /dev/null -w "%{http_code}" -X POST "$GATEWAY_URL/checkout" \
+  -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"contact_name": "Saga Customer", "contact_email": "customer@example.com", "payment_method": "card"}')
+[ "$CHECKOUT_B2_STATUS" = "409" ] || fail "second checkout for product B got $CHECKOUT_B2_STATUS, expected 409 (insufficient effective stock)"
+pass "second checkout for product B rejected synchronously (409) -- check-availability correctly saw 0 effectively-available stock"
 
-poll_until 30 "order_status '$CUSTOMER_TOKEN' '$ORDER_B2'" "rejected" \
-  "OrderCreated -> Inventory's real reservation finds nothing free -> StockReservationFailed -> status=rejected"
+# A 409 leaves the cart untouched (checkout only clears the cart on
+# success) -- remove product B so it doesn't also fail section 3's checkout
+# for an unrelated product sharing the same customer's cart.
+$CURL -X DELETE "$GATEWAY_URL/cart/items/$PRODUCT_B" -H "Authorization: Bearer $CUSTOMER_TOKEN" >/dev/null
 
 echo "=== 3. Expired reservation -> cancelled (short dev-only TTL) ==="
 PRODUCT_C=$(python3 -c "import uuid; print(uuid.uuid4())")

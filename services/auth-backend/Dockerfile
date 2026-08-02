@@ -1,12 +1,13 @@
-FROM node:20-alpine
+FROM python:3.12-slim
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml* ./
-RUN corepack enable && corepack prepare pnpm@9 --activate && pnpm install
+RUN pip install --no-cache-dir uv
 
-COPY tsconfig.json ./
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --no-dev --no-install-project
+
 COPY src ./src
-RUN pnpm build
+RUN uv sync --no-dev
 
 EXPOSE 3000
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "uv run uvicorn auth_backend.main:create_app --factory --host 0.0.0.0 --port ${PORT:-3000}"]

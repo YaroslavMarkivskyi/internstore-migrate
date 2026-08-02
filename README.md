@@ -11,8 +11,9 @@ docker compose up -d
 
 This starts Keycloak (`:8081`, admin console at `/admin`, login `admin`/`admin`),
 its Postgres DB, Redis (`:6379`), auth-backend (`:3000`, also reachable
-through nginx), the echo-service stub, the catalog service and its own
-Postgres DB (reachable only through nginx at `/api/catalog/*`), and nginx
+through nginx), the domain services (Catalog, Inventory, Orders, Telemetry,
+Security, Chat — each reachable only through nginx, e.g. Catalog at
+`/api/catalog/*`) and their own Postgres DBs, and nginx
 (`:8082` plain → redirects to `:8443` TLS; `:8082` because `:8080` is a
 common local conflict — remap in [docker-compose.yml](docker-compose.yml) if
 `:8443`/`:8082` are also taken on your machine). Keycloak imports the
@@ -31,9 +32,10 @@ Wait for Keycloak to report healthy, then run the end-to-end auth check:
 ./scripts/test-auth-flows.sh
 ```
 
-To exercise the full gateway path (nginx → auth-backend → echo-service),
-including negative cases, internal-token isolation/TTL, JWKS-cache
-resilience, and the WebSocket proxy (~90s, briefly stops/restarts Keycloak):
+To exercise the full gateway path (nginx → auth-backend → a domain service,
+e.g. Catalog), including negative cases, internal-token isolation/TTL,
+JWKS-cache resilience, and the WebSocket proxy (~90s, briefly
+stops/restarts Keycloak):
 
 ```bash
 ./scripts/verify-gateway.sh
@@ -45,14 +47,14 @@ The Gateway is split into two logically separate pieces that are brought up
 together:
 
 - [nginx/](nginx) — entry point for the on-prem topology: TLS termination,
-  `auth_request` to auth-backend, routing to domain services (currently just
-  the echo-service stub), and a WebSocket proxy location reserved for the
-  future Chat service.
-- [services/auth-backend](services/auth-backend) — TypeScript/Fastify
-  service that validates Keycloak-issued JWTs against the realm's JWKS
-  endpoint and mints short-lived internal tokens for downstream services.
-  nginx deliberately does *not* validate JWTs itself: that logic lives here
-  so it's portable, unchanged, to an AWS ALB topology later (see
+  `auth_request` to auth-backend, and routing to the domain services
+  (Catalog, Inventory, Orders, Telemetry, Security, Chat).
+- [services/auth-backend](services/auth-backend) — Python/FastAPI service
+  (same stack as every domain service) that validates Keycloak-issued JWTs
+  against the realm's JWKS endpoint and mints short-lived internal tokens
+  for downstream services. nginx deliberately does *not* validate JWTs
+  itself: that logic lives here so it's portable, unchanged, to an AWS ALB
+  topology later (see
   [services/auth-backend/README.md](services/auth-backend/README.md)).
 
 Local dev without Docker (auth-backend only; nginx needs the other services
@@ -61,8 +63,8 @@ running to be useful):
 ```bash
 cd services/auth-backend
 cp .env.example .env
-pnpm install
-pnpm dev
+uv sync
+uv run uvicorn auth_backend.main:create_app --factory --reload
 ```
 
 ## Domain services

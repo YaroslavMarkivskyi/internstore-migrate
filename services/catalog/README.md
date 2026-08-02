@@ -8,11 +8,10 @@ product's temperature threshold locally — see
 [services/telemetry](../telemetry). Its own Postgres database, no shared
 tables with any other service.
 
-Python/FastAPI/SQLAlchemy(async)/Alembic, unlike
-[services/auth-backend](../auth-backend) and
-[services/echo-service](../echo-service) which are TypeScript/Fastify — see
-STR-120 for the (unblocked, not-yet-started) plan to bring the gateway layer
-onto the same stack. Domain services going forward use this stack.
+Python/FastAPI/SQLAlchemy(async)/Alembic — first domain service on this
+stack, and now the same stack [services/auth-backend](../auth-backend) uses
+too (STR-120 ported the gateway layer onto it, and removed the
+`echo-service` placeholder now that real domain services exist).
 
 ## Endpoints
 
@@ -55,7 +54,7 @@ Every write endpoint validates the `X-Internal-Token` header locally — HMAC
 trusts `X-User-Id`/`X-User-Role` headers directly and never calls back to
 Keycloak or auth-backend. See
 [src/catalog/auth.py](src/catalog/auth.py), which mirrors
-`services/echo-service/src/internalToken.ts`.
+`services/auth-backend/src/auth_backend/auth/internal_token.py`.
 
 ## Local dev without Docker
 
@@ -80,7 +79,7 @@ docker compose up -d catalog-db catalog
 ```
 
 Reachable through nginx at `/api/catalog/*` (see [nginx/nginx.conf](../../nginx/nginx.conf)),
-not exposed on the host directly — same pattern as echo-service.
+not exposed on the host directly — same pattern as every other domain service.
 
 ## Migrations
 

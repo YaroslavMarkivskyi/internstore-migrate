@@ -2,16 +2,18 @@
 # End-to-end verification of the nginx + auth-backend Gateway, beyond just
 # "a request with a valid token returns 200". Covers:
 #
-#   1. Healthy path: valid Keycloak token -> nginx -> auth-backend -> echo-service
+#   1. Healthy path: valid Keycloak token -> nginx -> auth-backend -> Catalog,
+#      with X-User-Role actually enforced downstream (customer 403s on an
+#      admin-only write, admin 201s)
 #   2. Negative scenarios: no token / corrupted signature / wrong realm / expired
-#   3. Internal-token isolation: echo-service only trusts a verified internal
+#   3. Internal-token isolation: Catalog only trusts a verified internal
 #      token (separate HMAC secret from the external JWT, short TTL enforced
 #      downstream), never the raw external JWT or unverified headers
 #   4. JWKS caching: auth-backend keeps validating already-cached keys with
 #      Keycloak stopped (no synchronous per-request call to Keycloak)
-#   5. WebSocket proxy: nginx forwards the Upgrade/Connection handshake and
-#      still gates it with auth_request (no real chat-service backend yet,
-#      so this section is skipped unless one is reachable)
+#   5. WebSocket proxy: nginx still gates /ws/ with auth_request for an
+#      unauthenticated handshake attempt (full authenticated WS round-trip
+#      is covered by test-chat-saga.sh, which owns a real chat room)
 #
 # Requires: curl, jq, docker compose. Run after `docker compose up -d`.
 # Mutates the realm's accessTokenLifespan temporarily (restored on exit) and
@@ -43,12 +45,27 @@ admin_token() {
 echo "=== 1. Healthy path ==="
 TOKEN=$(login "customer@example.com" "Customer123")
 [ "$TOKEN" != "null" ] || fail "customer login did not return an access token"
-RESPONSE=$($CURL "$GATEWAY_URL/" -H "Authorization: Bearer $TOKEN")
-[ "$(echo "$RESPONSE" | jq -r .userRole)" = "customer" ] || fail "echo-service did not see userRole=customer (got: $RESPONSE)"
-pass "valid token reaches echo-service via nginx + auth-backend with role=customer"
+KC_ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
+[ "$KC_ADMIN_TOKEN" != "null" ] || fail "admin login did not return an access token"
+
+# A random-suffixed category name so repeat runs against a persistent dev DB
+# don't collide with a previous run's leftover row.
+PROBE_CATEGORY="gw-probe-$RANDOM"
+
+STATUS=$($CURL -o /dev/null -w "%{http_code}" -X POST "$GATEWAY_URL/api/catalog/categories" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"name\": \"$PROBE_CATEGORY\"}")
+[ "$STATUS" = "403" ] || fail "customer token reached Catalog's admin-only endpoint (got $STATUS, expected 403) -- X-User-Role did not propagate correctly"
+pass "customer token reaches Catalog via nginx + auth-backend with role=customer (rejected by Catalog's own admin check)"
+
+STATUS=$($CURL -o /dev/null -w "%{http_code}" -X POST "$GATEWAY_URL/api/catalog/categories" \
+  -H "Authorization: Bearer $KC_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"name\": \"$PROBE_CATEGORY\"}")
+[ "$STATUS" = "201" ] || fail "admin token could not create a category through the gateway (got $STATUS, expected 201)"
+pass "admin token reaches Catalog via nginx + auth-backend with role=admin"
 
 echo "=== 2. Negative scenarios ==="
-STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/")
+STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categories")
 [ "$STATUS" = "401" ] || fail "no token got $STATUS, expected 401"
 pass "no token -> 401"
 
@@ -61,12 +78,12 @@ CORRUPT_POS=$((${#TOKEN} - 20))
 ORIG_CHAR="${TOKEN:$CORRUPT_POS:1}"
 REPLACEMENT="X"; [ "$ORIG_CHAR" = "X" ] && REPLACEMENT="Y"
 CORRUPTED_TOKEN="${TOKEN:0:$CORRUPT_POS}${REPLACEMENT}${TOKEN:$((CORRUPT_POS + 1))}"
-STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/" -H "Authorization: Bearer $CORRUPTED_TOKEN")
+STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categories" -H "Authorization: Bearer $CORRUPTED_TOKEN")
 [ "$STATUS" = "401" ] || fail "corrupted signature got $STATUS, expected 401"
 pass "corrupted signature -> 401"
 
 WRONG_REALM_TOKEN=$(admin_token)
-STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/" -H "Authorization: Bearer $WRONG_REALM_TOKEN")
+STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categories" -H "Authorization: Bearer $WRONG_REALM_TOKEN")
 [ "$STATUS" = "401" ] || fail "token from wrong realm got $STATUS, expected 401"
 pass "token from wrong realm (iss mismatch) -> 401"
 
@@ -75,22 +92,25 @@ curl -sf -X PUT "$KC_URL/admin/realms/$REALM" -H "Authorization: Bearer $ADMIN_T
   -H "Content-Type: application/json" -d '{"accessTokenLifespan": 3}' >/dev/null
 SHORT_TOKEN=$(login "customer@example.com" "Customer123")
 sleep 5
-STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/" -H "Authorization: Bearer $SHORT_TOKEN")
+STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categories" -H "Authorization: Bearer $SHORT_TOKEN")
 curl -sf -X PUT "$KC_URL/admin/realms/$REALM" -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" -d '{"accessTokenLifespan": 300}' >/dev/null
 [ "$STATUS" = "401" ] || fail "expired token got $STATUS, expected 401"
 pass "expired token -> 401 (realm lifespan restored)"
 
-echo "=== 3. Internal token isolation (bypassing nginx, hitting echo-service directly) ==="
-DIRECT() { docker run --rm --network internstore-migrate_default curlimages/curl -s -o /dev/null -w "%{http_code}" "$@"; }
+echo "=== 3. Internal token isolation (bypassing nginx, hitting Catalog directly) ==="
+DIRECT() {
+  docker run --rm --network internstore-migrate_default curlimages/curl -s -o /dev/null -w "%{http_code}" \
+    -X POST -H "Content-Type: application/json" -d "{\"name\": \"direct-probe-$RANDOM\"}" "$@"
+}
 
-STATUS=$(DIRECT http://echo-service:4000/ -H "X-User-Id: attacker" -H "X-User-Role: admin" -H "X-Internal-Token: forged-garbage")
-[ "$STATUS" = "401" ] || fail "echo-service accepted a forged internal token (got $STATUS) -- it must validate the token itself, not trust headers"
-pass "forged internal token rejected by echo-service directly (headers alone are not trusted)"
+STATUS=$(DIRECT http://catalog:8000/categories -H "X-User-Id: attacker" -H "X-User-Role: admin" -H "X-Internal-Token: forged-garbage")
+[ "$STATUS" = "401" ] || fail "Catalog accepted a forged internal token (got $STATUS) -- it must validate the token itself, not trust headers"
+pass "forged internal token rejected by Catalog directly (headers alone are not trusted)"
 
-STATUS=$(DIRECT http://echo-service:4000/)
-[ "$STATUS" = "401" ] || fail "echo-service accepted a request with no internal token (got $STATUS)"
-pass "missing internal token rejected by echo-service directly"
+STATUS=$(DIRECT http://catalog:8000/categories)
+[ "$STATUS" = "401" ] || fail "Catalog accepted a request with no internal token (got $STATUS)"
+pass "missing internal token rejected by Catalog directly"
 
 INTERNAL=$(curl -sf "$AUTH_BACKEND_URL/me" -H "Authorization: Bearer $TOKEN" | jq -r .internalToken)
 [ "$INTERNAL" != "null" ] && [ -n "$INTERNAL" ] || fail "auth-backend did not mint an internal token"
@@ -100,14 +120,14 @@ pass "internal token uses HS256 with a separate secret, not the external token's
 
 echo "waiting 65s for the internal token's 60s TTL to lapse..."
 sleep 65
-STATUS=$(DIRECT http://echo-service:4000/ -H "X-Internal-Token: $INTERNAL")
-[ "$STATUS" = "401" ] || fail "expired internal token still accepted by echo-service (got $STATUS)"
+STATUS=$(DIRECT http://catalog:8000/categories -H "X-Internal-Token: $INTERNAL")
+[ "$STATUS" = "401" ] || fail "expired internal token still accepted by Catalog (got $STATUS)"
 pass "internal token TTL (~60s) is enforced downstream, independent of the external token's lifetime"
 
 echo "=== 4. JWKS caching survives Keycloak being unreachable ==="
 TOKEN=$(login "customer@example.com" "Customer123")
 docker compose stop keycloak >/dev/null
-STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/" -H "Authorization: Bearer $TOKEN")
+STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categories" -H "Authorization: Bearer $TOKEN")
 docker compose start keycloak >/dev/null
 [ "$STATUS" = "200" ] || fail "verification failed with Keycloak stopped (got $STATUS) -- JWKS should be cached in-process"
 pass "auth-backend validates already-cached JWKS keys with Keycloak stopped (no synchronous per-request call)"
@@ -118,24 +138,18 @@ for _ in $(seq 1 20); do
   sleep 3
 done
 
-echo "=== 5. WebSocket proxy (auth_request + Upgrade header forwarding) ==="
-TOKEN=$(login "customer@example.com" "Customer123")
-STATUS=$($CURL -o /dev/null -w "%{http_code}" -N "$GATEWAY_URL/ws/echo" \
-  -H "Authorization: Bearer $TOKEN" \
+echo "=== 5. WebSocket proxy (auth_request still gates /ws/ with no token) ==="
+# Deliberately NOT /ws/room/... -- that prefix is guest-allowed (Chat's
+# guest connect path, see GUEST_ALLOWED_PATH_PREFIXES), so a request with no
+# Authorization there correctly gets a 200 + guest token, not a 401. Any
+# other path under /ws/ still goes through the same auth_request gate but
+# isn't guest-allowed, so it isolates the "auth_request still runs on this
+# location" check from the guest-fallback behavior.
+STATUS=$($CURL -o /dev/null -w "%{http_code}" -N "$GATEWAY_URL/ws/probe" \
   -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
   -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==")
-if [ "$STATUS" = "502" ]; then
-  echo "SKIP: /ws/ has no chat-service backend yet (502 is expected until Chat exists); auth gating still verified below"
-  UNAUTH_STATUS=$($CURL -o /dev/null -w "%{http_code}" -N "$GATEWAY_URL/ws/echo" \
-    -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
-    -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==")
-  [ "$UNAUTH_STATUS" = "401" ] || fail "/ws/ without a token got $UNAUTH_STATUS, expected 401"
-  pass "/ws/ still enforces auth_request even with no backend behind it"
-elif [ "$STATUS" = "101" ]; then
-  pass "/ws/ completes the WebSocket handshake through nginx"
-else
-  fail "/ws/ returned unexpected status $STATUS"
-fi
+[ "$STATUS" = "401" ] || fail "/ws/ without a token got $STATUS, expected 401"
+pass "/ws/ enforces auth_request on an unauthenticated handshake outside the guest allowlist (see test-chat-saga.sh for an authenticated round-trip)"
 
 echo
 echo "All gateway verification checks passed."

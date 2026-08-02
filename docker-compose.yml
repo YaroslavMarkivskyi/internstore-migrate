@@ -65,17 +65,6 @@ services:
       - keycloak
       - redis
 
-  echo-service:
-    build: ./services/echo-service
-    environment:
-      PORT: "4000"
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET — this is the
-      # shared secret every internal service validates the Gateway-minted
-      # token against, without calling back to auth-backend or Keycloak.
-      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
-    # Not exposed on the host — only reachable through nginx, same as any
-    # other real domain service would be.
-
   catalog-db:
     image: postgres:16-alpine
     environment:
@@ -95,7 +84,9 @@ services:
     environment:
       PORT: "8000"
       DATABASE_URL: postgresql+asyncpg://catalog:catalog@catalog-db:5432/catalog
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as echo-service.
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET — this is the
+      # shared secret every internal service validates the Gateway-minted
+      # token against, without calling back to auth-backend or Keycloak.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
@@ -103,8 +94,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    # Not exposed on the host — only reachable through nginx, same as
-    # echo-service.
+    # Not exposed on the host — only reachable through nginx, same as any
+    # other real domain service.
 
   inventory-db:
     image: postgres:16-alpine
@@ -391,7 +382,6 @@ services:
       - "8443:8443"
     depends_on:
       - auth-backend
-      - echo-service
       - catalog
       - inventory
       - orders

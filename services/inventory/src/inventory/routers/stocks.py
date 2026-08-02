@@ -160,9 +160,11 @@ async def check_availability(
     results: list[AvailabilityResultItem] = []
     for requested in payload.items:
         total = await session.execute(
-            select(StockItem.quantity).where(StockItem.product_id == requested.product_id)
+            select(StockItem.quantity, StockItem.reserved_quantity).where(
+                StockItem.product_id == requested.product_id
+            )
         )
-        available = sum(total.scalars().all())
+        available = sum(quantity - reserved_quantity for quantity, reserved_quantity in total.all())
         results.append(
             AvailabilityResultItem(
                 product_id=requested.product_id,

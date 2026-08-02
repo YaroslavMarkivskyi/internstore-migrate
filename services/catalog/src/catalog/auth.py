@@ -12,12 +12,12 @@ class InternalClaims(BaseModel):
     role: Literal["customer", "admin"]
 
 
-# Mirrors auth-backend's createInternalTokenVerifier
-# (services/auth-backend/src/auth/internalToken.ts) and echo-service's copy
-# of the same. Every domain service validates the Gateway-minted internal
-# token locally against the shared HMAC secret — no call back to
-# auth-backend or Keycloak. Never trust X-User-Id/X-User-Role headers
-# directly; only the claims that come out of this verification.
+# Mirrors auth-backend's mint_internal_token
+# (services/auth-backend/src/auth_backend/auth/internal_token.py). Every
+# domain service validates the Gateway-minted internal token locally
+# against the shared HMAC secret — no call back to auth-backend or
+# Keycloak. Never trust X-User-Id/X-User-Role headers directly; only the
+# claims that come out of this verification.
 def verify_internal_token(token: str, secret: str) -> InternalClaims:
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"], issuer=ISSUER)

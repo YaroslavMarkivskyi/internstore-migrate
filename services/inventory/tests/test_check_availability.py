@@ -1,6 +1,26 @@
 import uuid
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from inventory.models import Stock, StockItem
 from tests.conftest import create_stock
+
+
+@pytest.fixture
+async def session(client) -> AsyncSession:
+    async with client.app.state.session_factory() as session:
+        yield session
+
+
+async def _make_stock_item(session: AsyncSession, quantity: int, reserved_quantity: int, product_id: uuid.UUID) -> StockItem:
+    stock = Stock(name=f"Warehouse {uuid.uuid4()}")
+    session.add(stock)
+    await session.flush()
+    item = StockItem(stock_id=stock.id, product_id=product_id, quantity=quantity, reserved_quantity=reserved_quantity)
+    session.add(item)
+    await session.commit()
+    return item
 
 
 async def test_check_availability_sufficient(client, admin_token):
@@ -102,3 +122,51 @@ async def test_check_availability_guest_token_allowed(client, guest_token):
         headers={"x-internal-token": guest_token},
     )
     assert resp.status_code == 200
+
+
+async def test_check_availability_reserved_quantity_makes_it_insufficient(client, guest_token, session):
+    product_id = uuid.uuid4()
+    await _make_stock_item(session, quantity=10, reserved_quantity=8, product_id=product_id)
+
+    resp = await client.post(
+        "/stocks/check-availability",
+        json={"items": [{"product_id": str(product_id), "quantity": 5}]},
+        headers={"x-internal-token": guest_token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sufficient"] is False
+    assert body["items"][0]["available"] == 2
+    assert body["items"][0]["sufficient"] is False
+
+
+async def test_check_availability_reserved_quantity_still_sufficient(client, guest_token, session):
+    product_id = uuid.uuid4()
+    await _make_stock_item(session, quantity=10, reserved_quantity=3, product_id=product_id)
+
+    resp = await client.post(
+        "/stocks/check-availability",
+        json={"items": [{"product_id": str(product_id), "quantity": 5}]},
+        headers={"x-internal-token": guest_token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sufficient"] is True
+    assert body["items"][0]["available"] == 7
+    assert body["items"][0]["sufficient"] is True
+
+
+async def test_check_availability_fully_reserved_is_insufficient(client, guest_token, session):
+    product_id = uuid.uuid4()
+    await _make_stock_item(session, quantity=6, reserved_quantity=6, product_id=product_id)
+
+    resp = await client.post(
+        "/stocks/check-availability",
+        json={"items": [{"product_id": str(product_id), "quantity": 1}]},
+        headers={"x-internal-token": guest_token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sufficient"] is False
+    assert body["items"][0]["available"] == 0
+    assert body["items"][0]["sufficient"] is False

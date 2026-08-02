@@ -95,9 +95,12 @@ acceptance criteria this was validated against.
 - `nginx` — on-prem Gateway entry point: TLS termination, `auth_request` to
   `auth-backend`, routing to domain services
   ([nginx](../../nginx))
-- `echo-service` — stub domain service used to verify the end-to-end
-  request path until real domain services exist
-  ([services/echo-service](../../services/echo-service))
+- domain services — Catalog, Inventory, Orders, Telemetry, Security, and
+  Chat are all reachable through nginx once the stack is up (e.g. Catalog
+  at `/api/catalog/*`); any of them exercises the end-to-end auth path,
+  there's no dedicated stub service anymore (see STR-120, which removed
+  the original `echo-service` placeholder now that real domain services
+  exist)
 
 [scripts/test-auth-flows.sh](../../scripts/test-auth-flows.sh) exercises
 AUTH-02 through AUTH-05 end-to-end against the compose stack for both roles.
