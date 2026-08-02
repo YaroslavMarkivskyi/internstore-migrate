@@ -1,0 +1,24 @@
+from fastapi import FastAPI
+
+from security.config import Settings, load_settings
+from security.db import make_session_factory
+from security.routers import hardware, users, visit_log, warehouses
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or load_settings()
+
+    app = FastAPI(title="security")
+    app.state.settings = settings
+    app.state.session_factory = make_session_factory(settings.database_url)
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.include_router(hardware.router)
+    app.include_router(users.router)
+    app.include_router(visit_log.router)
+    app.include_router(warehouses.router)
+
+    return app

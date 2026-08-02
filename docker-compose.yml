@@ -236,6 +236,42 @@ services:
     # Dev-only synthetic data source — not a real DHT22 sensor. See
     # docs/EVENT_BROKER.md's accepted-gaps section.
 
+  security-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: security
+      POSTGRES_USER: security
+      POSTGRES_PASSWORD: security
+    volumes:
+      - security_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U security"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mock-camera:
+    build: ./services/security/mock-camera
+    # Internal-only: Security constructs video_url pointing at this
+    # container's compose-network name; no host port needed unless
+    # manually testing the mock feed directly.
+
+  security:
+    build: ./services/security
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://security:security@security-db:5432/security
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
+      # other domain service.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      CAMERA_BASE_URL: http://mock-camera:8001
+    depends_on:
+      security-db:
+        condition: service_healthy
+    # No Kafka dependency — access control is synchronous by nature (a
+    # door open/close decision can't wait on eventual consistency). See
+    # docs/EVENT_BROKER.md and services/security/README.md.
+
   mailpit:
     image: axllent/mailpit:v1.20
     ports:
@@ -276,6 +312,7 @@ services:
       - inventory
       - orders
       - telemetry
+      - security
 
   kafka:
     image: apache/kafka:3.7.0
@@ -324,4 +361,5 @@ volumes:
   inventory_db_data:
   orders_db_data:
   telemetry_db_data:
+  security_db_data:
   kafka_data:

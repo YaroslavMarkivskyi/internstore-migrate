@@ -30,6 +30,13 @@ All topics: 1 partition, replication factor 1 (single broker, no HA at this
 stage). Created automatically by the `kafka-topic-init` compose service on
 `docker compose up -d`.
 
+Security (fingerprint/NFC warehouse access control, STR-127) deliberately
+has no topic here and no Kafka dependency at all — access control is
+synchronous by nature (a door open/close decision can't wait on eventual
+consistency), so every auth attempt is written straight to Security's own
+DB via `POST /auth/fingerprint` / `POST /auth/nfc`. See
+[services/security/README.md](../services/security/README.md).
+
 Notifications consumes all four topics (dispatching on `eventType`, same as
 every other consumer here) and is the first pure event consumer in the
 system: no Gateway route, no synchronous callers or callees. See
