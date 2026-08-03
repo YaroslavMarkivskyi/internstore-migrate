@@ -1,0 +1,78 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  border: 0 solid transparent;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ql-editor {
+  outline: none;
+  border: none;
+  flex: 1;
+  word-break: break-all;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 14px;
+}
+
+.ql-editor li {
+  list-style-type: none;
+}
+
+.ql-editor li[data-list='ordered'] {
+  counter-increment: list-0;
+}
+
+@supports (counter-set: none) {
+  .ql-editor li[data-list] {
+    counter-set: list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9;
+  }
+}
+
+.ql-editor li[data-list='ordered'] > .ql-ui:before {
+  content: counter(list-0, decimal) '. ';
+}
+
+.ql-editor li[data-list='bullet'] > .ql-ui:before {
+  content: '\2022';
+}
+
+.ql-editor li[data-list='bullet'] > .ql-ui:before {
+  margin-right: 0.3em;
+}
+
+.toast {
+  background: none;
+  border: 0 none;
+  box-shadow: none;
+  width: 100vw;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.carousel-container {
+  padding-left: 15px;
+  padding-right: 15px;
+}
+
+.carousel-item-padding {
+  padding-bottom: 15px;
+  padding-top: 15px;
+}

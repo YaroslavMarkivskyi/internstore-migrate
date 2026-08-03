@@ -381,6 +381,30 @@ services:
     # catalog/inventory/orders/telemetry/security. nginx's /ws/ and
     # /api/chat/ locations address this container as chat:8000.
 
+  frontend:
+    build: ./frontend
+    environment:
+      # Baked into the Vite bundle at dev-server start (vite.config.ts's
+      # `loadEnv` -> `define`), same values as frontend/.env. Client-side
+      # code, so these must be host-reachable URLs (localhost, not
+      # container names) — the browser runs on the host, not inside the
+      # compose network.
+      VITE_SERVER_URL: https://localhost:8443/api/
+      VITE_KEYCLOAK_URL: http://localhost:8081
+      VITE_KEYCLOAK_REALM: internstore
+      VITE_KEYCLOAK_CLIENT_ID: internstore-web
+    ports:
+      # :5173/:3000 (the frontend's conventional dev port / Next.js
+      # default) were already taken by other things on this host, so this
+      # container publishes on :5180 instead — registered as an extra
+      # redirectUri/webOrigin on Keycloak's internstore-web client (see
+      # keycloak/realm-export.json) and nginx's CORS allowlist (see
+      # nginx/nginx.conf's $cors_origin map). Pick a free port and update
+      # both places if :5180 also collides on your machine.
+      - "5180:5180"
+    depends_on:
+      - nginx
+
   nginx:
     build: ./nginx
     ports:

@@ -1,0 +1,2 @@
+export const MAX_SEARCH_RESULTS_COUNT_DROPDOWN = 3;
+export const MAX_SEARCH_HISTORY_ITEMS = 8;

@@ -1,0 +1,127 @@
+stages:
+  - setup
+  - test
+  - build
+  - deploy
+
+# Cache dependencies between jobs
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+  policy: pull-push
+
+# Setup job - install dependencies
+setup:
+  stage: setup
+  image: node:20-alpine
+  script:
+    - apk add --no-cache git
+    - npm ci
+  cache:
+    policy: pull-push
+    paths:
+      - node_modules/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# Run tests
+test:
+  stage: test
+  image: node:20-alpine
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint
+    - npm run prettier
+    - npm run test
+  cache:
+    policy: pull
+    paths:
+      - .npm/
+      - node_modules/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# Build the application
+build_development:
+  stage: build
+  image: node:20-alpine
+  environment:
+    name: development
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run build
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - dist/
+  cache:
+    policy: pull
+    paths:
+      - .npm/
+      - node_modules/
+  only:
+    - dev
+
+# Deploy to S3 - development
+deploy_development:
+  stage: deploy
+  image: node:20-alpine
+  script:
+    - npm install @aws-sdk/client-s3 mime-types dotenv --no-save
+    - echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" > .env
+    - echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> .env
+    - echo "AWS_S3_BUCKET=${AWS_S3_BUCKET}" >> .env
+    - echo "AWS_REGION=${AWS_REGION}" >> .env
+    - echo "VITE_SERVER_URL=${VITE_SERVER_URL}" >> .env
+    - npm run deploy
+  dependencies:
+    - build_development
+  environment:
+    name: development
+    url: http://${AWS_S3_BUCKET}.s3-website.${AWS_REGION}.amazonaws.com
+  only:
+    - dev
+  when: manual # Manual deployment for development
+
+build_production:
+  stage: build
+  image: node:20-alpine
+  only:
+    - main
+  environment:
+    name: production
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run build
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - dist/
+  cache:
+    policy: pull
+    paths:
+      - .npm/
+      - node_modules/
+
+# Deploy to S3 - production
+deploy_production:
+  stage: deploy
+  image: node:20-alpine
+  script:
+    - npm install @aws-sdk/client-s3 mime-types dotenv --no-save
+    - echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" > .env
+    - echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> .env
+    - echo "AWS_S3_BUCKET=${AWS_S3_BUCKET}" >> .env
+    - echo "AWS_REGION=${AWS_REGION}" >> .env
+    - echo "VITE_SERVER_URL=${VITE_SERVER_URL}" >> .env
+    - npm run deploy
+  dependencies:
+    - build_production
+  only:
+    - main
+  environment:
+    name: production
+  when: manual # Manual deployment for production
