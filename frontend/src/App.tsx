@@ -8,6 +8,7 @@ import AdminOrders from '@pages/Admin/Orders';
 import AdminProductsSearch from '@pages/Admin/ProductsSearch';
 import CategoryMenu from '@pages/Customer/CategoryMenu';
 import CategoryPage from '@pages/Customer/CategoryPage';
+import Checkout from '@pages/Customer/Checkout';
 import Homepage from '@pages/Customer/Homepage';
 import CustomerOrders from '@pages/Customer/Orders';
 import ProductPage from '@pages/Customer/ProductPage';
@@ -49,6 +50,7 @@ function App() {
         <Route path="profile" element={<CustomerProfile />}>
           <Route path="orders" element={<CustomerOrders />} />
         </Route>
+        <Route path="checkout" element={<Checkout />} />
       </Route>
 
       {/* Admin product preview route - uses customer layout but requires admin access */}

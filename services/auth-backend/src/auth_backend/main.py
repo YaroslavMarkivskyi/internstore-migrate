@@ -11,17 +11,20 @@ from auth_backend.auth.internal_token import MintableClaims, mint_internal_token
 from auth_backend.auth.revocation import RevocationChecker
 from auth_backend.config import Settings, load_settings
 
-# Cart/checkout, chat, and chat attachment uploads are reachable without a
-# Keycloak login — these are the only paths /auth/verify grants a
-# role=guest fallback token for. Order history (/api/orders/orders) is
-# deliberately NOT included: a guest can check out but must register/log
-# in to see past orders. /ws/room and /api/chat/rooms are shared by both
-# guest-usable paths (WS connect, attachment upload) and admin-only ones
-# (GET /rooms, DELETE /rooms/:id) — that's fine, chat's own
-# require_admin dependency rejects a guest token on the admin-only routes;
-# this allowlist only controls whether auth-backend issues a guest
-# fallback token at all, not what that token is allowed to do downstream.
+# Catalog browsing, cart/checkout, chat, and chat attachment uploads are
+# reachable without a Keycloak login — these are the only paths
+# /auth/verify grants a role=guest fallback token for. Order history
+# (/api/orders/orders) is deliberately NOT included: a guest can check out
+# but must register/log in to see past orders. /api/catalog is safe to
+# blanket-allow despite covering catalog's admin-only write endpoints too
+# (POST /categories, POST/PATCH /products) — Catalog's own require_admin
+# dependency rejects a guest token there; this allowlist only controls
+# whether auth-backend issues a guest fallback token at all, not what that
+# token is allowed to do downstream. Same reasoning for /ws/room and
+# /api/chat/rooms, shared by guest-usable paths (WS connect, attachment
+# upload) and admin-only ones (GET /rooms, DELETE /rooms/:id).
 GUEST_ALLOWED_PATH_PREFIXES = [
+    "/api/catalog",
     "/api/orders/cart",
     "/api/orders/checkout",
     "/ws/room",
@@ -132,7 +135,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     path="/",
                     httponly=True,
                     secure=True,
-                    samesite="lax",
+                    # Must be "none", not "lax" -- the frontend (Vite dev
+                    # server, http://localhost:5180) and this gateway
+                    # (https://localhost:8443) differ in *scheme*, which
+                    # modern browsers' schemeful-same-site logic treats as
+                    # cross-site regardless of matching host. A Lax cookie
+                    # is never attached to cross-site fetch/XHR (only
+                    # top-level navigations), so it silently never comes
+                    # back on the frontend's actual cart/checkout calls --
+                    # every request mints a fresh guest session and the
+                    # cart looks empty despite "add to cart" reporting
+                    # success. None still requires Secure (already set).
+                    samesite="none",
                 )
             response.headers["X-User-Id"] = guest_id
             response.headers["X-User-Role"] = "guest"

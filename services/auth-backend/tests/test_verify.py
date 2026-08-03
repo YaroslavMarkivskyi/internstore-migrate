@@ -57,13 +57,29 @@ async def test_guest_allowed_path_without_token_issues_guest_token(client):
     set_cookie = resp.headers["Set-Cookie"]
     assert set_cookie.startswith("is_guest_id=")
     assert "HttpOnly" in set_cookie
-    assert "samesite=lax" in set_cookie.lower()
+    # Must be "none": the frontend and this gateway differ in scheme
+    # (http://localhost:5180 vs https://localhost:8443), which browsers'
+    # schemeful-same-site logic treats as cross-site -- a Lax cookie would
+    # never be attached to the frontend's actual fetch/XHR calls.
+    assert "samesite=none" in set_cookie.lower()
 
 
-async def test_non_guest_path_without_token_returns_401(client):
+async def test_catalog_browsing_without_token_issues_guest_token(client):
     resp = await client.get(
         "/auth/verify",
         headers={"X-Original-URI": "/api/catalog/products"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["X-User-Role"] == "guest"
+
+
+async def test_non_guest_path_without_token_returns_401(client):
+    # Order history is deliberately excluded from the guest allowlist — a
+    # guest can browse and check out but must log in to see past orders.
+    resp = await client.get(
+        "/auth/verify",
+        headers={"X-Original-URI": "/api/orders/orders"},
     )
 
     assert resp.status_code == 401

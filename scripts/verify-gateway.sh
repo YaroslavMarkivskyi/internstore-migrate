@@ -65,9 +65,27 @@ STATUS=$($CURL -o /dev/null -w "%{http_code}" -X POST "$GATEWAY_URL/api/catalog/
 pass "admin token reaches Catalog via nginx + auth-backend with role=admin"
 
 echo "=== 2. Negative scenarios ==="
+# Catalog browsing is deliberately guest-allowed (anonymous visitors can
+# view products/categories and check out — see auth-backend's
+# GUEST_ALLOWED_PATH_PREFIXES) — a no-token GET here mints a guest session
+# and succeeds, it does not 401.
 STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categories")
-[ "$STATUS" = "401" ] || fail "no token got $STATUS, expected 401"
-pass "no token -> 401"
+[ "$STATUS" = "200" ] || fail "anonymous catalog browsing got $STATUS, expected 200 (guest-allowed)"
+pass "no token on guest-allowed /api/catalog -> 200 (anonymous browsing)"
+
+# A guest token is still just a guest: Catalog's own require_admin still
+# 403s a guest attempting an admin-only write, same as the customer-token
+# assertion above.
+STATUS=$($CURL -o /dev/null -w "%{http_code}" -X POST "$GATEWAY_URL/api/catalog/categories" \
+  -H "Content-Type: application/json" -d "{\"name\": \"$PROBE_CATEGORY-guest\"}")
+[ "$STATUS" = "403" ] || fail "no-token write to Catalog's admin-only endpoint got $STATUS, expected 403 (guest role, not admin)"
+pass "no token on Catalog's admin-only write -> 403 (guest role reaches Catalog but is rejected)"
+
+# Inventory is NOT on the guest allowlist -- unlike Catalog, a no-token
+# request here must still 401 at the Gateway, never reaching Inventory.
+STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/inventory/stocks")
+[ "$STATUS" = "401" ] || fail "no token on non-guest-allowed /api/inventory got $STATUS, expected 401"
+pass "no token -> 401 (non-guest-allowed service)"
 
 # Flip a character well inside the signature, not the very last one: base64
 # encodes in 3-byte/4-char groups, and a 2048-bit RSA signature (256 bytes)

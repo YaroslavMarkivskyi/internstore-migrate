@@ -56,16 +56,21 @@ const ProductPage: FC<ProductPageProps> = ({ area }) => {
       // Check if item in cart
       try {
         if (!cartItemsIds.has(id)) {
-          await getCartItem(id);
-          // Add product to cartItemsIds if found
-          setCartItemsIds(prevState => {
-            const newSet = new Set(prevState);
-            newSet.add(id);
-            return newSet;
-          });
+          // getCartItem resolves to undefined (not a rejection) when the
+          // product isn't in the cart -- only actually add it to
+          // cartItemsIds when it was found, otherwise every product page
+          // visited gets marked "already in cart" on first load.
+          const cartItem = await getCartItem(id);
+          if (cartItem) {
+            setCartItemsIds(prevState => {
+              const newSet = new Set(prevState);
+              newSet.add(id);
+              return newSet;
+            });
+          }
         }
       } catch {
-        // It will raise 404 error if product not found in cart. Do nothing
+        // Network/cart-fetch error -- leave cartItemsIds as-is.
       }
 
       try {

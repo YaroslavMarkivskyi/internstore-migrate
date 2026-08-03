@@ -13,6 +13,24 @@ async def test_create_category_requires_admin(client, customer_token):
     assert resp.status_code == 403
 
 
+async def test_list_categories_allows_guest_token(client, guest_token):
+    # Catalog browsing is guest-allowed at the Gateway (see
+    # auth-backend's GUEST_ALLOWED_PATH_PREFIXES) — a guest-role internal
+    # token must pass Catalog's own verification too, not just be rejected
+    # for lacking the admin role.
+    resp = await client.get("/categories", headers={"x-internal-token": guest_token})
+    assert resp.status_code == 200
+
+
+async def test_create_category_rejects_guest(client, guest_token):
+    resp = await client.post(
+        "/categories",
+        json={"name": "Snacks"},
+        headers={"x-internal-token": guest_token},
+    )
+    assert resp.status_code == 403
+
+
 async def test_create_category_as_admin_succeeds(client, admin_token):
     resp = await client.post(
         "/categories",

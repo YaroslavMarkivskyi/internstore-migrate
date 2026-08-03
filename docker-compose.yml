@@ -410,6 +410,14 @@ services:
     ports:
       - "8082:8080"
       - "8443:8443"
+    volumes:
+      # Persists the self-signed dev cert across `docker compose up --build
+      # nginx` — docker-entrypoint-certs.sh only regenerates it if missing.
+      # Without this, every nginx rebuild mints a brand new cert and
+      # invalidates whatever "accept the risk" exception you'd already
+      # granted it in the browser, which then fails silently and looks
+      # exactly like a CORS error (see frontend/README's TLS note).
+      - nginx_certs:/etc/nginx/certs
     depends_on:
       - auth-backend
       - catalog
@@ -470,3 +478,4 @@ volumes:
   chat_db_data:
   minio_data:
   kafka_data:
+  nginx_certs:

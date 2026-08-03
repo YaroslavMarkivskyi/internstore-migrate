@@ -67,7 +67,10 @@ const Cart: FC<CartProps> = ({ open, onClose }) => {
     void fetchCartItems({ offset: items.length });
   };
 
-  const handleCheckoutClick = () => navigate('/checkout'); //TODO: Adjust when Checkout page is ready
+  const handleCheckoutClick = () => {
+    navigate('/checkout');
+    onClose?.({}, 'escapeKeyDown');
+  };
 
   const handleQuantityChanged = async (
     recordId: string,

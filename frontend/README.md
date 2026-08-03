@@ -38,6 +38,28 @@ collides:
 - nginx's CORS allowlist (`$cors_origin` map in
   [nginx/nginx.conf](../nginx/nginx.conf))
 
+### "CORS request did not succeed" / "Status code: (null)"
+
+If every API call fails with this exact Firefox/Chrome message, it's
+almost never a real CORS misconfiguration — it means the TLS handshake to
+`https://localhost:8443` failed *before* CORS was ever evaluated, and the
+browser mis-reports it as a CORS error because the failing calls are
+background `fetch`/XHR, not a page navigation (so you never see the normal
+"connection is not secure" interstitial).
+
+nginx's dev cert is self-signed (`nginx/docker-entrypoint-certs.sh`) and
+persisted in the `nginx_certs` volume so it survives `docker compose up
+--build nginx` — but you still have to accept it once per browser
+profile, and again any time that volume is removed (`docker compose down
+-v`) since a removed volume regenerates a brand new cert with a different
+fingerprint, invalidating whatever exception you'd already granted:
+
+1. Open `https://localhost:8443/api/catalog/categories` directly in a new
+   tab.
+2. Click through the browser's "not secure" warning (Advanced -> Proceed /
+   Accept the Risk and Continue).
+3. Reload the frontend tab.
+
 ## Getting Started
 
 To get started simply install all required packages with

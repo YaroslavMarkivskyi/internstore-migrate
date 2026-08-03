@@ -50,3 +50,8 @@ def admin_token() -> str:
 @pytest.fixture
 def customer_token() -> str:
     return mint_internal_token(sub="customer-1", role="customer")
+
+
+@pytest.fixture
+def guest_token() -> str:
+    return mint_internal_token(sub="guest-1", role="guest")

@@ -95,7 +95,11 @@ and the guest branch in
   a guest can check out but must register/log in to see past orders.
 - On first hit, mints a random `guest_id`, stores it in Redis
   (`guest_session:<guest_id>`, 7-day TTL, not refreshed on reuse) and returns
-  it as an `is_guest_id` cookie (`HttpOnly`, `Secure`, `SameSite=Lax`).
+  it as an `is_guest_id` cookie (`HttpOnly`, `Secure`, `SameSite=None` —
+  `None` because the frontend and this gateway are on different schemes in
+  dev, `http://localhost:5180` vs `https://localhost:8443`, which browsers'
+  schemeful-same-site logic treats as cross-site; `Lax` would never be
+  attached to the frontend's actual fetch/XHR calls).
 - On a later hit with a still-valid cookie, reuses the same `guest_id` — same
   cart, same identity — without minting a new one.
 - Either way, mints a normal internal token with `role: "guest"` and

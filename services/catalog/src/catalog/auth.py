@@ -9,7 +9,7 @@ ISSUER = "internstore-gateway"
 
 class InternalClaims(BaseModel):
     sub: str
-    role: Literal["customer", "admin"]
+    role: Literal["customer", "admin", "guest"]
 
 
 # Mirrors auth-backend's mint_internal_token
@@ -26,7 +26,7 @@ def verify_internal_token(token: str, secret: str) -> InternalClaims:
 
     sub = payload.get("sub")
     role = payload.get("role")
-    if not sub or role not in ("customer", "admin"):
+    if not sub or role not in ("customer", "admin", "guest"):
         raise ValueError("Invalid internal token claims")
     return InternalClaims(sub=sub, role=role)
 
