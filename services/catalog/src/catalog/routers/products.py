@@ -4,9 +4,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from catalog.auth import require_admin
 from catalog.db import get_session
+from catalog.minio_client import MinioClient
+from catalog.minio_dep import get_minio_client
 from catalog.models import Category, Product
 from catalog.outbox import add_outbox_event
 from catalog.schemas import ProductCreate, ProductRead, ProductUpdate
@@ -91,3 +94,31 @@ async def update_product(
     await session.commit()
     await session.refresh(product)
     return product
+
+
+@router.delete("/{product_id}", status_code=204, dependencies=[Depends(require_admin)])
+async def delete_product(
+    product_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    minio_client: Annotated[MinioClient, Depends(get_minio_client)],
+) -> None:
+    result = await session.execute(
+        select(Product).options(selectinload(Product.images)).where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    # Mirrors the Admin Products UI's own guard (ProductsMenuPopup only
+    # allows deleting an unpublished product) -- enforced here too since
+    # the API is reachable directly, not only through that UI.
+    if product.is_published:
+        raise HTTPException(status_code=409, detail="Unpublish the product before deleting it")
+
+    # The FK's ON DELETE CASCADE (and the ORM's own cascade) clean up the
+    # product_images rows, but neither touches MinIO -- delete those
+    # objects first or they'd leak as orphaned blobs.
+    for image in product.images:
+        await minio_client.delete_object(image.object_key)
+
+    await session.delete(product)
+    await session.commit()

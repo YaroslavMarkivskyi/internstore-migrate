@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, JSON, Numeric, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, Numeric, String, func, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from catalog.db import Base
@@ -26,8 +26,31 @@ class Product(Base):
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     min_temperature: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     max_temperature: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    # server_default so existing rows stay published/visible after the
+    # migration that adds this column.
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true(), default=True)
 
     category: Mapped["Category"] = relationship(back_populates="products")
+    images: Mapped[list["ProductImage"]] = relationship(
+        back_populates="product", cascade="all, delete-orphan", order_by="ProductImage.created_at"
+    )
+
+
+class ProductImage(Base):
+    __tablename__ = "product_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    # The MinIO public URL -- named `image` (not `image_url`) so it matches
+    # the frontend's IProductImage {id, image} with no ccApi remapping.
+    image: Mapped[str] = mapped_column(String, nullable=False)
+    # The MinIO object key (e.g. "{product_id}/{uuid}.jpg"), stored
+    # separately from `image` so deletion never has to reverse-parse it
+    # back out of the public URL.
+    object_key: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    product: Mapped["Product"] = relationship(back_populates="images")
 
 
 class OutboxEvent(Base):

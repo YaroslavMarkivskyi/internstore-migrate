@@ -30,6 +30,7 @@ class ProductUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     min_temperature: float | None = None
     max_temperature: float | None = None
+    is_published: bool | None = None
 
 
 class ProductRead(BaseModel):
@@ -42,3 +43,11 @@ class ProductRead(BaseModel):
     description: str | None
     min_temperature: float | None
     max_temperature: float | None
+    is_published: bool
+
+
+class ProductImageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    image: str

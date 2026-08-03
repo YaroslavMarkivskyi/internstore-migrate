@@ -33,7 +33,16 @@ function App() {
   useNotifications({
     accessToken,
     isAdmin: currentUser?.is_admin || false,
-    enabled: true,
+    // Disabled: this hook opens an SSE connection to
+    // `${SERVER_URL}notifications/live/`, which has no Gateway route --
+    // internstore-migrate's Notifications service is a pure Kafka
+    // consumer + SMTP sender by design (see
+    // internstore-migrate/docs/EVENT_BROKER.md and
+    // internstore-migrate/services/notifications/README.md), not a
+    // synchronous HTTP service. Every admin session was retrying this
+    // against a 405 5 times on load. Re-enable only once/if a real
+    // HTTP/SSE endpoint exists on that service.
+    enabled: false,
   });
 
   return (

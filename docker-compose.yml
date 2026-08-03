@@ -95,10 +95,19 @@ services:
       # token against, without calling back to auth-backend or Keycloak.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Product image storage — same MinIO instance as Chat's attachments,
+      # its own bucket. See services/catalog/src/catalog/minio_client.py.
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_BASE_URL: http://localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: catalog-product-images
     depends_on:
       catalog-db:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as any
     # other real domain service.
@@ -344,10 +353,13 @@ services:
       - |
         mc alias set local http://minio:9000 minioadmin minioadmin &&
         mc mb --ignore-existing local/chat-attachments &&
-        mc anonymous set download local/chat-attachments
-    # One-shot: creates the chat-attachments bucket and makes it
-    # public-read within the docker network (per the ticket) — mirrors
-    # kafka-topic-init's one-shot-provisioning-sidecar pattern.
+        mc anonymous set download local/chat-attachments &&
+        mc mb --ignore-existing local/catalog-product-images &&
+        mc anonymous set download local/catalog-product-images
+    # One-shot: creates the chat-attachments and catalog-product-images
+    # buckets and makes them public-read within the docker network (per
+    # the ticket) — mirrors kafka-topic-init's one-shot-provisioning-sidecar
+    # pattern.
 
   chat:
     build: ./services/chat

@@ -19,7 +19,7 @@ export interface IProductBase extends IProductShort {
 }
 
 export interface IProductImage {
-  id: number;
+  id: string;
   image: string;
 }
 

@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     internal_token_secret: str
     kafka_bootstrap_servers: str
     outbox_poll_interval_seconds: float = 5
+    minio_endpoint: str
+    minio_public_base_url: str
+    minio_access_key: str
+    minio_secret_key: str
+    minio_bucket: str = "catalog-product-images"
 
 
 def load_settings() -> Settings:

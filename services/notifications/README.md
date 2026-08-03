@@ -5,6 +5,19 @@ pure event consumer: no Gateway route, no synchronous callers, no callees.
 It only reacts to events already flowing through Kafka and sends email via
 Mailpit — see the dev-only gap note below.
 
+## Frontend's admin notification bell is disabled
+
+`frontend/src/hooks/useNotifications.ts` opens an SSE connection to
+`{SERVER_URL}notifications/live/` for a live admin notification bell —
+inherited from `frontend`'s upstream source, which targets a different
+backend that has such an endpoint. This service has no HTTP interface at
+all (see above), so that path 404s/405s through nginx (no
+`/api/notifications/` location exists — see
+[nginx/nginx.conf](../../nginx/nginx.conf)). `frontend/src/App.tsx` passes
+`enabled: false` to the hook to stop it retrying against a route that will
+never exist without a real architecture change here (a synchronous
+HTTP/SSE endpoint added to this service, plus a Gateway route for it).
+
 ## What it does
 
 Subscribes to all four topics documented in

@@ -11,11 +11,11 @@ export const productSchema = z
       .string()
       .min(2, 'Must be at least 2 characters')
       .max(250, 'Must not exceed 250 characters'),
-    category: z
-      .union([z.string(), z.number()])
-      .refine(val => val !== '', { message: 'Category is required' })
-      .transform(val => Number(val))
-      .refine(val => !isNaN(val), { message: 'Invalid category' }),
+    // Catalog category ids are UUIDs, not numeric (see
+    // internstore-migrate/services/catalog/src/catalog/schemas.py) --
+    // this used to coerce to Number, which turned every real category id
+    // into NaN and made the form permanently fail "Invalid category".
+    category: z.string().min(1, 'Category is required'),
     price: z
       .string()
       .refine(

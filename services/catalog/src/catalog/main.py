@@ -7,8 +7,9 @@ from fastapi import FastAPI
 from catalog.config import Settings, load_settings
 from catalog.db import make_session_factory
 from catalog.kafka import KafkaEventProducer
+from catalog.minio_client import MinioClient
 from catalog.outbox_worker import run_outbox_worker
-from catalog.routers import categories, products
+from catalog.routers import categories, product_images, products
 
 
 @asynccontextmanager
@@ -36,6 +37,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="catalog", lifespan=lifespan)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
+    app.state.minio_client = MinioClient(
+        endpoint=settings.minio_endpoint,
+        public_base_url=settings.minio_public_base_url,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        bucket=settings.minio_bucket,
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -43,5 +51,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(categories.router)
     app.include_router(products.router)
+    app.include_router(product_images.router)
 
     return app

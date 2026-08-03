@@ -157,6 +157,69 @@ async def test_update_product_temperature_stages_outbox_event(client, admin_toke
     assert events[0].payload["max_temperature"] == 10
 
 
+async def test_new_product_is_published_by_default(client, admin_token):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+
+    fetched = await client.get(f"/products/{product_id}")
+    assert fetched.json()["is_published"] is True
+
+
+async def test_toggle_is_published(client, admin_token):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+
+    resp = await client.patch(
+        f"/products/{product_id}",
+        json={"is_published": False},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_published"] is False
+
+
+async def test_delete_published_product_rejected(client, admin_token):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+
+    resp = await client.delete(f"/products/{product_id}", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 409
+
+    still_there = await client.get(f"/products/{product_id}")
+    assert still_there.status_code == 200
+
+
+async def test_delete_unpublished_product_succeeds(client, admin_token):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+    await client.patch(
+        f"/products/{product_id}",
+        json={"is_published": False},
+        headers={"x-internal-token": admin_token},
+    )
+
+    resp = await client.delete(f"/products/{product_id}", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 204
+
+    gone = await client.get(f"/products/{product_id}")
+    assert gone.status_code == 404
+
+
+async def test_delete_product_requires_admin(client, admin_token, customer_token):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+
+    resp = await client.delete(f"/products/{product_id}", headers={"x-internal-token": customer_token})
+    assert resp.status_code == 403
+
+
+async def test_delete_product_not_found(client, admin_token):
+    resp = await client.delete(
+        "/products/00000000-0000-0000-0000-000000000000", headers={"x-internal-token": admin_token}
+    )
+    assert resp.status_code == 404
+
+
 async def test_update_product_without_temperature_change_stages_no_event(client, admin_token):
     category_id = await create_category(client, admin_token)
     product_id = await create_product(client, admin_token, category_id, min_temperature=2, max_temperature=8)
