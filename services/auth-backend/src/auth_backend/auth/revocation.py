@@ -44,10 +44,19 @@ class RevocationChecker:
         return revoked
 
     async def _introspect(self, token: str) -> bool:
+        # keycloak_issuer is the browser-facing URL baked into tokens' `iss`
+        # claim (used only for validating that claim, see main.py's
+        # ExternalTokenVerifier) — not necessarily reachable from inside
+        # this container. keycloak_jwks_uri, by contrast, already has to be
+        # network-reachable server-to-server, so the introspection endpoint
+        # is derived from it instead, the same way JWKS fetching is.
+        introspect_url = self._settings.keycloak_jwks_uri.replace(
+            "/protocol/openid-connect/certs", "/protocol/openid-connect/token/introspect"
+        )
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
-                    f"{self._settings.keycloak_issuer}/protocol/openid-connect/token/introspect",
+                    introspect_url,
                     data={
                         "token": token,
                         "client_id": self._settings.keycloak_client_id,
