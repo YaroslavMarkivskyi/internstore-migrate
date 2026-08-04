@@ -500,6 +500,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AI_MODE_DEFAULT: ai
       AI_RATE_LIMIT: "10"
+      # Not yet consumed by this service's own code (see STR-136/STR-138) —
+      # wired through now so the AI Assistant container can reach the
+      # Gateway once context.py/agent.py adopt it.
+      MCP_GATEWAY_URL: http://mcp-gateway:8000
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/ai-assistant/src:/app/src
@@ -514,6 +518,54 @@ services:
         condition: service_started
     # No nginx route and not in nginx's depends_on below — internal only,
     # never called directly by the browser. See docs/EVENT_BROKER.md.
+
+  # Exposes Orders/Inventory/Catalog/Telemetry/Security/Chat as MCP tools
+  # over HTTP, so any MCP-compatible agent (starting with AI Assistant) can
+  # call one registry instead of hand-rolling a client per domain service.
+  # See services/mcp-gateway/README.md for the tool catalog.
+  mcp-gateway:
+    build: ./services/mcp-gateway
+    environment:
+      PORT: "8000"
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
+      # other domain service — this service mints its own admin-role
+      # internal token for outbound calls (see
+      # services/mcp-gateway/src/mcp_gateway/auth.py), same pattern as
+      # ai-assistant's, since a single MCP tool call fans out to whichever
+      # domain service holds the data rather than forwarding a caller's own
+      # token.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      ORDERS_SERVICE_URL: http://orders:8000
+      INVENTORY_SERVICE_URL: http://inventory:8000
+      CATALOG_SERVICE_URL: http://catalog:8000
+      TELEMETRY_SERVICE_URL: http://telemetry:8000
+      SECURITY_SERVICE_URL: http://security:8000
+      CHAT_SERVICE_URL: http://chat:8000
+      # search_products queries ai-assistant's own pgvector table directly
+      # (see src/mcp_gateway/models.py) rather than adding a public HTTP
+      # endpoint to ai-assistant just for this.
+      AI_DB_URL: postgresql+asyncpg://ai:ai@ai-db:5432/ai
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      # Live bind mount, see auth-backend's for why only this subpath.
+      - ./services/mcp-gateway/src:/app/src
+    depends_on:
+      ai-db:
+        condition: service_healthy
+      orders:
+        condition: service_started
+      inventory:
+        condition: service_started
+      catalog:
+        condition: service_started
+      telemetry:
+        condition: service_started
+      security:
+        condition: service_started
+      chat:
+        condition: service_started
+    # No nginx route — internal only, same as ai-assistant/notifications.
+    # Only other services (and, in future, an agent runtime) ever call it.
 
   frontend:
     build: ./frontend

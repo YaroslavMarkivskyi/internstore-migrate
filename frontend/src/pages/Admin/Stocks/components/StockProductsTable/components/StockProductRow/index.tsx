@@ -78,6 +78,7 @@ const StockProductRow = ({
             product={stockProduct}
             onEditQuantity={() => onStartEditing(product.id)}
             onMoveToStockSuccess={refetchProducts}
+            onDeleteSuccess={refetchProducts}
           />
         )}
       </ActionsCell>

@@ -54,6 +54,7 @@ class ProductRead(BaseModel):
     min_temperature: float | None
     max_temperature: float | None
     is_published: bool
+    is_deleted: bool
 
 
 class ProductImageRead(BaseModel):

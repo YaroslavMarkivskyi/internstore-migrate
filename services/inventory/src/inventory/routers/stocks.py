@@ -168,6 +168,35 @@ async def update_stock_item_quantity(
     return item
 
 
+@router.delete(
+    "/{stock_id}/items/{item_id}",
+    status_code=204,
+    dependencies=[Depends(require_admin)],
+)
+async def delete_stock_item(
+    stock_id: uuid.UUID,
+    item_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    item = await session.get(StockItem, item_id)
+    if item is None or item.stock_id != stock_id:
+        raise HTTPException(status_code=404, detail="Stock item not found")
+    # reserved_quantity is held by in-flight RESERVED reservations (see
+    # StockItem's own docstring) -- removing the row out from under one
+    # would leave its reservation_items pointing at nothing, so the
+    # in-progress checkout/webhook flow has no item left to consume/release
+    # against. Plain `quantity` (unlike delete_stock's own >0 guard) is
+    # deliberately not checked here: clearing an item down to zero and
+    # actually removing the row are two different admin actions, and
+    # forcing "set quantity to 0 first" would just be busywork for the same
+    # end state.
+    if item.reserved_quantity > 0:
+        raise HTTPException(status_code=409, detail="Item has quantity held by an in-progress reservation")
+
+    await session.delete(item)
+    await session.commit()
+
+
 @router.post(
     "/{stock_id}/items/{item_id}/move",
     response_model=StockItemRead,

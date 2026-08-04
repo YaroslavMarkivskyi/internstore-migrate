@@ -122,6 +122,7 @@ const ProductCard = forwardRef<ProductCardRef, ProductCardProps>(
             <StockProductMenuPopup
               product={popupProductEntry}
               onMoveToStockSuccess={handleStocksChange}
+              onDeleteSuccess={handleStocksChange}
               showDuplicateOption={false}
             />
           </TableCell>

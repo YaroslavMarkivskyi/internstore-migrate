@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { isAxiosError } from 'axios';
 import { DialogTitle, Typography } from '@mui/material';
 import { useForm } from 'react-hook-form';
 
@@ -119,9 +120,17 @@ export default function StockModalForm({ refetchStocks, isProducts }: Props) {
           setIsLoading(false);
         },
       });
-    } catch {
+    } catch (error) {
+      // Surfaces the backend's actual reason (e.g. delete_stock's 409
+      // "Stock still has items in it") instead of a generic message --
+      // without this, a stock blocked by e.g. an orphaned stock_item
+      // (see catalog's Product.is_deleted) looked identical to any other
+      // failure with no way to tell why.
+      const detail = isAxiosError(error)
+        ? (error.response?.data as { detail?: string } | undefined)?.detail
+        : undefined;
       showToast({
-        message: 'Error deleting the stock',
+        message: detail ?? 'Error deleting the stock',
         type: 'error',
       });
       setIsLoading(false);

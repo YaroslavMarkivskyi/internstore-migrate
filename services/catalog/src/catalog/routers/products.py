@@ -64,7 +64,7 @@ async def update_product(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Product:
     product = await session.get(Product, product_id)
-    if product is None:
+    if product is None or product.is_deleted:
         raise HTTPException(status_code=404, detail="Product not found")
 
     updates = payload.model_dump(exclude_unset=True)
@@ -127,7 +127,7 @@ async def delete_product(
         select(Product).options(selectinload(Product.images)).where(Product.id == product_id)
     )
     product = result.scalar_one_or_none()
-    if product is None:
+    if product is None or product.is_deleted:
         raise HTTPException(status_code=404, detail="Product not found")
     # Mirrors the Admin Products UI's own guard (ProductsMenuPopup only
     # allows deleting an unpublished product) -- enforced here too since
@@ -135,11 +135,20 @@ async def delete_product(
     if product.is_published:
         raise HTTPException(status_code=409, detail="Unpublish the product before deleting it")
 
-    # The FK's ON DELETE CASCADE (and the ORM's own cascade) clean up the
-    # product_images rows, but neither touches MinIO -- delete those
-    # objects first or they'd leak as orphaned blobs.
+    # Soft delete: the row stays (is_deleted flips instead of a real
+    # session.delete) because Inventory has no copy of its own of
+    # product name/price -- it joins stock_items against this table
+    # client-side (stockService.ts). A hard delete here used to leave
+    # Inventory with orphaned stock_items rows pointing at nothing,
+    # permanently 409-blocking that stock's deletion with no way for an
+    # admin to even see why. Orders' historical pricing (catalog_client.py)
+    # also still needs GET /products/{id} to resolve for old orders.
+    # Images are still actually removed (DB rows + MinIO blobs) --
+    # there's no reason to keep serving/storing those for a delisted
+    # product.
     for image in product.images:
         await minio_client.delete_object(image.object_key)
+        await session.delete(image)
 
-    await session.delete(product)
+    product.is_deleted = True
     await session.commit()

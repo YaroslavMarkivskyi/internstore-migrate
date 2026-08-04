@@ -117,6 +117,9 @@ export const stockService = {
   deleteStock: async (stockId: string): Promise<void> => {
     await api.delete(`${STOCKS_BASE_URL}/${stockId}`);
   },
+  deleteStockItem: async (stockId: string, itemId: string): Promise<void> => {
+    await api.delete(`${STOCKS_BASE_URL}/${stockId}/items/${itemId}`);
+  },
   getProductsByStockId: async (
     stockId: string,
     filterParams: IStockProductFilterParams

@@ -6,12 +6,25 @@ import CreateOutlinedIcon from '@mui/icons-material/CreateOutlined';
 import DeleteOutlineOutlinedIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import PreviewOutlinedIcon from '@mui/icons-material/PreviewOutlined';
-import { Box, IconButton } from '@mui/material';
+import {
+  Box,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Typography,
+} from '@mui/material';
 
+import { isAxiosError } from 'axios';
+
+import ButtonAdmin from '@components/UI/admin/ButtonAdmin';
 import { IconWrapper } from '@components/UI/common/Icons/styles';
 import MenuPopup, { MenuItem } from '@components/UI/common/MenuPopup';
 import SimplePopover from '@components/UI/common/SimplePopover';
 import MoveToStockMenu from '@pages/Admin/Stocks/components/MoveToStock';
+import { stockService } from '@services/http';
+import showToast from '@utils/showToast';
 
 import { IStockProduct } from 'src/types/stocks/interfaces';
 
@@ -19,6 +32,7 @@ export interface StockProductMenuPopupProps {
   product: IStockProduct;
   onEditQuantity?: () => void;
   onMoveToStockSuccess?: () => void;
+  onDeleteSuccess?: () => void;
   showDuplicateOption?: boolean;
 }
 
@@ -49,10 +63,13 @@ const StockProductMenuPopup: FC<StockProductMenuPopupProps> = ({
   product,
   onEditQuantity,
   onMoveToStockSuccess,
+  onDeleteSuccess,
   showDuplicateOption = true,
 }) => {
   const [showMoveToStock, setShowMoveToStock] = useState<boolean>(false);
   const moveToStockButtonRef = useRef<HTMLButtonElement>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleEditQuantity = () => {
     if (onEditQuantity) {
@@ -77,7 +94,35 @@ const StockProductMenuPopup: FC<StockProductMenuPopupProps> = ({
   };
 
   const handleDeleteProduct = () => {
-    console.log(`Delete product with ID: ${product.product.id}`);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleCloseDeleteDialog = () => {
+    if (isDeleting) return;
+    setDeleteDialogOpen(false);
+  };
+
+  const confirmDeleteProduct = async () => {
+    setIsDeleting(true);
+    try {
+      await stockService.deleteStockItem(product.stockId, product.id);
+      showToast({ message: 'Product removed from stock', type: 'success' });
+      setDeleteDialogOpen(false);
+      onDeleteSuccess?.();
+    } catch (error) {
+      // Surfaces delete_stock_item's real 409 reason (item held by an
+      // in-progress reservation) instead of a generic message, same
+      // pattern as StockModalForm's own delete-stock error handling.
+      const detail = isAxiosError(error)
+        ? (error.response?.data as { detail?: string } | undefined)?.detail
+        : undefined;
+      showToast({
+        message: detail ?? 'Error removing product from stock',
+        type: 'error',
+      });
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Programmatically click the hidden button to open the popover when showMoveToStock changes
@@ -206,6 +251,34 @@ const StockProductMenuPopup: FC<StockProductMenuPopupProps> = ({
           onSuccess={onMoveToStockSuccess}
         />
       </SimplePopover>
+
+      <Dialog open={deleteDialogOpen} onClose={handleCloseDeleteDialog}>
+        <DialogTitle>Remove product from this stock?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1">
+            This removes all {product.quantity} unit(s) of this product from
+            the stock. This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ justifyContent: 'center', gap: 2, pb: 3 }}>
+          <ButtonAdmin
+            variant="outlined"
+            fullWidth
+            disabled={isDeleting}
+            onClick={handleCloseDeleteDialog}
+          >
+            Cancel
+          </ButtonAdmin>
+          <ButtonAdmin
+            variant="contained"
+            fullWidth
+            disabled={isDeleting}
+            onClick={confirmDeleteProduct}
+          >
+            Remove
+          </ButtonAdmin>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

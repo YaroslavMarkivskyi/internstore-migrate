@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, Numeric, String, func, true
+from sqlalchemy import Boolean, DateTime, false, ForeignKey, JSON, Numeric, String, func, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from catalog.db import Base
@@ -29,6 +29,16 @@ class Product(Base):
     # server_default so existing rows stay published/visible after the
     # migration that adds this column.
     is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=true(), default=True)
+    # Soft delete: DELETE /products/{id} only ever flips this, never removes
+    # the row (see routers/products.py's delete_product) -- Inventory has no
+    # copy of its own of product name/price, it joins stock_items against
+    # this table client-side (stockService.ts), and a hard delete left it
+    # with orphaned rows pointing at nothing, permanently blocking that
+    # stock from ever being deleted with no way for an admin to even see
+    # why. Every other consumer (Orders' historical pricing, Inventory's
+    # join) keeps working against a soft-deleted row; only the Admin
+    # Products list and the storefront are expected to filter this out.
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false(), default=False)
 
     category: Mapped["Category"] = relationship(back_populates="products")
     images: Mapped[list["ProductImage"]] = relationship(

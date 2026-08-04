@@ -29,6 +29,7 @@ interface CatalogProductRaw {
   minTemperature: number | null;
   maxTemperature: number | null;
   isPublished: boolean;
+  isDeleted: boolean;
 }
 
 interface InventoryConsolidatedItem {
@@ -68,7 +69,13 @@ const fetchAllProductsAdmin = async (): Promise<IProductAdmin[]> => {
     fetchCategories(),
     fetchInventoryQuantities(),
   ]);
-  return rawProducts.map(raw => toProductAdmin(raw, categories, quantities));
+  // Soft-deleted products stay in Catalog (see catalog/models.py's
+  // Product.is_deleted) so Inventory's stock-item join keeps resolving
+  // their name/price/category -- the Admin Products list is what's
+  // expected to make them disappear, same as the old hard-delete did.
+  return rawProducts
+    .filter(raw => !raw.isDeleted)
+    .map(raw => toProductAdmin(raw, categories, quantities));
 };
 
 export const getProduct = async (productId: string): Promise<IProductAdmin> => {

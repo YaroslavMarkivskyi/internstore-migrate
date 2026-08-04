@@ -376,3 +376,61 @@ async def test_update_stock_item_quantity_wrong_stock(client, admin_token):
         headers=headers,
     )
     assert resp.status_code == 404
+
+
+async def test_delete_stock_item_as_admin_succeeds(client, admin_token):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    created = await client.post(
+        f"/stocks/{stock_id}/items",
+        json={"product_id": str(uuid.uuid4()), "quantity": 5},
+        headers=headers,
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.delete(f"/stocks/{stock_id}/items/{item_id}", headers=headers)
+    assert resp.status_code == 204
+
+    remaining = await client.get(f"/stocks/{stock_id}/items")
+    assert remaining.json() == []
+
+
+async def test_delete_stock_item_requires_admin(client, admin_token, customer_token):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    created = await client.post(
+        f"/stocks/{stock_id}/items",
+        json={"product_id": str(uuid.uuid4()), "quantity": 5},
+        headers=headers,
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.delete(
+        f"/stocks/{stock_id}/items/{item_id}",
+        headers={"x-internal-token": customer_token},
+    )
+    assert resp.status_code == 403
+
+
+async def test_delete_stock_item_not_found(client, admin_token):
+    stock_id = await create_stock(client, admin_token)
+    resp = await client.delete(
+        f"/stocks/{stock_id}/items/{uuid.uuid4()}",
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 404
+
+
+async def test_delete_stock_item_wrong_stock(client, admin_token):
+    headers = {"x-internal-token": admin_token}
+    stock_a = await create_stock(client, admin_token, name="Stock A")
+    stock_b = await create_stock(client, admin_token, name="Stock B")
+    created = await client.post(
+        f"/stocks/{stock_a}/items",
+        json={"product_id": str(uuid.uuid4()), "quantity": 5},
+        headers=headers,
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.delete(f"/stocks/{stock_b}/items/{item_id}", headers=headers)
+    assert resp.status_code == 404

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     redis_url: str
     chat_service_url: str
     orders_service_url: str
+    # Not yet consumed by this service's own code — see STR-137's ticket
+    # notes on the follow-up (STR-138) that swaps context.py's direct
+    # OrdersClient/CatalogClient calls for MCP tool calls through this.
+    mcp_gateway_url: str | None = None
     openai_api_key: str
     chat_model: str = "gpt-4o"
     embedding_model: str = "text-embedding-3-small"

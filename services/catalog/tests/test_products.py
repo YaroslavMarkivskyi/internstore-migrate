@@ -232,8 +232,23 @@ async def test_delete_unpublished_product_succeeds(client, admin_token):
     resp = await client.delete(f"/products/{product_id}", headers={"x-internal-token": admin_token})
     assert resp.status_code == 204
 
-    gone = await client.get(f"/products/{product_id}")
-    assert gone.status_code == 404
+    # Soft delete: GET /products/{id} still resolves (Orders' catalog_client
+    # needs this for historical pricing, Inventory's stock-item join needs
+    # it for name/price/category) -- only the is_deleted flag flips.
+    still_resolvable = await client.get(f"/products/{product_id}")
+    assert still_resolvable.status_code == 200
+    assert still_resolvable.json()["is_deleted"] is True
+
+    # But it's gone as far as further admin mutation is concerned.
+    reupdate = await client.patch(
+        f"/products/{product_id}",
+        json={"name": "New Name"},
+        headers={"x-internal-token": admin_token},
+    )
+    assert reupdate.status_code == 404
+
+    redelete = await client.delete(f"/products/{product_id}", headers={"x-internal-token": admin_token})
+    assert redelete.status_code == 404
 
 
 async def test_delete_product_requires_admin(client, admin_token, customer_token):
