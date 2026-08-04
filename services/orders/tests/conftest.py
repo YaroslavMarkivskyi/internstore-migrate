@@ -86,8 +86,16 @@ class FakeStripeClient:
     def __init__(self) -> None:
         self.created_intents: list[dict] = []
         self._counter = 0
+        self.raises: Exception | None = None
+
+    def set_idempotency_conflict(self) -> None:
+        import stripe
+
+        self.raises = stripe.APIError("another in-progress request using this Idempotent Key")
 
     async def create_payment_intent(self, *, amount_cents: int, order_id: str) -> SimpleNamespace:
+        if self.raises is not None:
+            raise self.raises
         self._counter += 1
         intent_id = f"pi_fake_{self._counter}"
         self.created_intents.append({"amount_cents": amount_cents, "order_id": order_id, "id": intent_id})

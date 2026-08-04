@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -32,9 +33,19 @@ GUEST_ALLOWED_PATH_PREFIXES = [
 ]
 GUEST_COOKIE_NAME = "is_guest_id"
 
+# Narrow carve-out in the /api/orders/orders block above: a guest who
+# checked out with card payment still needs to start Stripe checkout for
+# *that one order* (POST .../payment-intent, see
+# orders/routers/payments.py) — but nothing else under /api/orders/orders
+# opens up for them, in particular not GET /orders or GET /orders/:id
+# (order history stays login-only, per the comment above).
+GUEST_ALLOWED_PAYMENT_INTENT_PATTERN = re.compile(r"^/api/orders/orders/[^/]+/payment-intent$")
+
 
 def is_guest_allowed_path(original_uri: str) -> bool:
     path = original_uri.split("?")[0]
+    if GUEST_ALLOWED_PAYMENT_INTENT_PATTERN.match(path):
+        return True
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in GUEST_ALLOWED_PATH_PREFIXES)
 
 

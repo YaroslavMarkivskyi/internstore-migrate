@@ -60,7 +60,19 @@ async def create_payment_intent(
         raise HTTPException(status_code=503, detail="Catalog temporarily unavailable, please retry") from exc
 
     amount_cents = round(total * 100)
-    intent = await stripe_client.create_payment_intent(amount_cents=amount_cents, order_id=str(order.id))
+    try:
+        intent = await stripe_client.create_payment_intent(amount_cents=amount_cents, order_id=str(order.id))
+    except stripe.APIError as exc:
+        # Same idempotency_key (order-{id}-payment-intent, see
+        # stripe_client.py) fired twice concurrently for this order -- e.g.
+        # React StrictMode's dev-mode double effect invocation, or just a
+        # double-click racing an in-flight request. Stripe rejects the
+        # second one outright rather than queuing it ("another in-progress
+        # request using this Idempotent Key"), which isn't a real failure —
+        # respond the same way as "not pending yet" so the caller's
+        # existing 409 retry loop (createPaymentIntentWithRetry in
+        # StripePaymentStep) just tries again a moment later.
+        raise HTTPException(status_code=409, detail="Payment already being started, please retry") from exc
 
     order.stripe_payment_intent_id = intent.id
     await session.commit()

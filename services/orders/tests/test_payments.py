@@ -57,6 +57,23 @@ async def test_create_payment_intent_prices_from_catalog_not_client(
         assert order.stripe_payment_intent_id == "pi_fake_1"
 
 
+async def test_create_payment_intent_concurrent_request_returns_409(
+    client, customer_token, fake_inventory_client, fake_catalog_client, fake_stripe_client
+):
+    # Simulates two concurrent create_payment_intent calls for the same
+    # order colliding on Stripe's idempotency key (see
+    # StripePaymentStep.tsx's hasStartedRef comment for how this happens in
+    # practice -- React StrictMode's double effect invocation).
+    headers = {"x-internal-token": customer_token}
+    order_id, product_id, price = await _create_order(client, headers, fake_inventory_client)
+    await _set_status(client, order_id, OrderStatus.PENDING)
+    fake_catalog_client.set_price(product_id, price)
+    fake_stripe_client.set_idempotency_conflict()
+
+    resp = await client.post(f"/orders/{order_id}/payment-intent", headers=headers)
+    assert resp.status_code == 409
+
+
 async def test_create_payment_intent_rejects_cash_on_delivery(
     client, customer_token, fake_inventory_client
 ):

@@ -39,6 +39,27 @@ async def test_renewal_with_existing_cookie_reuses_guest_id(client):
     assert "Set-Cookie" not in second.headers
 
 
+async def test_guest_can_start_payment_intent_for_own_order(client):
+    resp = await client.get(
+        "/auth/verify",
+        headers={"X-Original-URI": "/api/orders/orders/3fa85f64-5717-4562-b3fc-2c963f66afa6/payment-intent"},
+    )
+    assert resp.status_code == 200
+
+
+async def test_guest_cannot_list_order_history(client):
+    resp = await client.get("/auth/verify", headers={"X-Original-URI": "/api/orders/orders"})
+    assert resp.status_code == 401
+
+
+async def test_guest_cannot_get_single_order(client):
+    resp = await client.get(
+        "/auth/verify",
+        headers={"X-Original-URI": "/api/orders/orders/3fa85f64-5717-4562-b3fc-2c963f66afa6"},
+    )
+    assert resp.status_code == 401
+
+
 async def test_unknown_cookie_mints_a_fresh_guest_id(client):
     resp = await client.get(
         "/auth/verify",
