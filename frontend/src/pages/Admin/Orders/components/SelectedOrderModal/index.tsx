@@ -34,7 +34,7 @@ import {
   TableBottomWrapper,
   TotalText,
 } from '@pages/Admin/Orders/components/SelectedOrderModal/styles';
-import { getOrder, getOrderItems } from '@services/http/admin/orders';
+import { getOrder, getOrderItems, payOrder } from '@services/http/admin/orders';
 import showToast from '@utils/showToast';
 
 import {
@@ -64,6 +64,7 @@ const SelectedOrderModal: FC<SelectedOrderModalProps> = ({
   >({});
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
 
   const limit = 8;
 
@@ -126,6 +127,23 @@ const SelectedOrderModal: FC<SelectedOrderModalProps> = ({
       void fetchOrderItems({ ...newFilters, offset: 0, limit }, true);
       return newFilters;
     });
+  };
+
+  // Manual counterpart to Stripe's webhook-driven confirmation -- for
+  // cash_on_delivery (and any card order stuck pending), an admin marks it
+  // paid once payment is actually in hand. See admin/orders.ts's payOrder.
+  const handleConfirmPayment = async () => {
+    if (selectedOrderId === null) return;
+    setIsConfirmingPayment(true);
+    try {
+      const updated = await payOrder(selectedOrderId);
+      setOrder(updated);
+      showToast({ message: 'Payment confirmed', type: 'success' });
+    } catch {
+      showToast({ message: 'Error confirming payment', type: 'error' });
+    } finally {
+      setIsConfirmingPayment(false);
+    }
   };
 
   const handleRejectOrder = () => console.log('Order rejected');
@@ -266,6 +284,17 @@ const SelectedOrderModal: FC<SelectedOrderModalProps> = ({
                 <TotalText>Totals:</TotalText>
                 <TotalText>${order.totalCost}</TotalText>
               </ControlsRow>
+              {order.status === 'pending' && (
+                <ControlsRow>
+                  <ButtonAdmin
+                    variant="contained"
+                    disabled={isConfirmingPayment}
+                    onClick={handleConfirmPayment}
+                  >
+                    Confirm payment
+                  </ButtonAdmin>
+                </ControlsRow>
+              )}
               {renderControls()}
             </ControlsContainer>
           </ModalContent>

@@ -111,6 +111,18 @@ export const getOrder = async (orderId: string): Promise<IOrderAdmin> => {
   return toOrderAdmin(resp.data);
 };
 
+// Manual counterpart to Stripe's webhook-driven confirmation (card orders
+// go through StripePaymentStep + payments.py instead) — for
+// cash_on_delivery, there's no processor to confirm payment for us, so an
+// admin marks it paid once the cash is actually collected. Backend doesn't
+// restrict this to cash_on_delivery orders specifically (see
+// pay_order_admin in orders_admin.py), just pending -> paid like any other
+// payment confirmation.
+export const payOrder = async (orderId: string): Promise<IOrderAdmin> => {
+  const resp = await api.post<OrderAdminRaw>(`orders/admin/${orderId}/pay`);
+  return toOrderAdmin(resp.data);
+};
+
 interface InventoryConsolidatedItem {
   productId: string;
   quantity: number;

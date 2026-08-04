@@ -1,11 +1,16 @@
+import json
+from types import SimpleNamespace
+
 import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from orders.catalog_client import get_catalog_client
 from orders.config import Settings
 from orders.db import Base, make_session_factory
 from orders.inventory_client import InventoryUnavailableError, get_inventory_client
 from orders.main import create_app
+from orders.stripe_client import get_stripe_client
 
 INTERNAL_TOKEN_SECRET = "test-secret"
 ISSUER = "internstore-gateway"
@@ -55,13 +60,62 @@ def fake_inventory_client() -> FakeInventoryClient:
     return FakeInventoryClient()
 
 
+class FakeCatalogClient:
+    """Swapped in via app.dependency_overrides — no real HTTP call is made."""
+
+    def __init__(self) -> None:
+        self.prices: dict[str, float] = {}
+
+    def set_price(self, product_id: str, price: float) -> None:
+        self.prices[product_id] = price
+
+    async def get_product_price(self, product_id: str) -> float:
+        return self.prices[product_id]
+
+
 @pytest.fixture
-async def client(fake_inventory_client: FakeInventoryClient):
+def fake_catalog_client() -> FakeCatalogClient:
+    return FakeCatalogClient()
+
+
+class FakeStripeClient:
+    """Swapped in via app.dependency_overrides — no real Stripe API call is
+    made, and construct_webhook_event skips signature verification (tests
+    craft the event body directly and pass any Stripe-Signature value)."""
+
+    def __init__(self) -> None:
+        self.created_intents: list[dict] = []
+        self._counter = 0
+
+    async def create_payment_intent(self, *, amount_cents: int, order_id: str) -> SimpleNamespace:
+        self._counter += 1
+        intent_id = f"pi_fake_{self._counter}"
+        self.created_intents.append({"amount_cents": amount_cents, "order_id": order_id, "id": intent_id})
+        return SimpleNamespace(id=intent_id, client_secret=f"{intent_id}_secret")
+
+    def construct_webhook_event(self, payload: bytes, sig_header: str) -> dict:
+        return json.loads(payload)
+
+
+@pytest.fixture
+def fake_stripe_client() -> FakeStripeClient:
+    return FakeStripeClient()
+
+
+@pytest.fixture
+async def client(
+    fake_inventory_client: FakeInventoryClient,
+    fake_catalog_client: FakeCatalogClient,
+    fake_stripe_client: FakeStripeClient,
+):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
         inventory_base_url="http://inventory.invalid",
+        catalog_base_url="http://catalog.invalid",
         kafka_bootstrap_servers="kafka.invalid:9092",
+        stripe_secret_key="sk_test_dummy",
+        stripe_webhook_secret="whsec_dummy",
     )
     session_factory = make_session_factory(settings.database_url)
 
@@ -72,6 +126,8 @@ async def client(fake_inventory_client: FakeInventoryClient):
     app = create_app(settings=settings)
     app.state.session_factory = session_factory
     app.dependency_overrides[get_inventory_client] = lambda: fake_inventory_client
+    app.dependency_overrides[get_catalog_client] = lambda: fake_catalog_client
+    app.dependency_overrides[get_stripe_client] = lambda: fake_stripe_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

@@ -75,3 +75,7 @@ class CheckoutInsufficientStockResponse(BaseModel):
 class InventoryUnavailableResponse(BaseModel):
     detail: str = "Inventory temporarily unavailable, please retry"
     retry_after_seconds: int = 5
+
+
+class PaymentIntentRead(BaseModel):
+    client_secret: str

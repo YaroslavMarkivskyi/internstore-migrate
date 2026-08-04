@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useNavigate } from 'react-router-dom';
 
@@ -13,6 +13,7 @@ import showToast from '@utils/showToast';
 
 import CartDetails from '../CartDetails';
 import ContactInfo, { PAYMENT_METHODS } from '../ContactInfo';
+import StripePaymentStep from '../StripePaymentStep';
 
 import { useCart } from '../../../../../hooks/useCart';
 import { ICartItem } from '../../../../../types/cart/interfaces';
@@ -69,6 +70,11 @@ const CheckoutBase = () => {
   } = useCart();
 
   const paymentMethod = watch('paymentMethod');
+  // Set once checkout() succeeds for a "card" order -- while set, the form
+  // is replaced by StripePaymentStep instead of navigating away
+  // immediately (cash_on_delivery still navigates straight away, same as
+  // before).
+  const [cardOrderId, setCardOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchCartItems({ offset: 0 }, true);
@@ -77,15 +83,18 @@ const CheckoutBase = () => {
   useEffect(() => {
     // Guards against landing here directly with nothing in the cart --
     // does not fire on the very first render, since useCart's isLoading
-    // starts true until the fetch above resolves.
-    if (!cartLoading && cartItems.length === 0) {
+    // starts true until the fetch above resolves. Also skipped once
+    // cardOrderId is set: checkout() already emptied the cart server-side
+    // at that point, and without this guard the empty-cart refetch below
+    // would bounce the user back to "/" before they get to StripePaymentStep.
+    if (!cartLoading && cartItems.length === 0 && cardOrderId === null) {
       navigate('/');
     }
-  }, [cartLoading, cartItems]);
+  }, [cartLoading, cartItems, cardOrderId]);
 
   const onSubmit = async (data: CheckoutFormData) => {
     try {
-      await checkout({
+      const order = await checkout({
         contactName: data.contactName,
         contactEmail: data.contactEmail,
         contactPhone: data.contactPhone || undefined,
@@ -96,6 +105,14 @@ const CheckoutBase = () => {
       // separate "clear cart" call, just refetch to reflect that.
       await fetchCart();
       await fetchCartItems({ offset: 0 }, true);
+
+      if (data.paymentMethod === 'card') {
+        // Stay on this page and collect card details instead of
+        // navigating away -- see StripePaymentStep.
+        setCardOrderId(order.id);
+        return;
+      }
+
       showToast({ message: 'Order placed successfully!', type: 'success' });
       navigate('/');
     } catch (err) {
@@ -122,6 +139,21 @@ const CheckoutBase = () => {
       });
     }
   };
+
+  if (cardOrderId !== null) {
+    return (
+      <CheckoutWrapper>
+        <Typography my={4}>Checkout</Typography>
+        <CheckoutContent>
+          <StripePaymentStep
+            orderId={cardOrderId}
+            onPaid={() => navigate('/')}
+            onSkip={() => navigate('/')}
+          />
+        </CheckoutContent>
+      </CheckoutWrapper>
+    );
+  }
 
   return (
     <CheckoutWrapper>

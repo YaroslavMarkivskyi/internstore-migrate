@@ -66,6 +66,12 @@ class Order(Base):
     contact_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     payment_method: Mapped[str] = mapped_column(String(50), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set by POST /orders/{id}/payment-intent when a "card" order starts
+    # Stripe checkout; the webhook handler uses it to find which Order a
+    # payment_intent.succeeded event belongs to (Stripe's metadata.order_id
+    # would also work, but a DB lookup avoids trusting webhook payload
+    # content for anything beyond "which PaymentIntent fired").
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
 
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order", cascade="all, delete-orphan")
 

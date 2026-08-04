@@ -177,8 +177,18 @@ services:
       # libs/contracts/inventory/check-availability.md).
       INVENTORY_BASE_URL: http://inventory:8000
       INVENTORY_TIMEOUT_SECONDS: "5.0"
+      # Same pattern, for pricing Stripe PaymentIntents server-side (see
+      # orders/routers/payments.py) — Orders keeps no price of its own.
+      CATALOG_BASE_URL: http://catalog:8000
+      CATALOG_TIMEOUT_SECONDS: "5.0"
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OUTBOX_POLL_INTERVAL_SECONDS: "1.0"
+      # Test-mode keys (sk_test_.../whsec_...) from your Stripe dashboard —
+      # same ${VAR:-} passthrough-from-root-.env pattern as ai-assistant's
+      # OPENAI_API_KEY below. Empty by default so the service still boots
+      # without them (Stripe just 401s at call time, not at startup).
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     depends_on:
       orders-db:
         condition: service_healthy
@@ -452,6 +462,12 @@ services:
       VITE_KEYCLOAK_URL: http://localhost:8081
       VITE_KEYCLOAK_REALM: internstore
       VITE_KEYCLOAK_CLIENT_ID: internstore-web
+      # Publishable key (pk_test_...) -- safe to ship to the browser by
+      # design (Stripe Elements needs it client-side to mount the card
+      # form), unlike STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET below which
+      # stay server-side on orders. Same ${VAR:-} root-.env passthrough as
+      # those.
+      VITE_STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
     ports:
       # :5173/:3000 (the frontend's conventional dev port / Next.js
       # default) were already taken by other things on this host, so this
