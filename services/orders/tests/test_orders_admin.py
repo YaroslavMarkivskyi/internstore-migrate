@@ -1,5 +1,6 @@
 import uuid
 
+from orders.models import Order, OrderStatus
 from tests.conftest import mint_internal_token
 
 CHECKOUT_PAYLOAD = {
@@ -15,6 +16,13 @@ async def _checkout(client, headers, fake_inventory_client, product_id: str) -> 
     resp = await client.post("/checkout", json=CHECKOUT_PAYLOAD, headers=headers)
     assert resp.status_code == 201
     return resp.json()
+
+
+async def _set_status(client, order_id: str, status: OrderStatus) -> None:
+    async with client.app.state.session_factory() as session:
+        order = await session.get(Order, uuid.UUID(order_id))
+        order.status = status
+        await session.commit()
 
 
 async def test_list_orders_admin_sees_all_customers(
@@ -82,3 +90,36 @@ async def test_list_orders_admin_accepts_assistant_role(client, customer_token, 
     )
     assert resp.status_code == 200
     assert resp.json()[0]["id"] == order["id"]
+
+
+async def test_ship_order_admin_marks_paid_order_done(
+    client, customer_token, admin_token, fake_inventory_client
+):
+    order = await _checkout(client, {"x-internal-token": customer_token}, fake_inventory_client, str(uuid.uuid4()))
+    await _set_status(client, order["id"], OrderStatus.PAID)
+
+    resp = await client.post(f"/admin/{order['id']}/ship", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+
+async def test_ship_order_admin_rejects_non_admin(client, customer_token, fake_inventory_client):
+    order = await _checkout(client, {"x-internal-token": customer_token}, fake_inventory_client, str(uuid.uuid4()))
+    await _set_status(client, order["id"], OrderStatus.PAID)
+
+    resp = await client.post(f"/admin/{order['id']}/ship", headers={"x-internal-token": customer_token})
+    assert resp.status_code == 403
+
+
+async def test_ship_order_admin_non_paid_order_returns_409(
+    client, customer_token, admin_token, fake_inventory_client
+):
+    order = await _checkout(client, {"x-internal-token": customer_token}, fake_inventory_client, str(uuid.uuid4()))
+
+    resp = await client.post(f"/admin/{order['id']}/ship", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 409
+
+
+async def test_ship_nonexistent_order_admin_404(client, admin_token):
+    resp = await client.post(f"/admin/{uuid.uuid4()}/ship", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 404

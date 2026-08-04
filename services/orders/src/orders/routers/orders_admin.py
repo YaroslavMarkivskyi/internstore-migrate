@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from orders.auth import InternalClaims, require_admin, require_admin_or_assistant
 from orders.db import get_session
-from orders.models import Order
+from orders.models import Order, OrderStatus
 from orders.payment_service import OrderNotPayableError, mark_order_paid
 from orders.schemas import OrderAdminRead, OrderRead
 
@@ -82,6 +82,30 @@ async def pay_order_admin(
     except OrderNotPayableError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    await session.commit()
+    await session.refresh(order, attribute_names=["items"])
+    return _to_admin_read(order)
+
+
+@router.post("/{order_id}/ship", response_model=OrderAdminRead)
+async def ship_order_admin(
+    order_id: uuid.UUID,
+    claims: Annotated[InternalClaims, Depends(require_admin)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OrderAdminRead:
+    result = await session.execute(
+        select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.status != OrderStatus.PAID:
+        raise HTTPException(
+            status_code=409, detail=f"Order must be paid to ship, currently {order.status.value}"
+        )
+
+    order.status = OrderStatus.DONE
     await session.commit()
     await session.refresh(order, attribute_names=["items"])
     return _to_admin_read(order)

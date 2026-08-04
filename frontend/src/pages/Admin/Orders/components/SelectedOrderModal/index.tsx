@@ -34,7 +34,12 @@ import {
   TableBottomWrapper,
   TotalText,
 } from '@pages/Admin/Orders/components/SelectedOrderModal/styles';
-import { getOrder, getOrderItems, payOrder } from '@services/http/admin/orders';
+import {
+  getOrder,
+  getOrderItems,
+  payOrder,
+  shipOrder,
+} from '@services/http/admin/orders';
 import showToast from '@utils/showToast';
 
 import {
@@ -65,6 +70,7 @@ const SelectedOrderModal: FC<SelectedOrderModalProps> = ({
   const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
+  const [isCreatingShipment, setIsCreatingShipment] = useState(false);
 
   const limit = 8;
 
@@ -148,7 +154,20 @@ const SelectedOrderModal: FC<SelectedOrderModalProps> = ({
 
   const handleRejectOrder = () => console.log('Order rejected');
   const handleSendInvoice = () => console.log('Order rejected');
-  const handleCreateShipment = () => console.log('Order rejected');
+
+  const handleCreateShipment = async () => {
+    if (selectedOrderId === null) return;
+    setIsCreatingShipment(true);
+    try {
+      const updated = await shipOrder(selectedOrderId);
+      setOrder(updated);
+      showToast({ message: 'Shipment created', type: 'success' });
+    } catch {
+      showToast({ message: 'Error creating shipment', type: 'error' });
+    } finally {
+      setIsCreatingShipment(false);
+    }
+  };
 
   const renderControls = () => {
     if (!order || StatusesToHideControls.includes(order.status)) return;
@@ -159,7 +178,11 @@ const SelectedOrderModal: FC<SelectedOrderModalProps> = ({
           Reject the order
         </ButtonAdmin>
         {order.status === CreateShipmentStatus && (
-          <ButtonAdmin variant="contained" onClick={handleCreateShipment}>
+          <ButtonAdmin
+            variant="contained"
+            disabled={isCreatingShipment}
+            onClick={handleCreateShipment}
+          >
             Create a shipment
           </ButtonAdmin>
         )}

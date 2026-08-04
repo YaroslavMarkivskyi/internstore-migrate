@@ -123,6 +123,13 @@ export const payOrder = async (orderId: string): Promise<IOrderAdmin> => {
   return toOrderAdmin(resp.data);
 };
 
+// Marks a paid order as shipped (paid -> done). See ship_order_admin in
+// orders_admin.py.
+export const shipOrder = async (orderId: string): Promise<IOrderAdmin> => {
+  const resp = await api.post<OrderAdminRaw>(`orders/admin/${orderId}/ship`);
+  return toOrderAdmin(resp.data);
+};
+
 interface InventoryConsolidatedItem {
   productId: string;
   quantity: number;
