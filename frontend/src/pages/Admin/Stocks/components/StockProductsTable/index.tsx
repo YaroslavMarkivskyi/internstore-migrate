@@ -11,8 +11,8 @@ import { IStockProduct } from 'src/types/stocks/interfaces';
 interface Props {
   stockProducts: IStockProduct[];
   refetchProducts: () => Promise<void>;
-  selectedProductId?: number;
-  setSelectedProductId: Dispatch<SetStateAction<number | undefined>>;
+  selectedProductId?: string;
+  setSelectedProductId: Dispatch<SetStateAction<string | undefined>>;
   onProductCardRefresh?: () => Promise<void>;
 }
 
@@ -24,10 +24,10 @@ const StockProductsTable = ({
   onProductCardRefresh,
 }: Props) => {
   const [editingProductId, setEditingProductId] = useState<
-    number | undefined
+    string | undefined
   >();
 
-  const handleStartEditing = (productId: number) => {
+  const handleStartEditing = (productId: string) => {
     setEditingProductId(productId);
   };
 

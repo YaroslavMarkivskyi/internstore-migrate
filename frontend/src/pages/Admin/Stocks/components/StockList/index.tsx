@@ -19,7 +19,7 @@ interface StocksListProps {
 
 const StocksList = ({ stocks, loading }: StocksListProps) => {
   const { stockId } = useParams<{ stockId: string }>();
-  const selectedStock = stockId ? Number(stockId) : 0;
+  const selectedStock = stockId ?? '';
   const { openModal } = useModal();
 
   const handleEditClick = (stock: IStock) => {

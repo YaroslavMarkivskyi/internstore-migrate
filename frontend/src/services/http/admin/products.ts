@@ -312,11 +312,24 @@ export const toggleProductPublish = async (
   return toProductAdmin(updated.data, categories, quantities);
 };
 
-// Admin/Stocks' per-stock breakdown, not Admin/Products -- out of scope
-// here (see STR planning notes), still pointed at the nonexistent old path.
-export const getStocksDetails = async (productId: string) => {
-  const resp = await api.get<IStocksDetails>(
-    `admin/products/${productId}/stocks/`
-  );
-  return resp.data;
+interface StockItemDetailRaw {
+  id: string;
+  stockId: string;
+  name: string;
+  quantity: number;
+  temperature: number | null;
+  humidity: number | null;
+}
+
+// Admin/Stocks' per-stock breakdown for one product -- Inventory has no
+// per-product aggregate of its own to reuse, so this hits the same
+// /items/detailed endpoint stockService.ts uses for the stock-scoped
+// tables, filtered to a single product_id.
+export const getStocksDetails = async (
+  productId: string
+): Promise<IStocksDetails> => {
+  const resp = await api.get<StockItemDetailRaw[]>('inventory/items/detailed', {
+    params: { productId },
+  });
+  return { stocks: resp.data };
 };

@@ -53,6 +53,13 @@ class OrderRead(BaseModel):
     items: list[OrderItemRead]
 
 
+class OrderAdminRead(OrderRead):
+    # owner_id is a Keycloak sub (customer) or auth-backend guest_id (guest
+    # checkout) — see Cart.owner_id in orders/models.py. Exposed to admins
+    # so they can see who placed the order.
+    customer: str
+
+
 class CheckoutInsufficientStockItem(BaseModel):
     product_id: uuid.UUID
     requested: int

@@ -41,7 +41,7 @@ jest.mock('../components/TransferItem', () => {
         <select
           data-testid="stock-select"
           value={selectedStockId || ''}
-          onChange={e => onStockChange(Number(e.target.value) || null)}
+          onChange={e => onStockChange(e.target.value || null)}
         >
           <option value="">Select Stock</option>
           {availableStocks.map(stock => (
@@ -195,18 +195,18 @@ jest.mock('@components/UI/admin/ButtonAdmin', () => {
 
 describe('MoveToStockMenu Component', () => {
   // Sample test data
-  const mockSourceStock = { id: 2, name: 'Warehouse A' };
+  const mockSourceStock = { id: '2', name: 'Warehouse A' };
   const mockStocks = [
-    { id: 1, name: 'Store B' },
-    { id: 3, name: 'Store C' },
-    { id: 4, name: 'Store D' },
+    { id: '1', name: 'Store B' },
+    { id: '3', name: 'Store C' },
+    { id: '4', name: 'Store D' },
   ];
   const mockProductStockEntry: IStockProduct = {
-    id: 4,
+    id: '4',
     quantity: 10,
-    stockId: 2,
+    stockId: '2',
     product: {
-      id: 1,
+      id: '1',
       image: 'product-image.jpg',
       name: 'Test Product',
       category: 'bars',
@@ -217,7 +217,7 @@ describe('MoveToStockMenu Component', () => {
   };
 
   const defaultProps = {
-    sourceStockId: 2,
+    sourceStockId: '2',
     productStockEntry: mockProductStockEntry,
     onClose: jest.fn(),
   };
@@ -303,9 +303,9 @@ describe('MoveToStockMenu Component', () => {
     // Check if distributeProducts was called with correct data
     await waitFor(() => {
       expect(stocksService.distributeProducts).toHaveBeenCalledWith(
-        { transfers: [{ targetStock: 1, quantityToTransfer: 5 }] },
-        2,
-        4
+        { transfers: [{ targetStock: '1', quantityToTransfer: 5 }] },
+        '2',
+        '4'
       );
     });
 

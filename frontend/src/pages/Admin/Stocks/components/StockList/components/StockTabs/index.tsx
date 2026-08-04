@@ -9,15 +9,15 @@ import { IStock } from 'src/types/stocks/interfaces';
 
 interface Props {
   stocks: IStock[];
-  selectedStock: number;
+  selectedStock: string;
   onEditClick: (stock: IStock) => void;
 }
 
 export const StockTabs = ({ stocks, selectedStock, onEditClick }: Props) => {
   const navigate = useNavigate();
 
-  const handleChange = (_: React.SyntheticEvent, newValue: number) => {
-    navigate(newValue === 0 ? '/admin/stocks' : `/admin/stocks/${newValue}`);
+  const handleChange = (_: React.SyntheticEvent, newValue: string) => {
+    navigate(newValue === '' ? '/admin/stocks' : `/admin/stocks/${newValue}`);
   };
 
   return (
@@ -26,7 +26,7 @@ export const StockTabs = ({ stocks, selectedStock, onEditClick }: Props) => {
       onChange={handleChange}
       aria-label="Stock selection tabs"
     >
-      <StyledTab label="All Stocks" value={0} />
+      <StyledTab label="All Stocks" value="" />
       {stocks.map(stock => (
         <StyledTab
           key={stock.id}

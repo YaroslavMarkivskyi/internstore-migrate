@@ -12,7 +12,7 @@ import {
 const filterConfigs: UrlParamConfig<IStockProductFilterParams>[] = [
   {
     key: 'category',
-    parser: val => val.split(',').map(Number),
+    parser: val => val.split(','),
     serializer: v => (Array.isArray(v) ? v.join(',') : String(v)),
   },
   { key: 'priceMin', parser: parseFloat },
@@ -21,7 +21,7 @@ const filterConfigs: UrlParamConfig<IStockProductFilterParams>[] = [
 
 const useFilterStockProducts = (limit: number = 8) => {
   const { stockId } = useParams<{ stockId: string }>();
-  const selectedStock = stockId ? Number(stockId) : 0;
+  const selectedStock = stockId ?? '';
 
   const {
     data: stockProducts,

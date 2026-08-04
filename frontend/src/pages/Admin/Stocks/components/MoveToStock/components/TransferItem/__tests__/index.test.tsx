@@ -36,9 +36,9 @@ jest.mock('../../../styles', () => ({
 describe('TransferItem Component', () => {
   // Sample test data
   const availableStocks: TargetStock[] = [
-    { id: 1, name: 'Warehouse A' },
-    { id: 2, name: 'Warehouse B' },
-    { id: 3, name: 'Store C' },
+    { id: '1', name: 'Warehouse A' },
+    { id: '2', name: 'Warehouse B' },
+    { id: '3', name: 'Store C' },
   ];
 
   // Default props for most tests
@@ -71,7 +71,7 @@ describe('TransferItem Component', () => {
   test('renders with preselected stock and quantity', () => {
     const props = {
       ...defaultProps,
-      selectedStockId: 2,
+      selectedStockId: '2',
       quantity: 5,
     };
 
@@ -94,11 +94,11 @@ describe('TransferItem Component', () => {
     fireEvent.change(stockSelect, { target: { value: '1' } });
 
     // Check if onStockChange was called with the correct value
-    expect(defaultProps.onStockChange).toHaveBeenCalledWith(1);
+    expect(defaultProps.onStockChange).toHaveBeenCalledWith('1');
   });
 
   test('calls onQuantityChange when quantity is changed', () => {
-    render(<TransferItem {...defaultProps} selectedStockId={1} />);
+    render(<TransferItem {...defaultProps} selectedStockId={'1'} />);
 
     // Change quantity
     const quantityInput = screen.getByTestId('quantity-input');
@@ -111,7 +111,7 @@ describe('TransferItem Component', () => {
   test('clears zero value when clicking on quantity input', () => {
     const props = {
       ...defaultProps,
-      selectedStockId: 1,
+      selectedStockId: '1',
       quantity: 0,
     };
 
@@ -137,7 +137,7 @@ describe('TransferItem Component', () => {
   });
 
   test('handles non-numeric input in quantity field', () => {
-    render(<TransferItem {...defaultProps} selectedStockId={1} />);
+    render(<TransferItem {...defaultProps} selectedStockId={'1'} />);
 
     // Change quantity to non-numeric value (which would be converted to 0 in the component)
     const quantityInput = screen.getByTestId('quantity-input');
@@ -155,7 +155,7 @@ describe('TransferItem Component', () => {
   });
 
   test('quantity input is enabled when a stock is selected', () => {
-    render(<TransferItem {...defaultProps} selectedStockId={1} />);
+    render(<TransferItem {...defaultProps} selectedStockId={'1'} />);
 
     const quantityInput = screen.getByTestId('quantity-input');
     expect(quantityInput).not.toBeDisabled();

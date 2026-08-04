@@ -23,8 +23,8 @@ topics per event type.
 | `order-events` | `OrderCreated`, `PaymentConfirmed`, `OrderRejected`, `OrderCancelled` | Orders service |
 | `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired` | Inventory service |
 | `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized` | Telemetry service |
-| `catalog-events` | `ProductThresholdUpdated` | Catalog service |
-| `chat-events` | `UnreadMessageReceived` | Chat service |
+| `catalog-events` | `ProductThresholdUpdated`, `ProductUpdated` | Catalog service |
+| `chat-events` | `UnreadMessageReceived`, `CustomerMessageSent`, `AdminRequested`, `AIModeEnabled` | Chat service |
 
 All topics: 1 partition, replication factor 1 (single broker, no HA at this
 stage). Created automatically by the `kafka-topic-init` compose service on
@@ -41,6 +41,14 @@ Notifications consumes all five topics (dispatching on `eventType`, same as
 every other consumer here) and is the first pure event consumer in the
 system: no Gateway route, no synchronous callers or callees. See
 [services/notifications/README.md](../services/notifications/README.md).
+
+AI Assistant consumes `chat-events` (`CustomerMessageSent`, to decide
+whether to reply) and `catalog-events` (`ProductUpdated`, to re-embed a
+product into its own `product_embeddings` table). It produces no events
+itself — replies are injected back into Chat via a synchronous internal
+call (`POST /rooms/{id}/messages`), not published to Kafka, so there's no
+`ai-assistant-events` topic. See
+[services/ai-assistant/README.md](../services/ai-assistant/README.md).
 
 ## Verifying the broker is alive
 
@@ -93,3 +101,14 @@ an end-to-end run against the real broker. Chat is a producer-only client of
   detected up to one check-interval late, not the instant the underlying
   condition becomes true. See
   [services/telemetry/README.md](../services/telemetry/README.md).
+- **AI Assistant requires a real OpenAI API key, no local LLM fallback.**
+  `docker compose up` without `OPENAI_API_KEY` set starts the service fine,
+  but every chat completion/embedding call fails until a real key is
+  provided — same class of external-dependency trade-off as the Mailpit gap
+  above. Embeddings are also built lazily: `product_embeddings` stays empty
+  until Catalog publishes a `ProductUpdated` event for each product, so a
+  fresh stack has no RAG context until either an admin edits every product
+  once or `scripts/seed-embeddings.sh` is run to trigger it directly. Rate
+  limiting (`AI_RATE_LIMIT`, default 10/hour) is per-room, not per-customer —
+  a customer with multiple open rooms gets the limit again in each one. See
+  [services/ai-assistant/README.md](../services/ai-assistant/README.md).

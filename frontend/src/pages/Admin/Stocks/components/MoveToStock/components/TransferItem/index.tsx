@@ -9,16 +9,16 @@ import {
 } from '../../styles';
 
 export interface TargetStock {
-  id: number;
+  id: string;
   name: string;
 }
 
 export interface TransferItemProps {
   availableStocks: TargetStock[];
   quantity: number;
-  selectedStockId: number | null;
+  selectedStockId: string | null;
   onQuantityChange: (quantity: number) => void;
-  onStockChange: (stockId: number | null) => void;
+  onStockChange: (stockId: string | null) => void;
 }
 
 const TransferItem: React.FC<TransferItemProps> = ({
@@ -35,7 +35,7 @@ const TransferItem: React.FC<TransferItemProps> = ({
   };
 
   // Handler for stock selection change
-  const handleStockChange = (value: number | null) => {
+  const handleStockChange = (value: string | null) => {
     onStockChange(value);
   };
 
@@ -60,7 +60,7 @@ const TransferItem: React.FC<TransferItemProps> = ({
       >
         <TargetStockSelect
           value={selectedStockId}
-          onChange={e => handleStockChange(Number(e.target.value))}
+          onChange={e => handleStockChange(String(e.target.value))}
           endComponent={<Radio size="small" />}
           placeholder="Stock"
           options={availableStocks.map(stock => ({

@@ -9,7 +9,7 @@ ISSUER = "internstore-gateway"
 
 class InternalClaims(BaseModel):
     sub: str
-    role: Literal["customer", "admin", "guest"]
+    role: Literal["customer", "admin", "guest", "assistant"]
 
 
 # Mirrors auth-backend's createInternalTokenVerifier
@@ -26,7 +26,7 @@ def verify_internal_token(token: str, secret: str) -> InternalClaims:
 
     sub = payload.get("sub")
     role = payload.get("role")
-    if not sub or role not in ("customer", "admin", "guest"):
+    if not sub or role not in ("customer", "admin", "guest", "assistant"):
         raise ValueError("Invalid internal token claims")
     return InternalClaims(sub=sub, role=role)
 
@@ -42,3 +42,23 @@ def get_internal_claims(
         return verify_internal_token(x_internal_token, secret)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid internal token") from exc
+
+
+def require_admin(
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+) -> InternalClaims:
+    if claims.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+    return claims
+
+
+# GET /orders/admin also accepts the AI Assistant's "assistant" role, scoped
+# by the owner_id query param below — it's a read-only internal caller
+# building customer-order context for a chat reply, same trust level as
+# admin (both bypass the "own orders only" restriction on GET /orders).
+def require_admin_or_assistant(
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+) -> InternalClaims:
+    if claims.role not in ("admin", "assistant"):
+        raise HTTPException(status_code=403, detail="Admin or assistant role required")
+    return claims

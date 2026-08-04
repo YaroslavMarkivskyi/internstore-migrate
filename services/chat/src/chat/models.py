@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Enum as SAEnum, ForeignKey, String, Uuid, func
+from sqlalchemy import JSON, Boolean, DateTime, Enum as SAEnum, ForeignKey, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from chat.db import Base
@@ -11,6 +11,7 @@ from chat.db import Base
 class SenderType(str, enum.Enum):
     CUSTOMER = "customer"
     ADMIN = "admin"
+    ASSISTANT = "assistant"
 
 
 class Room(Base):
@@ -34,6 +35,11 @@ class Room(Base):
     # gone can notify again, but repeated messages within the same unread
     # window don't spam a second email.
     notification_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Source of truth for AI/human mode, survives a Redis flush. The
+    # `chat:{room_id}:mode` Redis key is the fast-path cache the AI
+    # Assistant's consumer actually reads on every message; this column is
+    # what a PATCH /rooms/{id}/mode re-derives it from on reconnect.
+    ai_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
     messages: Mapped[list["Message"]] = relationship(back_populates="room", cascade="all, delete-orphan")
     members: Mapped[list["RoomMember"]] = relationship(back_populates="room", cascade="all, delete-orphan")

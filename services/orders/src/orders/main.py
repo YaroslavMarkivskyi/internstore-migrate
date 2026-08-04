@@ -10,7 +10,7 @@ from orders.db import make_session_factory
 from orders.inventory_client import InventoryClient
 from orders.kafka import KafkaEventProducer, run_consumer_loop
 from orders.outbox_worker import run_outbox_worker
-from orders.routers import cart, checkout, orders, pay
+from orders.routers import cart, checkout, orders, orders_admin, pay
 
 
 @asynccontextmanager
@@ -55,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(cart.router)
     app.include_router(checkout.router)
+    app.include_router(orders_admin.router)
     app.include_router(orders.router)
     app.include_router(pay.router)
 

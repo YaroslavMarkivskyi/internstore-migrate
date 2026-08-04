@@ -137,8 +137,11 @@ services:
       # Short dev/test values so the reservation-saga's expired-reservation
       # scenario (Pending -> Cancelled) is actually runnable locally in
       # under a minute, instead of only declared. Settings.py's own default
-      # is a realistic 24h/60s for anywhere else this service runs.
-      RESERVATION_TTL_SECONDS: "30"
+      # is a realistic 24h/60s for anywhere else this service runs. 300s
+      # (5min) instead of the original 30s so manually clicking through
+      # checkout -> pay in the admin/storefront UI doesn't race the expiry
+      # checker — still short enough to demo the saga by just waiting.
+      RESERVATION_TTL_SECONDS: "300"
       RESERVATION_CHECK_INTERVAL_SECONDS: "5"
     depends_on:
       inventory-db:
@@ -393,6 +396,50 @@ services:
     # catalog/inventory/orders/telemetry/security. nginx's /ws/ and
     # /api/chat/ locations address this container as chat:8000.
 
+  ai-db:
+    image: ankane/pgvector:latest
+    environment:
+      POSTGRES_DB: ai
+      POSTGRES_USER: ai
+      POSTGRES_PASSWORD: ai
+    volumes:
+      - ai_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ai-assistant:
+    build: ./services/ai-assistant
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://ai:ai@ai-db:5432/ai
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every other
+      # domain service — this service mints its own internal token from it
+      # (see services/ai-assistant/src/ai_assistant/auth.py) since it's
+      # triggered by Kafka events, not incoming HTTP requests, so there's no
+      # request token to forward.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_URL: redis://redis:6379
+      # Container-to-container addresses — bypasses nginx for these internal
+      # calls, same as Orders -> Inventory.
+      CHAT_SERVICE_URL: http://chat:8000
+      ORDERS_SERVICE_URL: http://orders:8000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AI_MODE_DEFAULT: ai
+      AI_RATE_LIMIT: "10"
+    depends_on:
+      ai-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    # No nginx route and not in nginx's depends_on below — internal only,
+    # never called directly by the browser. See docs/EVENT_BROKER.md.
+
   frontend:
     build: ./frontend
     environment:
@@ -476,6 +523,9 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
+        # ai-assistant consumes catalog-events and chat-events (both
+        # already listed below); it produces nothing itself, so there's no
+        # separate ai-assistant-events topic to create.
         for topic in order-events inventory-events telemetry-events catalog-events chat-events; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$$topic" --partitions 1 --replication-factor 1
         done
@@ -488,6 +538,7 @@ volumes:
   telemetry_db_data:
   security_db_data:
   chat_db_data:
+  ai_db_data:
   minio_data:
   kafka_data:
   nginx_certs:

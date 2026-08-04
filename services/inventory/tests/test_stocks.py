@@ -223,3 +223,156 @@ async def test_move_stock_item_not_found(client, admin_token):
         headers=headers,
     )
     assert resp.status_code == 404
+
+
+async def test_create_stock_with_humidity(client, admin_token):
+    resp = await client.post(
+        "/stocks",
+        json={"name": "Warehouse A", "humidity": 55.5},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["humidity"] == 55.5
+
+
+async def test_get_stock(client, admin_token):
+    stock_id = await create_stock(client, admin_token, name="Warehouse A")
+    resp = await client.get(f"/stocks/{stock_id}")
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Warehouse A"
+
+
+async def test_get_stock_not_found(client):
+    resp = await client.get(f"/stocks/{uuid.uuid4()}")
+    assert resp.status_code == 404
+
+
+async def test_update_stock_renames(client, admin_token):
+    stock_id = await create_stock(client, admin_token, name="Warehouse A")
+    resp = await client.patch(
+        f"/stocks/{stock_id}",
+        json={"name": "Warehouse B", "temperature": 3.0, "humidity": 40.0},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "Warehouse B"
+    assert body["temperature"] == 3.0
+    assert body["humidity"] == 40.0
+
+
+async def test_update_stock_requires_admin(client, admin_token, customer_token):
+    stock_id = await create_stock(client, admin_token)
+    resp = await client.patch(
+        f"/stocks/{stock_id}",
+        json={"name": "Warehouse B"},
+        headers={"x-internal-token": customer_token},
+    )
+    assert resp.status_code == 403
+
+
+async def test_update_stock_duplicate_name_rejected(client, admin_token):
+    headers = {"x-internal-token": admin_token}
+    await create_stock(client, admin_token, name="Warehouse A")
+    other_id = await create_stock(client, admin_token, name="Warehouse B")
+
+    resp = await client.patch(f"/stocks/{other_id}", json={"name": "Warehouse A"}, headers=headers)
+    assert resp.status_code == 409
+
+
+async def test_update_stock_not_found(client, admin_token):
+    resp = await client.patch(
+        f"/stocks/{uuid.uuid4()}",
+        json={"name": "Warehouse B"},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 404
+
+
+async def test_delete_empty_stock_succeeds(client, admin_token):
+    stock_id = await create_stock(client, admin_token)
+    resp = await client.delete(f"/stocks/{stock_id}", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 204
+
+    listed = await client.get("/stocks")
+    assert listed.json() == []
+
+
+async def test_delete_stock_with_quantity_rejected(client, admin_token):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    await client.post(
+        f"/stocks/{stock_id}/items",
+        json={"product_id": str(uuid.uuid4()), "quantity": 5},
+        headers=headers,
+    )
+
+    resp = await client.delete(f"/stocks/{stock_id}", headers=headers)
+    assert resp.status_code == 409
+
+
+async def test_delete_stock_requires_admin(client, admin_token, customer_token):
+    stock_id = await create_stock(client, admin_token)
+    resp = await client.delete(f"/stocks/{stock_id}", headers={"x-internal-token": customer_token})
+    assert resp.status_code == 403
+
+
+async def test_delete_stock_not_found(client, admin_token):
+    resp = await client.delete(f"/stocks/{uuid.uuid4()}", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 404
+
+
+async def test_update_stock_item_quantity(client, admin_token):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    created = await client.post(
+        f"/stocks/{stock_id}/items",
+        json={"product_id": str(uuid.uuid4()), "quantity": 5},
+        headers=headers,
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.patch(
+        f"/stocks/{stock_id}/items/{item_id}",
+        json={"quantity": 12},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["quantity"] == 12
+
+
+async def test_update_stock_item_quantity_requires_admin(client, admin_token, customer_token):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    created = await client.post(
+        f"/stocks/{stock_id}/items",
+        json={"product_id": str(uuid.uuid4()), "quantity": 5},
+        headers=headers,
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.patch(
+        f"/stocks/{stock_id}/items/{item_id}",
+        json={"quantity": 12},
+        headers={"x-internal-token": customer_token},
+    )
+    assert resp.status_code == 403
+
+
+async def test_update_stock_item_quantity_wrong_stock(client, admin_token):
+    headers = {"x-internal-token": admin_token}
+    stock_a = await create_stock(client, admin_token, name="Stock A")
+    stock_b = await create_stock(client, admin_token, name="Stock B")
+    created = await client.post(
+        f"/stocks/{stock_a}/items",
+        json={"product_id": str(uuid.uuid4()), "quantity": 5},
+        headers=headers,
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.patch(
+        f"/stocks/{stock_b}/items/{item_id}",
+        json={"quantity": 12},
+        headers=headers,
+    )
+    assert resp.status_code == 404

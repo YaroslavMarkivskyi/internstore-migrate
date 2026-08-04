@@ -24,7 +24,7 @@ jest.mock('@services/http/admin/products', () => ({
 
 describe('ProductCard', () => {
   const mockProduct = {
-    id: 1,
+    id: '1',
     name: 'Test Product',
     image: '',
     minTemperature: 5,
@@ -55,14 +55,14 @@ describe('ProductCard', () => {
   });
 
   test('renders loader initially', async () => {
-    render(<ProductCard selectedProductId={1} />);
+    render(<ProductCard selectedProductId={'1'} />);
     await act(async () => {
       expect(screen.getByRole('progressbar')).toBeInTheDocument();
     });
   });
 
   test('renders product name and image', async () => {
-    render(<ProductCard selectedProductId={1} />);
+    render(<ProductCard selectedProductId={'1'} />);
     await waitFor(() => {
       expect(screen.getByText('Test Product')).toBeInTheDocument();
     });
@@ -72,7 +72,7 @@ describe('ProductCard', () => {
   });
 
   test('renders stock details rows', async () => {
-    render(<ProductCard selectedProductId={1} />);
+    render(<ProductCard selectedProductId={'1'} />);
     await waitFor(() => {
       expect(screen.getByText('Stock A')).toBeInTheDocument();
       expect(screen.getByText('Stock B')).toBeInTheDocument();
@@ -87,7 +87,7 @@ describe('ProductCard', () => {
   });
 
   test('applies error class to temperature out of range', async () => {
-    render(<ProductCard selectedProductId={1} />);
+    render(<ProductCard selectedProductId={'1'} />);
     await waitFor(() => {
       const errorCells = screen
         .getAllByText('Stock A')[0]

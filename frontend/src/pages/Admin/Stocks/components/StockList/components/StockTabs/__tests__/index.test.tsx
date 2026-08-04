@@ -6,11 +6,11 @@ import { IStock } from 'src/types/stocks/interfaces';
 
 describe('StockTabs', () => {
   const mockStocks: IStock[] = [
-    { id: 1, name: 'Apple' },
-    { id: 2, name: 'Tesla' },
+    { id: '1', name: 'Apple' },
+    { id: '2', name: 'Tesla' },
   ];
 
-  const setup = (selectedStock = 1) => {
+  const setup = (selectedStock = '1') => {
     const onEditClick = jest.fn();
     const history = createMemoryHistory({
       initialEntries: ['/admin/stocks/1'],
@@ -46,7 +46,7 @@ describe('StockTabs', () => {
   });
 
   it('clicking on edit icon calls onEditClick and prevents navigation', () => {
-    const { onEditClick, history } = setup(2);
+    const { onEditClick, history } = setup('2');
 
     const teslaTab = screen.getByText('Tesla');
     const editIcon = teslaTab.querySelector('svg');
@@ -55,12 +55,12 @@ describe('StockTabs', () => {
       fireEvent.click(editIcon);
     }
 
-    expect(onEditClick).toHaveBeenCalledWith({ id: 2, name: 'Tesla' });
+    expect(onEditClick).toHaveBeenCalledWith({ id: '2', name: 'Tesla' });
     expect(history.location.pathname).toBe('/admin/stocks/1'); // no nav occurred
   });
 
   it('does not render edit icon for unselected tabs', () => {
-    setup(1);
+    setup('1');
 
     const appleTab = screen.getByText('Apple');
     const teslaTab = screen.getByText('Tesla');

@@ -57,3 +57,11 @@ def test_unread_message_received_falls_back_to_ops_email():
 
     assert to == templates.OPS_NOTIFICATION_EMAIL
     assert "Bob" in body
+
+
+def test_admin_requested_falls_back_to_ops_email():
+    to, subject, body = templates.admin_requested({"room_id": "room_1"})
+
+    assert to == templates.OPS_NOTIFICATION_EMAIL
+    assert "room_1" in subject
+    assert "room_1" in body

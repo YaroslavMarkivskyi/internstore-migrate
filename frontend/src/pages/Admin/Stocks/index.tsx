@@ -17,7 +17,7 @@ import { useStocks } from './hooks/useStocks';
 import { StocksContainer } from './styles';
 
 const AdminStocks = () => {
-  const [selectedProductId, setSelectedProductId] = useState<number>();
+  const [selectedProductId, setSelectedProductId] = useState<string>();
   const productCardRef = useRef<{ refresh: () => Promise<void> } | null>(null);
 
   const limit = 8;

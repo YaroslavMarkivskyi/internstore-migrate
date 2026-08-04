@@ -44,23 +44,27 @@ export const createCategory = async (name: string): Promise<ICategory> => {
   return resp.data;
 };
 
-// Not implemented on the backend — Catalog only has GET/POST /categories,
-// no PATCH/DELETE (see internstore-migrate/services/catalog/src/catalog/routers/categories.py).
 export const updateCategory = async (
-  _categoryId: string,
-  _name: string
-): Promise<never> => {
-  throw new Error('Editing categories is not supported by the backend yet.');
+  categoryId: string,
+  name: string
+): Promise<ICategory> => {
+  const resp = await ccApi.patch<ICategory>(
+    `catalog/categories/${categoryId}`,
+    { name }
+  );
+  return resp.data;
 };
 
 export const deleteCategory = async (
-  _categoryId: string,
-  _options?: {
+  categoryId: string,
+  options?: {
     deletionMode?: 'move' | 'unpublish_and_delete';
     targetCategoryId?: string;
   }
-): Promise<never> => {
-  throw new Error('Deleting categories is not supported by the backend yet.');
+): Promise<void> => {
+  await ccApi.delete(`catalog/categories/${categoryId}`, {
+    data: options,
+  });
 };
 
 // No preview-image support in the backend yet — every category comes back

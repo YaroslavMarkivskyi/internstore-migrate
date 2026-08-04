@@ -22,7 +22,7 @@ export interface ProductStockData {
 }
 
 export interface Stock {
-  id: number;
+  id: string;
   name: string;
 }
 
@@ -31,14 +31,14 @@ export interface ProductsDistribution {
 }
 
 export interface TransferUnit {
-  targetStock: number;
+  targetStock: string;
   quantityToTransfer: number;
 }
 
 export type IStock = z.infer<typeof stockSchema>;
 
 interface BaseProduct {
-  id: number;
+  id: string;
   name: string;
   price: number;
   minTemperature: number;
@@ -56,16 +56,16 @@ export interface INormalizedProduct extends BaseProduct {
 }
 
 export interface IStockProduct<TProduct = INormalizedProduct> {
-  id?: number;
+  id?: string;
   product: TProduct;
   quantity: number;
-  stockId: number;
+  stockId: string;
 }
 
 export interface IStockProductFilterParams extends PaginationQueryParams {
   priceMax?: number;
   priceMin?: number;
-  category?: number[];
+  category?: string[];
 }
 
 export interface patchStockProduct {
@@ -73,12 +73,12 @@ export interface patchStockProduct {
 }
 
 export interface IStockDetails {
-  id: number;
-  stockId: number;
+  id: string;
+  stockId: string;
   name: string;
   quantity: number;
-  temperature: number;
-  humidity: number;
+  temperature: number | null;
+  humidity: number | null;
 }
 
 export interface IStocksDetails {

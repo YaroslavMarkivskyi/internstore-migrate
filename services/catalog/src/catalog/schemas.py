@@ -1,10 +1,20 @@
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class CategoryCreate(BaseModel):
     name: str = Field(min_length=3, max_length=15)
+
+
+class CategoryUpdate(BaseModel):
+    name: str = Field(min_length=3, max_length=15)
+
+
+class CategoryDeleteOptions(BaseModel):
+    deletion_mode: Literal["move", "unpublish_and_delete"] | None = None
+    target_category_id: uuid.UUID | None = None
 
 
 class CategoryRead(BaseModel):

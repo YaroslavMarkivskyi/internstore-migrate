@@ -32,7 +32,7 @@ import {
 
 interface ProductCardProps {
   refetchProducts?: () => Promise<void>;
-  selectedProductId?: number;
+  selectedProductId?: string;
   onClose?: () => void;
 }
 
@@ -78,9 +78,13 @@ const ProductCard = forwardRef<ProductCardRef, ProductCardProps>(
     const renderStockDetails = (stockDetails: IStockDetails) => {
       if (!product) return;
 
+      // temperature/humidity are null until a real Telemetry subscription
+      // populates them (see Inventory's Stock model) -- no error styling
+      // and '-' displayed instead of crashing on null.toFixed()/null * 100.
       const isTemperatureError =
-        stockDetails.temperature > product.maxTemperature ||
-        stockDetails.temperature < product.minTemperature;
+        stockDetails.temperature !== null &&
+        (stockDetails.temperature > product.maxTemperature ||
+          stockDetails.temperature < product.minTemperature);
 
       const className = isTemperatureError ? 'error' : '';
 
@@ -88,7 +92,7 @@ const ProductCard = forwardRef<ProductCardRef, ProductCardProps>(
         id: stockDetails.id,
         quantity: stockDetails.quantity,
         stockId: stockDetails.stockId,
-        product: { id: Number(product.id) } as INormalizedProduct,
+        product: { id: product.id } as INormalizedProduct,
       };
 
       const handleStocksChange = () => {
@@ -101,12 +105,18 @@ const ProductCard = forwardRef<ProductCardRef, ProductCardProps>(
           <TableCell className={className}>{stockDetails.name}</TableCell>
           <TableCell className={className}>{stockDetails.quantity}</TableCell>
           <TableCell className={className}>
-            {stockDetails.temperature.toFixed(2)}
+            {stockDetails.temperature !== null
+              ? stockDetails.temperature.toFixed(2)
+              : '-'}
           </TableCell>
           <TableCell className={className}>
             {isTemperatureError ? getAccidentTimeFormatted() : '-'}
           </TableCell>
-          <TableCell>{(stockDetails.humidity * 100).toFixed(2)}%</TableCell>
+          <TableCell>
+            {stockDetails.humidity !== null
+              ? `${(stockDetails.humidity * 100).toFixed(2)}%`
+              : '-'}
+          </TableCell>
           <TableCell>-</TableCell>
           <TableCell>
             <StockProductMenuPopup

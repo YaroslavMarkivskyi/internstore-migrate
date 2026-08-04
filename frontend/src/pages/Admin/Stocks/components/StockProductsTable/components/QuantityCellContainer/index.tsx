@@ -8,7 +8,7 @@ import showToast from '@utils/showToast';
 import EditableQuantityCell from '../EditableQuantityCell';
 
 interface QuantityCellContainerProps {
-  productEntryId: number;
+  productEntryId: string;
   quantity: number;
   isEditing: boolean;
   onEditComplete: () => void;
@@ -34,7 +34,7 @@ const QuantityCellContainer = ({
 
     try {
       setIsUpdating(true);
-      await updateStockProduct(Number(stockId), productEntryId, {
+      await updateStockProduct(stockId as string, productEntryId, {
         quantity: newValue,
       });
 

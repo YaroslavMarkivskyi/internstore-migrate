@@ -50,7 +50,7 @@ import showToast from '@utils/showToast';
 
 describe('QuantityCellContainer', () => {
   const defaultProps = {
-    productEntryId: 1,
+    productEntryId: '1',
     quantity: 5,
     isEditing: true,
     onEditComplete: jest.fn(),
@@ -107,9 +107,9 @@ describe('QuantityCellContainer', () => {
 
   test('calls updateStockProduct when saving a new quantity', async () => {
     const mockUpdatedProduct = {
-      id: 1,
+      id: '1',
       product: {
-        id: 1,
+        id: '1',
         name: 'Test Product',
         price: 10,
         category: 'Test',
@@ -118,7 +118,7 @@ describe('QuantityCellContainer', () => {
         image: '',
       },
       quantity: 6,
-      stockId: 123,
+      stockId: '123',
     };
 
     (stocksService.updateStockProduct as jest.Mock).mockResolvedValue(
@@ -134,8 +134,8 @@ describe('QuantityCellContainer', () => {
     // Verify API was called with correct arguments
     await waitFor(() => {
       expect(stocksService.updateStockProduct).toHaveBeenCalledWith(
-        123, // from mocked useParams
-        1, // productEntryId
+        '123', // from mocked useParams
+        '1', // productEntryId
         { quantity: 6 } // quantity + 1 from our mock
       );
     });

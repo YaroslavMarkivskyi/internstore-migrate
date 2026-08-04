@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chat.auth import InternalClaims, require_admin
+from chat.auth import InternalClaims, require_admin, require_admin_or_assistant
 from chat.db import get_session
 from chat.models import Message, Room, RoomMember, SenderType
 
@@ -64,7 +64,7 @@ async def list_rooms(
 @router.get("/{room_id}/messages")
 async def get_messages(
     room_id: str,
-    claims: Annotated[InternalClaims, Depends(require_admin)],
+    claims: Annotated[InternalClaims, Depends(require_admin_or_assistant)],
     session: Annotated[AsyncSession, Depends(get_session)],
     before: str | None = None,
     limit: int = 50,

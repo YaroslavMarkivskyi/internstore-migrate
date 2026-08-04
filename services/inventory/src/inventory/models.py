@@ -16,6 +16,9 @@ class Stock(Base):
     # Populated by a Telemetry subscription that doesn't exist yet — left
     # null/pending until that integration lands (see task scope notes).
     temperature: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    # Same status as temperature -- no Telemetry subscription populates this
+    # yet, left null/pending until that integration lands.
+    humidity: Mapped[float | None] = mapped_column(Numeric, nullable=True)
 
     items: Mapped[list["StockItem"]] = relationship(back_populates="stock")
 

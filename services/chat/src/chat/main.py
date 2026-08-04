@@ -12,7 +12,7 @@ from chat.minio_client import MinioClient
 from chat.outbox_worker import run_outbox_worker
 from chat.pubsub import PubSubRouter
 from chat.redis_client import make_redis_client
-from chat.routers import attachments, rooms
+from chat.routers import attachments, internal_messages, mode, rooms
 from chat.ws import room as ws_room
 from chat.ws_manager import WebSocketManager
 
@@ -67,6 +67,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(rooms.router)
     app.include_router(attachments.router)
+    app.include_router(mode.router)
+    app.include_router(internal_messages.router)
     app.include_router(ws_room.router)
 
     return app

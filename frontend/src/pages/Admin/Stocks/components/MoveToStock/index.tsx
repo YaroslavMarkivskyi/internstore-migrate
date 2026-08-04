@@ -39,12 +39,12 @@ import {
 } from 'src/types/stocks/interfaces';
 
 export interface TransferItemData {
-  stockId: number | null;
+  stockId: string | null;
   quantity: number;
 }
 
 interface MoveToStockMenuProps {
-  sourceStockId: number;
+  sourceStockId: string;
   productStockEntry: IStockProduct;
   onClose: () => void;
   onSuccess?: () => void;
@@ -106,7 +106,7 @@ const MoveToStockMenu: React.FC<MoveToStockMenuProps> = ({
 
     // Prepare payload for API
     const transfers: TransferUnit[] = transferItems.map(item => ({
-      targetStock: item.stockId as number,
+      targetStock: item.stockId as string,
       quantityToTransfer: item.quantity,
     }));
 

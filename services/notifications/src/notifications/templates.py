@@ -57,3 +57,13 @@ def unread_message_received(payload: dict) -> tuple[str, str, str]:
     sender = payload.get("sender_name", "someone")
     body = f"You have an unread message from {sender}.\n"
     return to, "You have a new unread message", body
+
+
+def admin_requested(payload: dict) -> tuple[str, str, str]:
+    # Fired when a customer or admin switches a chat room from AI to human
+    # mode (Chat's PATCH /rooms/{id}/mode) — no per-admin recipient exists
+    # yet, so this goes to the same ops fallback as the two builders above.
+    room_id = payload["room_id"]
+    to = payload.get("recipient_email", OPS_NOTIFICATION_EMAIL)
+    body = f"Chat room {room_id} was switched to human support and needs an admin.\n"
+    return to, f"Human support requested in room {room_id}", body

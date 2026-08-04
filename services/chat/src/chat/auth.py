@@ -9,7 +9,7 @@ ISSUER = "internstore-gateway"
 
 class InternalClaims(BaseModel):
     sub: str
-    role: Literal["customer", "admin", "guest"]
+    role: Literal["customer", "admin", "guest", "assistant"]
 
 
 # Mirrors auth-backend's createInternalTokenVerifier
@@ -26,7 +26,7 @@ def verify_internal_token(token: str, secret: str) -> InternalClaims:
 
     sub = payload.get("sub")
     role = payload.get("role")
-    if not sub or role not in ("customer", "admin", "guest"):
+    if not sub or role not in ("customer", "admin", "guest", "assistant"):
         raise ValueError("Invalid internal token claims")
     return InternalClaims(sub=sub, role=role)
 
@@ -49,6 +49,29 @@ def require_admin(
 ) -> InternalClaims:
     if claims.role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
+    return claims
+
+
+# Used by POST /rooms/{id}/messages, the AI Assistant's only way to inject a
+# message into a room — the internal token it presents is minted with this
+# role rather than "admin"/"customer" so the message is unambiguously
+# attributable to the assistant on the wire, not just by sender_id string.
+def require_assistant(
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+) -> InternalClaims:
+    if claims.role != "assistant":
+        raise HTTPException(status_code=403, detail="Assistant role required")
+    return claims
+
+
+# GET /rooms/{id}/messages also accepts "assistant" — the AI Assistant reads
+# recent history from here to build conversation context before calling
+# OpenAI (see services/ai-assistant/src/ai_assistant/chat_client.py).
+def require_admin_or_assistant(
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+) -> InternalClaims:
+    if claims.role not in ("admin", "assistant"):
+        raise HTTPException(status_code=403, detail="Admin or assistant role required")
     return claims
 
 

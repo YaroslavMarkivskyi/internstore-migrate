@@ -6,56 +6,68 @@ import {
   Stock,
 } from 'src/types/stocks/interfaces';
 
-// Inventory (services/inventory) only has GET/POST /stocks and
-// GET/POST /stocks/{id}/items — none of the shapes this admin UI needs
-// (distribute, product-bulk-add, products-list) exist on the backend yet.
-// Left as-is; every call here will 404.
-
-export const getStock = async (id: number): Promise<Stock> => {
-  const resp = await api.get(`admin/stocks/${id}/`);
+export const getStock = async (id: string): Promise<Stock> => {
+  const resp = await api.get(`inventory/stocks/${id}`);
   return resp.data;
 };
 
+// Inventory's move endpoint moves one stock item to one destination per
+// call -- MoveToStockMenu's UI lets an admin split a single product's
+// quantity across several destination stocks in one save, so this fires
+// one POST per transfer.
 export const distributeProducts = async (
   payload: ProductsDistribution,
-  sourceStockId: number,
-  productEntryId: number
+  sourceStockId: string,
+  productEntryId: string
 ) => {
-  const resp = await api.post(
-    `admin/stocks/${sourceStockId}/list-products/${productEntryId}/distribute/`,
-    payload
+  await Promise.all(
+    payload.transfers.map(transfer =>
+      api.post(`inventory/stocks/${sourceStockId}/items/${productEntryId}/move`, {
+        toStockId: transfer.targetStock,
+        quantity: transfer.quantityToTransfer,
+      })
+    )
   );
-
-  return resp.data;
 };
 
 export const getStocks = async (): Promise<Stock[]> => {
-  const resp = await api.get('admin/stocks/');
+  // No trailing slash -- see stockService.ts's STOCKS_BASE_URL comment
+  // (avoids a 307 redirect that drops the public Host header).
+  const resp = await api.get('inventory/stocks');
   return resp.data;
 };
 
 interface StockTransfer {
-  target_stock: number;
+  target_stock: string;
   quantity_to_transfer: number;
 }
 
 interface BulkAddStocksRequest {
-  product_id: number;
+  product_id: string;
   transfers: StockTransfer[];
 }
 
+// "Put in stock" -- reuses Inventory's add-or-increment receive_stock_item
+// endpoint, one POST per destination stock (exactly what "put this product
+// in these stocks with these quantities" means).
 export const bulkAddStocks = async (data: BulkAddStocksRequest) => {
-  const resp = await api.post('admin/stocks/product-bulk-add/', data);
-  return resp.data;
+  await Promise.all(
+    data.transfers.map(transfer =>
+      api.post(`inventory/stocks/${transfer.target_stock}/items`, {
+        productId: data.product_id,
+        quantity: transfer.quantity_to_transfer,
+      })
+    )
+  );
 };
 
 export const updateStockProduct = async (
-  stockId: number,
-  productEntryId: number,
+  stockId: string,
+  productEntryId: string,
   payload: patchStockProduct
 ) => {
   const resp = await api.patch(
-    `/admin/stocks/${stockId}/products-list/${productEntryId}/`,
+    `inventory/stocks/${stockId}/items/${productEntryId}`,
     payload
   );
   return resp.data;

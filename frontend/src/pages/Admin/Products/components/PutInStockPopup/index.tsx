@@ -40,7 +40,7 @@ interface PutInStockModalProps {
 }
 
 interface Stock {
-  id: number;
+  id: string;
   name: string;
 }
 
@@ -126,12 +126,12 @@ const PutInStockPopup: FC<PutInStockModalProps> = ({
           row => row.stock && row.quantity !== '' && Number(row.quantity) > 0
         )
         .map(row => ({
-          target_stock: stocks.find(s => s.name === row.stock)?.id || 0,
+          target_stock: stocks.find(s => s.name === row.stock)?.id ?? '',
           quantity_to_transfer: Number(row.quantity),
         }));
 
       await bulkAddStocks({
-        product_id: Number(product.id),
+        product_id: product.id,
         transfers,
       });
       showToast({

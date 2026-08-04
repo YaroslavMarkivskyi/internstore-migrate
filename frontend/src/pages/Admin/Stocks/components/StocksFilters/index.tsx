@@ -76,7 +76,7 @@ interface ProductsFilterProps
     IStockProductFilterParams,
     'page' | 'limit' | 'offset' | 'category'
   > {
-  category?: number[];
+  category?: string[];
   setFilters: (filters: IStockProductFilterParams) => void;
   deleteFilter: (...keys: (keyof IStockProductFilterParams)[]) => void;
 }
@@ -106,7 +106,7 @@ const ProductsFilters: FC<ProductsFilterProps> = ({
 
   const hasActiveTags = (category && category.length > 0) || isPriceRangeActive;
 
-  const handleRemoveCategory = (categoryToDelete: number) => {
+  const handleRemoveCategory = (categoryToDelete: string) => {
     if (!category) {
       return;
     }
@@ -133,7 +133,7 @@ const ProductsFilters: FC<ProductsFilterProps> = ({
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     setFilters({
-      category: e.target.value as unknown as number[],
+      category: e.target.value as unknown as string[],
     });
   };
 

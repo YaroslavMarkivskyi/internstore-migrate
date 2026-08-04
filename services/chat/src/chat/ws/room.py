@@ -162,6 +162,17 @@ async def room_websocket(
                             {"room_id": room_id, "sender_name": claims.sub},
                         )
                         room.notification_sent_at = now
+                    # Every customer/guest message is announced on
+                    # chat-events (not just the offline-admin case above) so
+                    # the AI Assistant's consumer has something to trigger
+                    # off of regardless of whether an admin happens to be
+                    # online — it decides for itself whether to respond
+                    # based on chat:{room_id}:mode.
+                    add_outbox_event(
+                        session,
+                        "CustomerMessageSent",
+                        {"room_id": room_id, "sender_id": claims.sub, "content": content},
+                    )
                 await session.commit()
 
             await pubsub.publish(

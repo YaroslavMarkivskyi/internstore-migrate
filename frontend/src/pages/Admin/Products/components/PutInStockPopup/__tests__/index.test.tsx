@@ -59,9 +59,9 @@ describe('PutInStockPopup', () => {
   };
 
   const mockStocks = [
-    { id: 1, name: 'Stock 1' },
-    { id: 2, name: 'Stock 2' },
-    { id: 3, name: 'Stock 3' },
+    { id: '1', name: 'Stock 1' },
+    { id: '2', name: 'Stock 2' },
+    { id: '3', name: 'Stock 3' },
   ];
 
   beforeEach(() => {
@@ -250,7 +250,7 @@ describe('PutInStockPopup', () => {
         product_id: mockProduct.id,
         transfers: [
           {
-            target_stock: 1,
+            target_stock: '1',
             quantity_to_transfer: 10,
           },
         ],

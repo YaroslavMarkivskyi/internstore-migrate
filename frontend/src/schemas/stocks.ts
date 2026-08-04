@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const stockSchema = z.object({
-  id: z.number().optional(),
+  id: z.string().optional(),
   name: z
     .string()
     .min(3, 'Name must be at least 3 characters')

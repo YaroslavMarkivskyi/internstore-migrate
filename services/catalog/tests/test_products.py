@@ -151,10 +151,41 @@ async def test_update_product_temperature_stages_outbox_event(client, admin_toke
         result = await session.execute(select(OutboxEvent))
         events = list(result.scalars().all())
 
+    # A temperature change stages both: ProductThresholdUpdated (consumed by
+    # Inventory) and ProductUpdated (consumed by AI Assistant to re-embed).
+    assert len(events) == 2
+    event_types = {event.event_type for event in events}
+    assert event_types == {"ProductThresholdUpdated", "ProductUpdated"}
+
+    threshold_event = next(e for e in events if e.event_type == "ProductThresholdUpdated")
+    assert threshold_event.payload["product_id"] == product_id
+    assert threshold_event.payload["max_temperature"] == 10
+
+
+async def test_update_product_name_stages_product_updated_event(client, admin_token):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+
+    resp = await client.patch(
+        f"/products/{product_id}",
+        json={"name": "New name"},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 200
+
+    from sqlalchemy import select
+
+    from catalog.models import OutboxEvent
+
+    async with client.app.state.session_factory() as session:
+        result = await session.execute(select(OutboxEvent))
+        events = list(result.scalars().all())
+
     assert len(events) == 1
-    assert events[0].event_type == "ProductThresholdUpdated"
+    assert events[0].event_type == "ProductUpdated"
     assert events[0].payload["product_id"] == product_id
-    assert events[0].payload["max_temperature"] == 10
+    assert events[0].payload["name"] == "New name"
+    assert "category_name" in events[0].payload
 
 
 async def test_new_product_is_published_by_default(client, admin_token):
@@ -220,7 +251,7 @@ async def test_delete_product_not_found(client, admin_token):
     assert resp.status_code == 404
 
 
-async def test_update_product_without_temperature_change_stages_no_event(client, admin_token):
+async def test_update_product_without_temperature_change_stages_no_threshold_event(client, admin_token):
     category_id = await create_category(client, admin_token)
     product_id = await create_product(client, admin_token, category_id, min_temperature=2, max_temperature=8)
 
@@ -239,4 +270,7 @@ async def test_update_product_without_temperature_change_stages_no_event(client,
         result = await session.execute(select(OutboxEvent))
         events = list(result.scalars().all())
 
-    assert events == []
+    # No temperature fields changed, so no ProductThresholdUpdated — but any
+    # field change (price here) still stages ProductUpdated for AI
+    # Assistant's re-embedding consumer.
+    assert [e.event_type for e in events] == ["ProductUpdated"]

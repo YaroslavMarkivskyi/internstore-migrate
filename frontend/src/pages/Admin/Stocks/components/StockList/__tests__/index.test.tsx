@@ -55,7 +55,7 @@ describe('StocksList', () => {
     jest.spyOn(validateUtils, 'isValidStockId').mockReturnValue(false);
 
     renderComponent('999', {
-      stocks: [{ id: 1, name: 'Stock A' }],
+      stocks: [{ id: '1', name: 'Stock A' }],
       loading: false,
     });
 
@@ -66,7 +66,7 @@ describe('StocksList', () => {
     jest.spyOn(validateUtils, 'isValidStockId').mockReturnValue(true);
 
     renderComponent('1', {
-      stocks: [{ id: 1, name: 'Stock A' }],
+      stocks: [{ id: '1', name: 'Stock A' }],
       loading: false,
     });
 

@@ -12,6 +12,7 @@ HANDLERS: dict[str, TemplateBuilder] = {
     "OrderCancelled": templates.order_cancelled,
     "TemperatureThresholdViolated": templates.temperature_threshold_violated,
     "UnreadMessageReceived": templates.unread_message_received,
+    "AdminRequested": templates.admin_requested,
 }
 
 

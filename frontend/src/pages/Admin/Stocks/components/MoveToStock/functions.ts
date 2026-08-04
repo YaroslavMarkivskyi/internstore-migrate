@@ -34,7 +34,7 @@ export const handleAddTransferItem = (
 // Handler for changing the selected stock in a transfer item
 export const handleStockChange = (
   index: number,
-  stockId: number | null,
+  stockId: string | null,
   transferItems: TransferItemData[],
   setTransferItems: setTransferItemsType
 ) => {

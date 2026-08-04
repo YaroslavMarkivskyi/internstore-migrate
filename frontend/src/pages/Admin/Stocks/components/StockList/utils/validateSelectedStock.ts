@@ -1,6 +1,7 @@
 import { IStock } from 'src/types/stocks/interfaces';
 
-export const isValidStockId = (id: number, stocks: IStock[]) => {
-  const validIds = [0, ...stocks.map(s => s.id)];
+// '' is the "All Stocks" sentinel (no stockId in the URL).
+export const isValidStockId = (id: string, stocks: IStock[]) => {
+  const validIds = ['', ...stocks.map(s => s.id)];
   return validIds.includes(id);
 };

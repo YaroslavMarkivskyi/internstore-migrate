@@ -91,6 +91,27 @@ async def update_product(
             },
         )
 
+    if updates:
+        # Keeps AI Assistant's product_embeddings table fresh: any PATCH
+        # that touches a field re-embeds the product (name/description/
+        # category also feed the RAG text, not just the temperature
+        # thresholds above) — fires even if a field is resent unchanged, so
+        # scripts/seed-embeddings.sh can trigger an initial embed for every
+        # existing product without needing to know what to actually change.
+        category = await session.get(Category, product.category_id)
+        add_outbox_event(
+            session,
+            "ProductUpdated",
+            {
+                "product_id": str(product.id),
+                "name": product.name,
+                "description": product.description,
+                "min_temperature": float(product.min_temperature) if product.min_temperature is not None else None,
+                "max_temperature": float(product.max_temperature) if product.max_temperature is not None else None,
+                "category_name": category.name,
+            },
+        )
+
     await session.commit()
     await session.refresh(product)
     return product

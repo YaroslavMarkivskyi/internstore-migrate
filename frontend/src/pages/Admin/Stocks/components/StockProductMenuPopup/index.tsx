@@ -25,7 +25,7 @@ export interface StockProductMenuPopupProps {
 // Wrapper component for MoveToStockMenu to handle the onRequestClose prop from SimplePopover
 const MoveToStockWrapper: FC<{
   productStockEntry: IStockProduct;
-  sourceStockId: number;
+  sourceStockId: string;
   onRequestClose?: () => void;
   onSuccess?: () => void;
 }> = ({ productStockEntry, sourceStockId, onRequestClose, onSuccess }) => {

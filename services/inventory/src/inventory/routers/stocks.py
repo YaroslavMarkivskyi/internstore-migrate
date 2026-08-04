@@ -16,8 +16,10 @@ from inventory.schemas import (
     StockCreate,
     StockItemCreate,
     StockItemMove,
+    StockItemQuantityUpdate,
     StockItemRead,
     StockRead,
+    StockUpdate,
 )
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
@@ -45,11 +47,60 @@ async def create_stock(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Stock name already exists")
 
-    stock = Stock(name=payload.name, temperature=payload.temperature)
+    stock = Stock(name=payload.name, temperature=payload.temperature, humidity=payload.humidity)
     session.add(stock)
     await session.commit()
     await session.refresh(stock)
     return stock
+
+
+@router.get("/{stock_id}", response_model=StockRead)
+async def get_stock(
+    stock_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Stock:
+    return await _get_stock_or_404(session, stock_id)
+
+
+@router.patch("/{stock_id}", response_model=StockRead, dependencies=[Depends(require_admin)])
+async def update_stock(
+    stock_id: uuid.UUID,
+    payload: StockUpdate,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Stock:
+    stock = await _get_stock_or_404(session, stock_id)
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        existing = await session.execute(
+            select(Stock).where(Stock.name == updates["name"], Stock.id != stock_id)
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail="Stock name already exists")
+
+    for field, value in updates.items():
+        setattr(stock, field, value)
+
+    await session.commit()
+    await session.refresh(stock)
+    return stock
+
+
+@router.delete("/{stock_id}", status_code=204, dependencies=[Depends(require_admin)])
+async def delete_stock(
+    stock_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    stock = await _get_stock_or_404(session, stock_id)
+
+    has_quantity = await session.execute(
+        select(StockItem).where(StockItem.stock_id == stock_id, StockItem.quantity > 0)
+    )
+    if has_quantity.scalars().first() is not None:
+        raise HTTPException(status_code=409, detail="Stock still has items in it")
+
+    await session.delete(stock)
+    await session.commit()
 
 
 @router.get("/{stock_id}/items", response_model=list[StockItemRead])
@@ -89,6 +140,28 @@ async def receive_stock_item(
         session.add(item)
 
     add_outbox_event(session, "ItemAdded", {"stock_id": str(stock_id), "product_id": str(payload.product_id)})
+
+    await session.commit()
+    await session.refresh(item)
+    return item
+
+
+@router.patch(
+    "/{stock_id}/items/{item_id}",
+    response_model=StockItemRead,
+    dependencies=[Depends(require_admin)],
+)
+async def update_stock_item_quantity(
+    stock_id: uuid.UUID,
+    item_id: uuid.UUID,
+    payload: StockItemQuantityUpdate,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> StockItem:
+    item = await session.get(StockItem, item_id)
+    if item is None or item.stock_id != stock_id:
+        raise HTTPException(status_code=404, detail="Stock item not found")
+
+    item.quantity = payload.quantity
 
     await session.commit()
     await session.refresh(item)

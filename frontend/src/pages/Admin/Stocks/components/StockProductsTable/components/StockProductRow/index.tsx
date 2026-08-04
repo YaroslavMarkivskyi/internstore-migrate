@@ -18,12 +18,12 @@ import { IStockProduct } from 'src/types/stocks/interfaces';
 interface Props {
   stockProduct: IStockProduct;
   isEditing: boolean;
-  onStartEditing: (productId: number) => void;
+  onStartEditing: (productId: string) => void;
   onFinishEditing: () => void;
   onUpdateSuccess: () => Promise<void>;
   refetchProducts: () => Promise<void>;
-  selectedProductId?: number;
-  setSelectedProductId: Dispatch<SetStateAction<number | undefined>>;
+  selectedProductId?: string;
+  setSelectedProductId: Dispatch<SetStateAction<string | undefined>>;
 }
 
 const StockProductRow = ({
