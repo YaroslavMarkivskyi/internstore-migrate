@@ -65,3 +65,15 @@ def test_admin_requested_falls_back_to_ops_email():
     assert to == templates.OPS_NOTIFICATION_EMAIL
     assert "room_1" in subject
     assert "room_1" in body
+
+
+def test_escalation_required_falls_back_to_ops_email():
+    to, subject, body = templates.escalation_required(
+        {"workflow_id": "checkout-abc", "order_id": "order-1", "reason": "release_stock retries exhausted"}
+    )
+
+    assert to == templates.OPS_NOTIFICATION_EMAIL
+    assert "checkout-abc" in subject
+    assert "checkout-abc" in body
+    assert "order-1" in body
+    assert "release_stock retries exhausted" in body

@@ -100,3 +100,26 @@ async def release_reservation(session: AsyncSession, reservation: Reservation) -
         stock_item.reserved_quantity -= reservation_item.quantity
 
     reservation.status = ReservationStatus.RELEASED
+
+
+async def release_reservation_by_order_id(session: AsyncSession, order_id: uuid.UUID) -> Reservation | None:
+    """STR-139: compensation entry point for checkout-workflow's
+    `release_stock` activity — same effect as `release_reservation` above
+    (TTL expiry's path) but looked up by `order_id` instead of an
+    already-loaded `Reservation`, since the Temporal activity only has the
+    order_id to hand.
+
+    Idempotent by construction: only a RESERVED reservation is released; a
+    retried call against an already-RELEASED (or CONSUMED) reservation, or
+    an order that was never reserved at all, is a no-op returning None —
+    exactly what an activity Temporal may retry unboundedly needs.
+    """
+    result = await session.execute(
+        select(Reservation).where(Reservation.order_id == order_id, Reservation.status == ReservationStatus.RESERVED)
+    )
+    reservation = result.scalar_one_or_none()
+    if reservation is None:
+        return None
+
+    await release_reservation(session, reservation)
+    return reservation

@@ -62,3 +62,12 @@ def require_admin_or_assistant(
     if claims.role not in ("admin", "assistant"):
         raise HTTPException(status_code=403, detail="Admin or assistant role required")
     return claims
+
+
+# The identity checkout-workflow's Temporal activities present when calling
+# Orders' /internal/checkout-workflow/* endpoints (create_order,
+# update_order_status, mark_order_rejected) — same pattern as inventory's
+# mint_internal_token, used because there's no inbound request token to
+# forward from inside a Temporal activity.
+def mint_internal_token(secret: str) -> str:
+    return jwt.encode({"sub": "checkout-workflow", "role": "admin", "iss": ISSUER}, secret, algorithm="HS256")

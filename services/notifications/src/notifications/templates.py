@@ -67,3 +67,25 @@ def admin_requested(payload: dict) -> tuple[str, str, str]:
     to = payload.get("recipient_email", OPS_NOTIFICATION_EMAIL)
     body = f"Chat room {room_id} was switched to human support and needs an admin.\n"
     return to, f"Human support requested in room {room_id}", body
+
+
+def escalation_required(payload: dict) -> tuple[str, str, str]:
+    # STR-139: fired by checkout-workflow's release_stock activity once its
+    # compensation retries are exhausted (see
+    # services/checkout-workflow/src/checkout_workflow/activities.py's
+    # _escalate) — the checkout saga is stuck waiting on a compensation
+    # step, needs a human to investigate/resolve manually and then signal
+    # the workflow (CheckoutWorkflow.mark_compensation_resolved) to finish.
+    # Same ops fallback as the other admin-facing builders above — no
+    # per-admin recipient exists yet.
+    workflow_id = payload["workflow_id"]
+    order_id = payload["order_id"]
+    reason = payload.get("reason", "compensation retries exhausted")
+    to = payload.get("recipient_email", OPS_NOTIFICATION_EMAIL)
+    body = (
+        f"Checkout workflow {workflow_id} (order {order_id}) needs manual intervention: {reason}.\n\n"
+        "Investigate in the Temporal Web UI, resolve compensation manually if needed "
+        "(e.g. release stock directly in Inventory), then signal the workflow's "
+        "mark_compensation_resolved to let it finish.\n"
+    )
+    return to, f"Checkout workflow {workflow_id} needs manual intervention", body

@@ -14,7 +14,9 @@ from notifications.mailer import Mailer
 # off event_type, not topic, so a topic with no producer yet
 # (telemetry-events, chat-events) just never yields a message. That's the
 # "gracefully idle" behavior this service needs until Telemetry/Chat exist.
-TOPICS = ["order-events", "inventory-events", "telemetry-events", "chat-events"]
+# ops-events (STR-139) is checkout-workflow's escalation channel — same
+# "gracefully idle" reasoning applies until a workflow actually escalates.
+TOPICS = ["order-events", "inventory-events", "telemetry-events", "chat-events", "ops-events"]
 
 
 @asynccontextmanager

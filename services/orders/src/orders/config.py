@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     outbox_poll_interval_seconds: float = 1.0
     stripe_secret_key: str
     stripe_webhook_secret: str
+    # STR-139: Temporal-orchestrated checkout, parallel to the Kafka saga
+    # above. Best-effort, same reasoning as inventory_base_url/catalog_base_url
+    # having no depends_on: Orders should still boot and serve the existing
+    # /checkout fine even if Temporal is briefly down; /checkout/v2 just
+    # fails fast in that case.
+    temporal_host: str = "temporal:7233"
+    temporal_task_queue: str = "checkout-workflow"
+    # How long POST /checkout/v2 waits inline for the workflow to finish
+    # before falling back to 202 Accepted + {workflow_id} for the caller to
+    # poll (see routers/checkout_v2.py) — the ticket's confirmed answer to
+    # its own "does the Gateway wait synchronously" open question.
+    checkout_v2_wait_seconds: float = 10.0
 
 
 def load_settings() -> Settings:

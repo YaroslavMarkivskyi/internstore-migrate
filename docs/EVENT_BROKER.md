@@ -25,6 +25,7 @@ topics per event type.
 | `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized` | Telemetry service |
 | `catalog-events` | `ProductThresholdUpdated`, `ProductUpdated` | Catalog service |
 | `chat-events` | `UnreadMessageReceived`, `CustomerMessageSent`, `AdminRequested`, `AIModeEnabled` | Chat service |
+| `ops-events` | `EscalationRequired` | checkout-workflow (STR-139) |
 
 All topics: 1 partition, replication factor 1 (single broker, no HA at this
 stage). Created automatically by the `kafka-topic-init` compose service on
@@ -37,10 +38,23 @@ consistency), so every auth attempt is written straight to Security's own
 DB via `POST /auth/fingerprint` / `POST /auth/nfc`. See
 [services/security/README.md](../services/security/README.md).
 
-Notifications consumes all five topics (dispatching on `eventType`, same as
+Notifications consumes all six topics (dispatching on `eventType`, same as
 every other consumer here) and is the first pure event consumer in the
 system: no Gateway route, no synchronous callers or callees. See
 [services/notifications/README.md](../services/notifications/README.md).
+
+`ops-events` (STR-139) is checkout-workflow's escalation channel, not a
+domain-service outbox — `services/checkout-workflow`'s `release_stock`
+activity (part of the Temporal-orchestrated checkout, parallel to the
+reservation saga above) publishes `EscalationRequired` here once its
+unbounded compensation retries first cross an attempt threshold, so
+Notifications can alert an admin with the stuck workflow's ID. No
+transactional outbox backs this publish (checkout-workflow has no
+database) — an occasional duplicate/missed alert on a worker crash is an
+accepted gap here, unlike the domain services' at-least-once-with-outbox
+topics above. See
+[services/checkout-workflow/README.md](../services/checkout-workflow/README.md)
+and [docs/adr/0003-temporal-checkout-orchestration.md](adr/0003-temporal-checkout-orchestration.md).
 
 AI Assistant consumes `chat-events` (`CustomerMessageSent`, to decide
 whether to reply) and `catalog-events` (`ProductUpdated`, to re-embed a

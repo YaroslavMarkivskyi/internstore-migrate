@@ -85,3 +85,27 @@ class AvailabilityResultItem(BaseModel):
 class CheckAvailabilityResponse(BaseModel):
     sufficient: bool
     items: list[AvailabilityResultItem]
+
+
+# STR-139: synchronous reserve/release-by-order_id, called directly by
+# checkout-workflow's Temporal activities. Deliberately the same
+# request-item shape as CheckAvailabilityRequest's items, reused here as
+# ReserveStockRequest.items below -- kept as a separate class rather than
+# aliasing so the two endpoints' contracts can evolve independently.
+class ReserveStockRequest(BaseModel):
+    order_id: uuid.UUID
+    items: list[AvailabilityRequestItem] = Field(min_length=1)
+
+
+class ReserveStockResponse(BaseModel):
+    order_id: uuid.UUID
+    status: str  # "reserved" | "insufficient_stock"
+
+
+class ReleaseStockRequest(BaseModel):
+    order_id: uuid.UUID
+
+
+class ReleaseStockResponse(BaseModel):
+    order_id: uuid.UUID
+    status: str  # "released" | "not_found"

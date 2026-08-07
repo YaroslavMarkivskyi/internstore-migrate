@@ -24,6 +24,11 @@ from auth_backend.config import Settings, load_settings
 # token is allowed to do downstream. Same reasoning for /ws/room and
 # /api/chat/rooms, shared by guest-usable paths (WS connect, attachment
 # upload) and admin-only ones (GET /rooms, DELETE /rooms/:id).
+# STR-139: "/api/orders/checkout" below already covers
+# "/api/orders/checkout/v2" (the new Temporal-orchestrated path) too —
+# is_guest_allowed_path's prefix check matches any path starting with
+# "/api/orders/checkout/", not just an exact "/api/orders/checkout". No
+# separate entry needed; see test_guest.py's coverage for /checkout/v2.
 GUEST_ALLOWED_PATH_PREFIXES = [
     "/api/catalog",
     "/api/orders/cart",

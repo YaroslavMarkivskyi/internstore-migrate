@@ -64,6 +64,35 @@ internal-token verification pattern (see
   and when it belongs to someone else — deliberately not `403`, so the
   response doesn't leak whether an order id exists at all.
 
+### `/checkout/v2` — Temporal-orchestrated checkout (STR-139)
+
+Additive, parallel path alongside `POST /checkout` above — the existing
+Kafka-choreographed saga (STR-124) is completely untouched; this is purely
+to evaluate Temporal as an orchestrator before any cutover decision. See
+[services/checkout-workflow](../checkout-workflow) and
+[docs/adr/0003-temporal-checkout-orchestration.md](../../docs/adr/0003-temporal-checkout-orchestration.md).
+
+- `POST /checkout/v2` — same body/validation as `POST /checkout`. Computes
+  the total charge amount server-side from Catalog's current prices, starts
+  `CheckoutWorkflow` via a Temporal client (best-effort — `503` if Temporal
+  is unreachable, same reasoning as Inventory/Catalog having no
+  `depends_on`), then waits inline up to `checkout_v2_wait_seconds` (default
+  10s) for the workflow to finish. Cart is cleared once the workflow has
+  been started, regardless of outcome — same timing as `/checkout`.
+  - Finishes within the wait window → `201 {"workflow_id", "status":
+    "confirmed"|"rejected", "order"}`.
+  - Still running past the wait window → `202 {"workflow_id", "status":
+    "running"}` — poll `GET /checkout/v2/{workflow_id}` for the final result.
+- `GET /checkout/v2/{workflow_id}` — current status/result of a workflow
+  started above.
+- `POST /internal/checkout-workflow/orders`,
+  `PATCH /internal/checkout-workflow/orders/{id}/status` — not part of the
+  public checkout contract. Called only by checkout-workflow's Temporal
+  activities (admin-role internal token), idempotent by the
+  workflow-supplied `order_id` / unconditional status set respectively —
+  see `routers/checkout_v2.py`'s docstrings for why redelivery is safe on
+  each.
+
 ## Auth
 
 Every endpoint validates `X-Internal-Token` locally (HMAC HS256, `iss`,

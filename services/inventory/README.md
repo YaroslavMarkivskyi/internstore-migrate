@@ -56,6 +56,21 @@ which mirrors `services/catalog/src/catalog/auth.py`).
   `available` (summed across all stocks) and `sufficient`, plus a top-level
   `sufficient` that's true only if every line item is. Documented in
   [libs/contracts/inventory/check-availability.md](../../libs/contracts/inventory/check-availability.md).
+- `POST /stocks/reserve` / `POST /stocks/release` — STR-139: the second and
+  third synchronous endpoints in the system, added for
+  `services/checkout-workflow`'s Temporal activities (`reserve_stock` /
+  `release_stock`) to call directly instead of going through the
+  choreographed `order-events` → `try_reserve` path. Both are idempotent by
+  `order_id` (Reservation.order_id's existing unique constraint) — a
+  retried/redelivered call is a no-op returning the current state, which is
+  what makes `release_stock`'s unbounded compensation retries in
+  `CheckoutWorkflow` safe. Neither publishes an outbox/Kafka event: the
+  Temporal-orchestrated checkout is deliberately choreography-free for the
+  steps it awaits directly, so there's no consumer that should react to
+  these calls the way `handle_order_created` reacts to `OrderCreated`.
+  `POST /stocks/reserve` — `{order_id, items: [{product_id, quantity}]}` →
+  `{order_id, status: "reserved" | "insufficient_stock"}`.
+  `POST /stocks/release` — `{order_id}` → `{order_id, status: "released" | "not_found"}`.
 
 Not in scope for this ticket (see the task write-up): the STO-01
 fingerprint/NFC part of EP-08/09.

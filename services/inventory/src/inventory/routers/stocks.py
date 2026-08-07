@@ -1,19 +1,24 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from inventory.auth import get_internal_claims, require_admin
 from inventory.catalog_client import CatalogClient, get_catalog_client
 from inventory.db import get_session
-from inventory.models import ReservationItem, Stock, StockItem
+from inventory.models import Reservation, ReservationItem, Stock, StockItem
 from inventory.outbox import add_outbox_event
+from inventory.reservation import release_reservation_by_order_id, try_reserve
 from inventory.schemas import (
     AvailabilityResultItem,
     CheckAvailabilityRequest,
     CheckAvailabilityResponse,
+    ReleaseStockRequest,
+    ReleaseStockResponse,
+    ReserveStockRequest,
+    ReserveStockResponse,
     StockCreate,
     StockItemCreate,
     StockItemMove,
@@ -298,3 +303,69 @@ async def check_availability(
         sufficient=all(r.sufficient for r in results),
         items=results,
     )
+
+
+# STR-139: synchronous reserve/release-by-order_id, called directly by
+# checkout-workflow's `reserve_stock`/`release_stock` Temporal activities.
+# Unlike the reservation saga's Kafka path (order-events -> try_reserve, see
+# consumers/order_events.py), these are plain request/response endpoints
+# with no outbox event published — the Temporal-orchestrated checkout is
+# deliberately choreography-free: the workflow already knows the outcome of
+# every step it awaits, so there's nothing for another consumer to react to
+# here, and publishing inventory-events from this path would risk the
+# Kafka-based saga's own consumer (handle_stock_reserved et al.) also
+# reacting to an order it was never involved in.
+@router.post(
+    "/reserve",
+    response_model=ReserveStockResponse,
+    dependencies=[Depends(get_internal_claims)],
+)
+async def reserve_stock(
+    payload: ReserveStockRequest,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ReserveStockResponse:
+    # Idempotent by order_id: Reservation.order_id is unique (see
+    # models.py), so a retried reserve_stock activity call for the same
+    # order_id finds the reservation it already made instead of trying
+    # (and failing, or worse, double-reserving) again.
+    existing = await session.execute(
+        select(Reservation).where(Reservation.order_id == payload.order_id)
+    )
+    if existing.scalar_one_or_none() is not None:
+        return ReserveStockResponse(order_id=payload.order_id, status="reserved")
+
+    settings = request.app.state.settings
+    reservation = await try_reserve(
+        session,
+        payload.order_id,
+        [item.model_dump() for item in payload.items],
+        settings.reservation_ttl_seconds,
+    )
+    if reservation is None:
+        await session.rollback()
+        return ReserveStockResponse(order_id=payload.order_id, status="insufficient_stock")
+
+    await session.commit()
+    return ReserveStockResponse(order_id=payload.order_id, status="reserved")
+
+
+@router.post(
+    "/release",
+    response_model=ReleaseStockResponse,
+    dependencies=[Depends(get_internal_claims)],
+)
+async def release_stock(
+    payload: ReleaseStockRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ReleaseStockResponse:
+    # Idempotent by order_id: release_reservation_by_order_id only acts on a
+    # still-RESERVED reservation and is a no-op (returns None) otherwise —
+    # safe for checkout-workflow's compensation step to retry unboundedly.
+    reservation = await release_reservation_by_order_id(session, payload.order_id)
+    if reservation is None:
+        await session.rollback()
+        return ReleaseStockResponse(order_id=payload.order_id, status="not_found")
+
+    await session.commit()
+    return ReleaseStockResponse(order_id=payload.order_id, status="released")

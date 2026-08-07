@@ -39,6 +39,16 @@ async def test_renewal_with_existing_cookie_reuses_guest_id(client):
     assert "Set-Cookie" not in second.headers
 
 
+async def test_guest_allowed_on_checkout_v2(client, redis):
+    # STR-139: "/api/orders/checkout" 's prefix match already covers the
+    # Temporal-orchestrated "/api/orders/checkout/v2" path with no separate
+    # allowlist entry — see main.py's GUEST_ALLOWED_PATH_PREFIXES comment.
+    resp = await client.get("/auth/verify", headers={"X-Original-URI": "/api/orders/checkout/v2"})
+
+    assert resp.status_code == 200
+    assert resp.headers["X-User-Role"] == "guest"
+
+
 async def test_guest_can_start_payment_intent_for_own_order(client):
     resp = await client.get(
         "/auth/verify",

@@ -11,8 +11,9 @@ from orders.db import make_session_factory
 from orders.inventory_client import InventoryClient
 from orders.kafka import KafkaEventProducer, run_consumer_loop
 from orders.outbox_worker import run_outbox_worker
-from orders.routers import cart, checkout, orders, orders_admin, pay, payments
+from orders.routers import cart, checkout, checkout_v2, orders, orders_admin, pay, payments
 from orders.stripe_client import StripeClient
+from orders.temporal_client import connect_temporal_client
 
 
 @asynccontextmanager
@@ -21,6 +22,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     producer = KafkaEventProducer(settings.kafka_bootstrap_servers)
     await producer.start()
     app.state.kafka_producer = producer
+    # STR-139: parallel Temporal-orchestrated checkout — see
+    # temporal_client.py for why a failed connect doesn't block startup.
+    app.state.temporal_client = await connect_temporal_client(settings.temporal_host)
 
     outbox_task = asyncio.create_task(
         run_outbox_worker(app.state.session_factory, producer, settings.outbox_poll_interval_seconds)
@@ -59,6 +63,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(cart.router)
     app.include_router(checkout.router)
+    app.include_router(checkout_v2.router)
+    app.include_router(checkout_v2.internal_router)
     app.include_router(orders_admin.router)
     app.include_router(orders.router)
     app.include_router(pay.router)

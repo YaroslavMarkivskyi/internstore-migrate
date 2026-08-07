@@ -217,6 +217,11 @@ services:
       # without them (Stripe just 401s at call time, not at startup).
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # STR-139: parallel Temporal-orchestrated /checkout/v2 — see
+      # routers/checkout_v2.py and services/checkout-workflow.
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_TASK_QUEUE: checkout-workflow
+      CHECKOUT_V2_WAIT_SECONDS: "10.0"
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/orders/src:/app/src
@@ -233,6 +238,12 @@ services:
       # and the inventory-events consumer to start cleanly.
       kafka:
         condition: service_healthy
+      # Same best-effort reasoning as inventory/kafka above, applied to
+      # Temporal — temporal has no compose healthcheck of its own (see its
+      # service block), so service_started is all there is to depend on;
+      # /checkout/v2 just 503s if it's not actually ready yet.
+      temporal:
+        condition: service_started
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory.
 
@@ -256,6 +267,139 @@ services:
     depends_on:
       orders:
         condition: service_started
+
+  # --- STR-139: Temporal orchestration for checkout, parallel to Orders'
+  # Kafka-choreographed saga above (this does not replace it). ---
+
+  temporal-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    volumes:
+      - temporal_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Dedicated `temporal` database on this same Postgres instance, separate
+  # from every domain service's own database — Temporal owns its workflow
+  # event history, nothing else should ever read/write it directly. On
+  # GCP this is Cloud SQL; auto-setup handles running Temporal's own schema
+  # migrations against it on boot (a GKE deployment would use `temporal
+  # sql-tool` / server-side schema setup once instead, per Temporal's own
+  # production docs — auto-setup is dev-only).
+  temporal:
+    image: temporalio/auto-setup:1.27.2
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: temporal-db
+    depends_on:
+      temporal-db:
+        condition: service_healthy
+    # No host port and no compose healthcheck (auto-setup's own startup
+    # migration means there's no cheap liveness probe worth scripting here)
+    # — not exposed on the host, only reachable from other containers on
+    # the compose network (the worker, and Orders' Temporal client), same
+    # "internal only" treatment as catalog/inventory/orders.
+
+  # Debugging/demo UI, explicitly NOT routed through nginx — same
+  # treatment as MinIO's console and Mailpit's web UI (STR-139's confirmed
+  # decision): a raw published host port, not an authenticated Gateway
+  # location, since this is a dev-only operator tool, not a browser-facing
+  # domain service.
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8088:8080"
+    depends_on:
+      - temporal
+
+  payments-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+    volumes:
+      - payments_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  payments:
+    build: ./services/payments
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://payments:payments@payments-db:5432/payments
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
+      # other domain service — validated locally against checkout-workflow's
+      # minted token, no callback to auth-backend/Keycloak.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      # See payments/config.py — an amount ending in this suffix simulates
+      # a declined charge, for saga testing (no real payment gateway here).
+      PAYMENT_FAIL_ON_AMOUNT_SUFFIX: "99"
+    volumes:
+      # Live bind mount, see auth-backend's for why only these subpaths.
+      - ./services/payments/src:/app/src
+      - ./services/payments/migrations:/app/migrations
+      - ./services/payments/alembic.ini:/app/alembic.ini
+    depends_on:
+      payments-db:
+        condition: service_healthy
+    # Not exposed on the host, and deliberately not routed through nginx —
+    # Payments is called only by checkout-workflow's Temporal activities
+    # over the compose network, never directly by the browser. Same
+    # treatment as ai-assistant/mcp-gateway.
+
+  # Pure Temporal task-queue poller — no FastAPI app, no host port. Its own
+  # container/deployment (not co-located with Orders) so it's independently
+  # killable/restartable, per STR-139's confirmed decision and the ticket's
+  # own "kill the worker mid-workflow, confirm it resumes" verification
+  # step.
+  checkout-workflow-worker:
+    build: ./services/checkout-workflow
+    environment:
+      TEMPORAL_HOST: temporal:7233
+      TASK_QUEUE: checkout-workflow
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      INVENTORY_BASE_URL: http://inventory:8000
+      INVENTORY_TIMEOUT_SECONDS: "5.0"
+      ORDERS_BASE_URL: http://orders:8000
+      ORDERS_TIMEOUT_SECONDS: "5.0"
+      PAYMENTS_BASE_URL: http://payments:8000
+      PAYMENTS_TIMEOUT_SECONDS: "5.0"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ESCALATION_ATTEMPT_THRESHOLD: "10"
+    volumes:
+      - ./services/checkout-workflow/src:/app/src
+    depends_on:
+      # Best-effort on every peer, same reasoning as orders/inventory
+      # elsewhere in this file — none of these are service_healthy since
+      # temporal itself has no healthcheck to depend on (see above); a
+      # workflow task just retries (Temporal's own activity retry policy)
+      # until its target is actually reachable.
+      temporal:
+        condition: service_started
+      payments:
+        condition: service_started
+      inventory:
+        condition: service_started
+      orders:
+        condition: service_started
+      kafka:
+        condition: service_healthy
 
   telemetry-db:
     image: postgres:16-alpine
@@ -679,7 +823,11 @@ services:
         # ai-assistant consumes catalog-events and chat-events (both
         # already listed below); it produces nothing itself, so there's no
         # separate ai-assistant-events topic to create.
-        for topic in order-events inventory-events telemetry-events catalog-events chat-events; do
+        # ops-events (STR-139): checkout-workflow's release_stock activity
+        # publishes EscalationRequired here once compensation retries are
+        # exhausted; Notifications consumes it for the admin alert. See
+        # docs/EVENT_BROKER.md.
+        for topic in order-events inventory-events telemetry-events catalog-events chat-events ops-events; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$$topic" --partitions 1 --replication-factor 1
         done
 
@@ -692,6 +840,8 @@ volumes:
   security_db_data:
   chat_db_data:
   ai_db_data:
+  payments_db_data:
+  temporal_db_data:
   minio_data:
   kafka_data:
   nginx_certs:
