@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # runnable in local dev/tests instead of only declared.
     reservation_ttl_seconds: float = 86400
     reservation_check_interval_seconds: float = 60
+    # STR-140: OPA sidecar, same pod/network namespace on GKE (see
+    # docker-compose.yml's inventory-opa for the local dev equivalent).
+    opa_url: str = "http://localhost:8181"
 
 
 def load_settings() -> Settings:

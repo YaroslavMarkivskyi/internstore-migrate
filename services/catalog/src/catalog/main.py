@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from catalog.authz import AuthzClient
 from catalog.config import Settings, load_settings
 from catalog.db import make_session_factory
 from catalog.inventory_client import InventoryClient
@@ -46,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bucket=settings.minio_bucket,
     )
     app.state.inventory_client = InventoryClient(settings.inventory_base_url, settings.inventory_timeout_seconds)
+    app.state.authz_client = AuthzClient(settings.opa_url)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

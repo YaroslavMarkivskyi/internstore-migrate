@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     minio_access_key: str
     minio_secret_key: str
     minio_bucket: str = "catalog-product-images"
+    # STR-140: OPA sidecar, same pod/network namespace on GKE (see
+    # docker-compose.yml's catalog-opa for the local dev equivalent).
+    opa_url: str = "http://localhost:8181"
 
 
 def load_settings() -> Settings:

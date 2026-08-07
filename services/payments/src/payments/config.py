@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # of charging — e.g. "9.99" with suffix "99" simulates a declined card.
     # Real Stripe/gateway integration is explicitly out of scope.
     payment_fail_on_amount_suffix: str = "99"
+    # STR-140: OPA sidecar, same pod/network namespace on GKE (see
+    # docker-compose.yml's payments-opa for the local dev equivalent).
+    opa_url: str = "http://localhost:8181"
 
 
 def load_settings() -> Settings:

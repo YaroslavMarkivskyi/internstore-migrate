@@ -115,6 +115,11 @@ services:
       # is briefly unavailable, this call just 503s in that case.
       INVENTORY_BASE_URL: http://inventory:8000
       INVENTORY_TIMEOUT_SECONDS: "5.0"
+      # STR-140: sidecar, same pod/network namespace — see catalog-opa
+      # below. localhost, not the container name, because network_mode:
+      # "service:catalog" puts catalog-opa in *this* container's network
+      # namespace rather than getting one of its own.
+      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/catalog/src:/app/src
@@ -129,6 +134,21 @@ services:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as any
     # other real domain service.
+
+  # STR-140: OPA policy sidecar for Catalog — centralizes the policy source
+  # of truth (policies/*.rego) while keeping enforcement a localhost call,
+  # no network hop to a shared auth service. network_mode: "service:catalog"
+  # shares catalog's network namespace (true sidecar behavior locally,
+  # mirroring a GKE pod's shared network namespace between containers) —
+  # safe here since catalog itself publishes no host ports to collide with.
+  catalog-opa:
+    image: openpolicyagent/opa:latest
+    command: ["run", "--server", "--addr=:8181", "/policies/catalog.rego", "/policies/common.rego"]
+    volumes:
+      - ./policies:/policies:ro
+    network_mode: "service:catalog"
+    depends_on:
+      - catalog
 
   inventory-db:
     image: postgres:16-alpine
@@ -166,6 +186,9 @@ services:
       # as Orders -> Catalog.
       CATALOG_BASE_URL: http://catalog:8000
       CATALOG_TIMEOUT_SECONDS: "5.0"
+      # STR-140: sidecar, same pod/network namespace — see inventory-opa
+      # below.
+      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/inventory/src:/app/src
@@ -178,6 +201,17 @@ services:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as
     # catalog.
+
+  # STR-140: OPA policy sidecar for Inventory — see catalog-opa above for
+  # the sidecar-vs-central-service rationale and the network_mode note.
+  inventory-opa:
+    image: openpolicyagent/opa:latest
+    command: ["run", "--server", "--addr=:8181", "/policies/inventory.rego", "/policies/common.rego"]
+    volumes:
+      - ./policies:/policies:ro
+    network_mode: "service:inventory"
+    depends_on:
+      - inventory
 
   orders-db:
     image: postgres:16-alpine
@@ -222,6 +256,9 @@ services:
       TEMPORAL_HOST: temporal:7233
       TEMPORAL_TASK_QUEUE: checkout-workflow
       CHECKOUT_V2_WAIT_SECONDS: "10.0"
+      # STR-140: sidecar, same pod/network namespace — see orders-opa
+      # below.
+      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/orders/src:/app/src
@@ -246,6 +283,29 @@ services:
         condition: service_started
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory.
+
+  # STR-140: OPA policy sidecar for Orders — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note. Loads
+  # both orders.rego (order view/update ownership check) and checkout.rego
+  # (the check_permission() stub STR-139 left in routers/checkout_v2.py) —
+  # both packages live behind this one sidecar since they're both queried
+  # by this same service.
+  orders-opa:
+    image: openpolicyagent/opa:latest
+    command:
+      [
+        "run",
+        "--server",
+        "--addr=:8181",
+        "/policies/orders.rego",
+        "/policies/checkout.rego",
+        "/policies/common.rego",
+      ]
+    volumes:
+      - ./policies:/policies:ro
+    network_mode: "service:orders"
+    depends_on:
+      - orders
 
   # Forwards Stripe test-mode webhook events straight to the orders
   # container (bypassing nginx/TLS entirely -- no cert-trust issues to
@@ -350,6 +410,9 @@ services:
       # See payments/config.py — an amount ending in this suffix simulates
       # a declined charge, for saga testing (no real payment gateway here).
       PAYMENT_FAIL_ON_AMOUNT_SUFFIX: "99"
+      # STR-140: sidecar, same pod/network namespace — see payments-opa
+      # below.
+      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/payments/src:/app/src
@@ -362,6 +425,18 @@ services:
     # Payments is called only by checkout-workflow's Temporal activities
     # over the compose network, never directly by the browser. Same
     # treatment as ai-assistant/mcp-gateway.
+
+  # STR-140: OPA policy sidecar for Payments — see catalog-opa above for
+  # the sidecar-vs-central-service rationale and the network_mode note.
+  # Wires the check_permission() stub STR-139 left in routers/payments.py.
+  payments-opa:
+    image: openpolicyagent/opa:latest
+    command: ["run", "--server", "--addr=:8181", "/policies/payments.rego", "/policies/common.rego"]
+    volumes:
+      - ./policies:/policies:ro
+    network_mode: "service:payments"
+    depends_on:
+      - payments
 
   # Pure Temporal task-queue poller — no FastAPI app, no host port. Its own
   # container/deployment (not co-located with Orders) so it's independently
@@ -431,6 +506,12 @@ services:
       # anywhere else this service runs.
       VIOLATION_CHECK_INTERVAL_SECONDS: "5"
       VIOLATION_WINDOW_SECONDS: "20"
+      # STR-140: sidecar, same pod/network namespace — see telemetry-opa
+      # below. Not yet consumed by this service's own code (no Telemetry
+      # endpoint is in this ticket's initial rollout scope) — wired through
+      # now so the sidecar and a future call site are both one less thing
+      # to add later.
+      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/telemetry/src:/app/src
@@ -443,6 +524,20 @@ services:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory/orders.
+
+  # STR-140: OPA policy sidecar for Telemetry — see catalog-opa above for
+  # the sidecar-vs-central-service rationale and the network_mode note. No
+  # Telemetry endpoint calls it yet (see policies/telemetry.rego) — this
+  # establishes the sidecar ahead of a follow-up ticket's incremental
+  # rollout.
+  telemetry-opa:
+    image: openpolicyagent/opa:latest
+    command: ["run", "--server", "--addr=:8181", "/policies/telemetry.rego", "/policies/common.rego"]
+    volumes:
+      - ./policies:/policies:ro
+    network_mode: "service:telemetry"
+    depends_on:
+      - telemetry
 
   telemetry-simulator:
     build: ./services/telemetry/simulator
@@ -487,6 +582,9 @@ services:
       # other domain service.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       CAMERA_BASE_URL: http://mock-camera:8001
+      # STR-140: sidecar, same pod/network namespace — see security-opa
+      # below.
+      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/security/src:/app/src
@@ -498,6 +596,17 @@ services:
     # No Kafka dependency — access control is synchronous by nature (a
     # door open/close decision can't wait on eventual consistency). See
     # docs/EVENT_BROKER.md and services/security/README.md.
+
+  # STR-140: OPA policy sidecar for Security — see catalog-opa above for
+  # the sidecar-vs-central-service rationale and the network_mode note.
+  security-opa:
+    image: openpolicyagent/opa:latest
+    command: ["run", "--server", "--addr=:8181", "/policies/security.rego", "/policies/common.rego"]
+    volumes:
+      - ./policies:/policies:ro
+    network_mode: "service:security"
+    depends_on:
+      - security
 
   mailpit:
     image: axllent/mailpit:v1.20
@@ -604,6 +713,9 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: chat-attachments
+      # STR-140: sidecar, same pod/network namespace — see chat-opa below.
+      # Not yet consumed by this service's own code, same as telemetry's.
+      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/chat/src:/app/src
@@ -621,6 +733,19 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory/orders/telemetry/security. nginx's /ws/ and
     # /api/chat/ locations address this container as chat:8000.
+
+  # STR-140: OPA policy sidecar for Chat — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note. No Chat
+  # endpoint calls it yet (see policies/chat.rego) — this establishes the
+  # sidecar ahead of a follow-up ticket's incremental rollout.
+  chat-opa:
+    image: openpolicyagent/opa:latest
+    command: ["run", "--server", "--addr=:8181", "/policies/chat.rego", "/policies/common.rego"]
+    volumes:
+      - ./policies:/policies:ro
+    network_mode: "service:chat"
+    depends_on:
+      - chat
 
   ai-db:
     image: ankane/pgvector:latest

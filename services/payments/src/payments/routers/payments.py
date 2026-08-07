@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payments.auth import InternalClaims, get_internal_claims
+from payments.authz import AuthzClient, get_authz_client
 from payments.db import get_session
 from payments.models import Payment, PaymentStatus
 from payments.schemas import ChargeRequest, ChargeResponse, RefundRequest, RefundResponse
@@ -13,12 +14,15 @@ from payments.schemas import ChargeRequest, ChargeResponse, RefundRequest, Refun
 router = APIRouter(tags=["payments"])
 
 
-# Placeholder for STR-139's forward-looking authorization note: a real OPA
-# check will eventually go here, gated on `claims`. Always returns True —
-# do not add policy logic, this only reserves the call site so a future
-# OPA integration doesn't require re-locating it.
-def check_permission(claims: InternalClaims, action: str) -> bool:
-    return True
+# STR-140: wires the check_permission() stub STR-139 left here to a real
+# OPA call (see policies/payments.rego). Every call site below is
+# unchanged, only what's inside this function is.
+async def check_permission(claims: InternalClaims, action: str, authz: AuthzClient) -> bool:
+    return await authz.check(
+        subject={"role": claims.role, "sub": claims.sub},
+        action=action,
+        resource={"type": "payment"},
+    )
 
 
 def _simulate_outcome(amount: float, fail_on_suffix: str) -> PaymentStatus:
@@ -35,8 +39,10 @@ async def charge(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> ChargeResponse:
-    check_permission(claims, "charge")
+    if not await check_permission(claims, "charge", authz):
+        raise HTTPException(status_code=403, detail="Not authorized to charge")
 
     # Idempotent by order_id: a same-order_id retry (Temporal activity
     # retry, or a genuinely duplicate request) returns the existing charge
@@ -69,8 +75,10 @@ async def refund(
     body: RefundRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
     claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> RefundResponse:
-    check_permission(claims, "refund")
+    if not await check_permission(claims, "refund", authz):
+        raise HTTPException(status_code=403, detail="Not authorized to refund")
 
     payment = await session.scalar(select(Payment).where(Payment.id == body.payment_id))
     if payment is None:

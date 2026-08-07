@@ -2,6 +2,7 @@ import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from catalog.authz import get_authz_client
 from catalog.config import Settings
 from catalog.db import Base, make_session_factory
 from catalog.inventory_client import get_inventory_client
@@ -62,8 +63,31 @@ def fake_inventory_client() -> FakeInventoryClient:
     return FakeInventoryClient()
 
 
+class FakeAuthzClient:
+    """Swapped in via app.dependency_overrides -- no real OPA sidecar call
+    is made. Mirrors policies/catalog.rego's admin-only baseline (route
+    tests exercise the actual policy separately, see test_authz_client.py
+    and opa test policies/)."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def check(self, subject: dict, action: str, resource: dict, package: str = "catalog") -> bool:
+        self.calls.append({"subject": subject, "action": action, "resource": resource, "package": package})
+        return subject.get("role") == "admin"
+
+
 @pytest.fixture
-async def client(fake_minio_client: FakeMinioClient, fake_inventory_client: FakeInventoryClient):
+def fake_authz_client() -> FakeAuthzClient:
+    return FakeAuthzClient()
+
+
+@pytest.fixture
+async def client(
+    fake_minio_client: FakeMinioClient,
+    fake_inventory_client: FakeInventoryClient,
+    fake_authz_client: FakeAuthzClient,
+):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
@@ -84,6 +108,7 @@ async def client(fake_minio_client: FakeMinioClient, fake_inventory_client: Fake
     app.state.session_factory = session_factory
     app.dependency_overrides[get_minio_client] = lambda: fake_minio_client
     app.dependency_overrides[get_inventory_client] = lambda: fake_inventory_client
+    app.dependency_overrides[get_authz_client] = lambda: fake_authz_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

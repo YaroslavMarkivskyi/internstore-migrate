@@ -5,7 +5,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from catalog.auth import require_admin
+from catalog.auth import InternalClaims, get_internal_claims, require_admin
+from catalog.authz import AuthzClient, get_authz_client
 from catalog.db import get_session
 from catalog.models import Category, Product
 from catalog.schemas import CategoryCreate, CategoryDeleteOptions, CategoryRead, CategoryUpdate
@@ -34,11 +35,24 @@ async def list_categories(session: Annotated[AsyncSession, Depends(get_session)]
     return list(result.scalars().all())
 
 
-@router.post("", response_model=CategoryRead, status_code=201, dependencies=[Depends(require_admin)])
+@router.post("", response_model=CategoryRead, status_code=201)
 async def create_category(
     payload: CategoryCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Category:
+    # STR-140: OPA replaces this call site's previous require_admin
+    # dependency (see policies/catalog.rego) -- category creation is still
+    # admin-only, just decided by the sidecar now instead of an inline
+    # role check.
+    if not await authz.check(
+        subject={"role": claims.role, "sub": claims.sub},
+        action="create",
+        resource={"type": "category"},
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized to create categories")
+
     existing = await session.execute(select(Category).where(Category.name == payload.name))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Category name already exists")

@@ -1,5 +1,7 @@
 import uuid
 
+from tests.conftest import mint_internal_token
+
 CHECKOUT_PAYLOAD = {
     "contact_name": "Jane Doe",
     "contact_email": "jane@example.com",
@@ -37,12 +39,29 @@ async def test_get_order_by_id(client, customer_token, fake_inventory_client):
     assert resp.json()["id"] == order["id"]
 
 
-async def test_get_order_belonging_to_someone_else_404(client, customer_token, admin_token, fake_inventory_client):
+async def test_get_order_belonging_to_someone_else_404(client, customer_token, fake_inventory_client):
+    headers = {"x-internal-token": customer_token}
+    order = await _checkout(client, headers, fake_inventory_client, str(uuid.uuid4()))
+
+    # STR-140: OPA's owner-check (policies/orders.rego) replaces the
+    # previous inline `order.owner_id != claims.sub` comparison -- a
+    # different customer is still denied, still surfaced as 404 (not 403)
+    # so the response doesn't leak that the order exists at all.
+    other_customer_token = mint_internal_token(sub="customer-2", role="customer")
+    resp = await client.get(f"/orders/{order['id']}", headers={"x-internal-token": other_customer_token})
+    assert resp.status_code == 404
+
+
+async def test_get_order_admin_can_view_any_order(client, customer_token, admin_token, fake_inventory_client):
+    # STR-140: policies/orders.rego's admin-can-do-anything rule now
+    # applies here too -- previously this endpoint had no admin bypass at
+    # all (only the separate GET /orders/admin/{id} route did).
     headers = {"x-internal-token": customer_token}
     order = await _checkout(client, headers, fake_inventory_client, str(uuid.uuid4()))
 
     resp = await client.get(f"/orders/{order['id']}", headers={"x-internal-token": admin_token})
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json()["id"] == order["id"]
 
 
 async def test_get_nonexistent_order_404(client, customer_token):

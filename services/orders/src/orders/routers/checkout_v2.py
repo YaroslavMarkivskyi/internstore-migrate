@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from temporalio.client import Client, WorkflowFailureError
 
 from orders.auth import InternalClaims, get_internal_claims
+from orders.authz import AuthzClient, get_authz_client
 from orders.catalog_client import CatalogClient, CatalogUnavailableError, get_catalog_client
 from orders.db import get_session
 from orders.models import Cart, Order, OrderItem
@@ -32,12 +33,19 @@ router = APIRouter(tags=["checkout-v2"])
 internal_router = APIRouter(prefix="/internal/checkout-workflow", tags=["checkout-v2-internal"])
 
 
-# Placeholder for STR-139's forward-looking authorization note: a real OPA
-# check will eventually go here, gated on `claims`. Always returns True —
-# do not add policy logic, this only reserves the call site so a future
-# OPA integration doesn't require re-locating it.
-def check_permission(claims: InternalClaims, action: str) -> bool:
-    return True
+# STR-140: wires the check_permission() stub STR-139 left here to a real
+# OPA call (see policies/checkout.rego) — every call site below is
+# unchanged, only what's inside this function is. "checkout" is
+# customer/guest-facing (their own cart); "create_order"/"update_order_status"
+# are only ever called by checkout-workflow's own admin-role internal
+# token, presented to the /internal/checkout-workflow/* endpoints below.
+async def check_permission(claims: InternalClaims, action: str, authz: AuthzClient) -> bool:
+    return await authz.check(
+        subject={"role": claims.role, "sub": claims.sub},
+        action=action,
+        resource={"type": "order"},
+        package="checkout",
+    )
 
 
 @router.post("/checkout/v2", response_model=CheckoutV2Response, status_code=201)
@@ -48,8 +56,10 @@ async def checkout_v2(
     session: Annotated[AsyncSession, Depends(get_session)],
     catalog_client: Annotated[CatalogClient, Depends(get_catalog_client)],
     temporal_client: Annotated[Client | None, Depends(get_temporal_client)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> CheckoutV2Response | JSONResponse:
-    check_permission(claims, "checkout")
+    if not await check_permission(claims, "checkout", authz):
+        raise HTTPException(status_code=403, detail="Not authorized to checkout")
 
     if temporal_client is None:
         raise HTTPException(status_code=503, detail="Temporal unavailable")
@@ -135,8 +145,10 @@ async def get_checkout_v2_status(
     session: Annotated[AsyncSession, Depends(get_session)],
     claims: Annotated[InternalClaims, Depends(get_internal_claims)],
     temporal_client: Annotated[Client | None, Depends(get_temporal_client)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> CheckoutV2Response:
-    check_permission(claims, "checkout")
+    if not await check_permission(claims, "checkout", authz):
+        raise HTTPException(status_code=403, detail="Not authorized to checkout")
 
     if temporal_client is None:
         raise HTTPException(status_code=503, detail="Temporal unavailable")
@@ -184,8 +196,10 @@ async def create_order_from_workflow(
     payload: WorkflowOrderCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
     claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Order:
-    check_permission(claims, "create_order")
+    if not await check_permission(claims, "create_order", authz):
+        raise HTTPException(status_code=403, detail="Not authorized to create orders")
 
     # Idempotent by primary key: a retried create_order activity call for
     # the same (workflow-supplied) order_id finds the order it already
@@ -215,8 +229,10 @@ async def update_order_status_from_workflow(
     payload: WorkflowOrderStatusUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
     claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Order:
-    check_permission(claims, "update_order_status")
+    if not await check_permission(claims, "update_order_status", authz):
+        raise HTTPException(status_code=403, detail="Not authorized to update order status")
 
     order = await session.get(Order, order_id, options=[selectinload(Order.items)])
     if order is None:

@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from catalog.auth import require_admin
+from catalog.auth import InternalClaims, get_internal_claims, require_admin
+from catalog.authz import AuthzClient, get_authz_client
 from catalog.db import get_session
 from catalog.inventory_client import InventoryClient, InventoryUnavailableError, get_inventory_client
 from catalog.minio_client import MinioClient
@@ -35,11 +36,23 @@ async def get_product(
     return product
 
 
-@router.post("", response_model=ProductRead, status_code=201, dependencies=[Depends(require_admin)])
+@router.post("", response_model=ProductRead, status_code=201)
 async def create_product(
     payload: ProductCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Product:
+    # STR-140: OPA replaces this call site's previous require_admin
+    # dependency (see policies/catalog.rego) -- product creation is still
+    # admin-only, just decided by the sidecar now.
+    if not await authz.check(
+        subject={"role": claims.role, "sub": claims.sub},
+        action="create",
+        resource={"type": "product"},
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized to create products")
+
     category = await session.get(Category, payload.category_id)
     if category is None:
         raise HTTPException(status_code=422, detail="Unknown category_id")
@@ -58,14 +71,26 @@ async def create_product(
     return product
 
 
-@router.patch("/{product_id}", response_model=ProductRead, dependencies=[Depends(require_admin)])
+@router.patch("/{product_id}", response_model=ProductRead)
 async def update_product(
     product_id: uuid.UUID,
     payload: ProductUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
     inventory_client: Annotated[InventoryClient, Depends(get_inventory_client)],
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
     x_internal_token: Annotated[str | None, Header()] = None,
 ) -> Product:
+    # STR-140: OPA replaces this call site's previous require_admin
+    # dependency (see policies/catalog.rego) -- product updates are still
+    # admin-only, just decided by the sidecar now.
+    if not await authz.check(
+        subject={"role": claims.role, "sub": claims.sub},
+        action="update",
+        resource={"type": "product"},
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized to update products")
+
     product = await session.get(Product, product_id)
     if product is None or product.is_deleted:
         raise HTTPException(status_code=404, detail="Product not found")

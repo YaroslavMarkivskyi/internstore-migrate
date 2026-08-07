@@ -2,6 +2,7 @@ import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from inventory.authz import get_authz_client
 from inventory.catalog_client import get_catalog_client
 from inventory.config import Settings
 from inventory.db import Base, make_session_factory
@@ -34,8 +35,27 @@ def fake_catalog_client() -> FakeCatalogClient:
     return FakeCatalogClient()
 
 
+class FakeAuthzClient:
+    """Swapped in via app.dependency_overrides -- no real OPA sidecar call
+    is made. Mirrors policies/inventory.rego's admin-only baseline (route
+    tests exercise the actual policy separately, see test_authz_client.py
+    and opa test policies/)."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def check(self, subject: dict, action: str, resource: dict, package: str = "inventory") -> bool:
+        self.calls.append({"subject": subject, "action": action, "resource": resource, "package": package})
+        return subject.get("role") == "admin"
+
+
 @pytest.fixture
-async def client(fake_catalog_client: FakeCatalogClient):
+def fake_authz_client() -> FakeAuthzClient:
+    return FakeAuthzClient()
+
+
+@pytest.fixture
+async def client(fake_catalog_client: FakeCatalogClient, fake_authz_client: FakeAuthzClient):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
@@ -51,6 +71,7 @@ async def client(fake_catalog_client: FakeCatalogClient):
     app = create_app(settings=settings)
     app.state.session_factory = session_factory
     app.dependency_overrides[get_catalog_client] = lambda: fake_catalog_client
+    app.dependency_overrides[get_authz_client] = lambda: fake_authz_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

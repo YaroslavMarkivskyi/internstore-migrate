@@ -79,3 +79,24 @@ async def test_missing_internal_token_is_rejected(client):
         json={"order_id": str(uuid.uuid4()), "amount": 10.00, "payment_method": "card"},
     )
     assert resp.status_code == 401
+
+
+# STR-140: charge/refund are only ever called by checkout-workflow's own
+# admin-role internal token (see policies/payments.rego) -- a customer
+# token presenting itself directly must be denied.
+async def test_charge_requires_admin(client, customer_token):
+    resp = await client.post(
+        "/charge",
+        json={"order_id": str(uuid.uuid4()), "amount": 10.00, "payment_method": "card"},
+        headers={"x-internal-token": customer_token},
+    )
+    assert resp.status_code == 403
+
+
+async def test_refund_requires_admin(client, customer_token):
+    resp = await client.post(
+        "/refund",
+        json={"payment_id": str(uuid.uuid4())},
+        headers={"x-internal-token": customer_token},
+    )
+    assert resp.status_code == 403

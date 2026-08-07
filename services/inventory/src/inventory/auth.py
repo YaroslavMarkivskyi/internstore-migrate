@@ -1,8 +1,11 @@
-from typing import Annotated, Literal
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any, Literal
 
 import jwt
 from fastapi import Depends, Header, HTTPException, Request
 from pydantic import BaseModel
+
+from inventory.authz import AuthzClient, get_authz_client
 
 ISSUER = "internstore-gateway"
 
@@ -50,6 +53,26 @@ def require_admin(
     if claims.role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
     return claims
+
+
+# STR-140: dependency factory replacing require_admin at stock-mutation
+# call sites -- same shape/call-site (`dependencies=[Depends(...)]`), but
+# the decision now comes from the OPA sidecar (see policies/inventory.rego)
+# instead of an inline role check.
+def require_authz(action: str, resource_type: str) -> Callable[..., Coroutine[Any, Any, InternalClaims]]:
+    async def _check(
+        claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+        authz: Annotated[AuthzClient, Depends(get_authz_client)],
+    ) -> InternalClaims:
+        if not await authz.check(
+            subject={"role": claims.role, "sub": claims.sub},
+            action=action,
+            resource={"type": resource_type},
+        ):
+            raise HTTPException(status_code=403, detail="Not authorized")
+        return claims
+
+    return _check
 
 
 # The identity this service presents on its own outbound calls to Catalog

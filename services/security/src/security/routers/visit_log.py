@@ -6,12 +6,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from security.auth import require_admin
+from security.auth import require_authz
 from security.db import get_session
 from security.models import AuthType, VisitLog
 from security.schemas import VisitLogRead
 
-router = APIRouter(prefix="/visit-log", tags=["visit-log"], dependencies=[Depends(require_admin)])
+router = APIRouter(
+    prefix="/visit-log", tags=["visit-log"], dependencies=[Depends(require_authz("view", "visit_log"))]
+)
 
 
 @router.get("", response_model=list[VisitLogRead])

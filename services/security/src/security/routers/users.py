@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from security.auth import require_admin
+from security.auth import require_authz
 from security.db import get_session
 from security.models import AccessRule, AuthType, User
 from security.schemas import UserCreate, UserRead, UserUpdate
 from security.warehouses import get_or_create_warehouse
 
-router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_authz("manage", "user"))])
 
 
 async def _sync_access_rules(session: AsyncSession, user_id: uuid.UUID, warehouse_ids: list[uuid.UUID]) -> None:

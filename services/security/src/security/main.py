@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from security.authz import AuthzClient
 from security.config import Settings, load_settings
 from security.db import make_session_factory
 from security.routers import hardware, users, visit_log, warehouses
@@ -11,6 +12,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="security")
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
+    app.state.authz_client = AuthzClient(settings.opa_url)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

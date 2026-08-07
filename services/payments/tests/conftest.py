@@ -2,6 +2,7 @@ import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from payments.authz import get_authz_client
 from payments.config import Settings
 from payments.db import Base, make_session_factory
 from payments.main import create_app
@@ -18,8 +19,27 @@ def mint_internal_token(sub: str, role: str) -> str:
     )
 
 
+class FakeAuthzClient:
+    """Swapped in via app.dependency_overrides -- no real OPA sidecar call
+    is made. Mirrors policies/payments.rego's admin-only baseline (route
+    tests exercise the actual policy separately, see test_authz_client.py
+    and opa test policies/)."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def check(self, subject: dict, action: str, resource: dict, package: str = "payments") -> bool:
+        self.calls.append({"subject": subject, "action": action, "resource": resource, "package": package})
+        return subject.get("role") == "admin"
+
+
 @pytest.fixture
-async def client():
+def fake_authz_client() -> FakeAuthzClient:
+    return FakeAuthzClient()
+
+
+@pytest.fixture
+async def client(fake_authz_client: FakeAuthzClient):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
@@ -33,6 +53,7 @@ async def client():
 
     app = create_app(settings=settings)
     app.state.session_factory = session_factory
+    app.dependency_overrides[get_authz_client] = lambda: fake_authz_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -45,3 +66,8 @@ async def client():
 @pytest.fixture
 def admin_token() -> str:
     return mint_internal_token(sub="checkout-workflow", role="admin")
+
+
+@pytest.fixture
+def customer_token() -> str:
+    return mint_internal_token(sub="customer-1", role="customer")

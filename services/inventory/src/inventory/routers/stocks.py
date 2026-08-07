@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from inventory.auth import get_internal_claims, require_admin
+from inventory.auth import get_internal_claims, require_authz
 from inventory.catalog_client import CatalogClient, get_catalog_client
 from inventory.db import get_session
 from inventory.models import Reservation, ReservationItem, Stock, StockItem
@@ -45,7 +45,7 @@ async def list_stocks(session: Annotated[AsyncSession, Depends(get_session)]) ->
     return list(result.scalars().all())
 
 
-@router.post("", response_model=StockRead, status_code=201, dependencies=[Depends(require_admin)])
+@router.post("", response_model=StockRead, status_code=201, dependencies=[Depends(require_authz("create", "stock"))])
 async def create_stock(
     payload: StockCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -69,7 +69,7 @@ async def get_stock(
     return await _get_stock_or_404(session, stock_id)
 
 
-@router.patch("/{stock_id}", response_model=StockRead, dependencies=[Depends(require_admin)])
+@router.patch("/{stock_id}", response_model=StockRead, dependencies=[Depends(require_authz("update", "stock"))])
 async def update_stock(
     stock_id: uuid.UUID,
     payload: StockUpdate,
@@ -93,7 +93,7 @@ async def update_stock(
     return stock
 
 
-@router.delete("/{stock_id}", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{stock_id}", status_code=204, dependencies=[Depends(require_authz("delete", "stock"))])
 async def delete_stock(
     stock_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -124,7 +124,7 @@ async def list_stock_items(
     "/{stock_id}/items",
     response_model=StockItemRead,
     status_code=201,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_authz("create", "stock_item"))],
 )
 async def receive_stock_item(
     stock_id: uuid.UUID,
@@ -156,7 +156,7 @@ async def receive_stock_item(
 @router.patch(
     "/{stock_id}/items/{item_id}",
     response_model=StockItemRead,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_authz("update", "stock_item"))],
 )
 async def update_stock_item_quantity(
     stock_id: uuid.UUID,
@@ -182,7 +182,7 @@ async def update_stock_item_quantity(
 @router.delete(
     "/{stock_id}/items/{item_id}",
     status_code=204,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_authz("delete", "stock_item"))],
 )
 async def delete_stock_item(
     stock_id: uuid.UUID,
@@ -223,7 +223,7 @@ async def delete_stock_item(
 @router.post(
     "/{stock_id}/items/{item_id}/move",
     response_model=StockItemRead,
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_authz("move", "stock_item"))],
 )
 async def move_stock_item(
     stock_id: uuid.UUID,
