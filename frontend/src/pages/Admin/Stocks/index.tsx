@@ -1,6 +1,6 @@
 import { memo, useRef, useState } from 'react';
 
-import { CircularProgress } from '@mui/material';
+import { Box, CircularProgress } from '@mui/material';
 
 import ProductCard from '@pages/Admin/Stocks/components/ProductCard';
 
@@ -66,29 +66,33 @@ const AdminStocks = () => {
             onClose={() => setSelectedProductId(undefined)}
           />
         )}
-        <StocksList stocks={stocks} loading={isLoadingStocks} />
-        {!isLoadingProducts ? (
-          stockProducts && (
-            <>
-              <StockProductsTable
-                stockProducts={stockProducts}
-                refetchProducts={refetchProducts}
-                selectedProductId={selectedProductId}
-                setSelectedProductId={setSelectedProductId}
-                onProductCardRefresh={handleProductCardRefresh}
-              />
-              {totalPages > 1 && (
-                <ProductsPagination
-                  count={totalPages}
-                  currentPage={page}
-                  onPageChange={p => setPage(p)}
-                />
-              )}
-            </>
-          )
-        ) : (
-          <CircularProgress sx={{ m: 'auto' }} />
-        )}
+        <Box display="flex" gap="20px" width="100%" alignItems="flex-start">
+          <StocksList stocks={stocks} loading={isLoadingStocks} />
+          <Box flex={1} minWidth={0}>
+            {!isLoadingProducts ? (
+              stockProducts && (
+                <>
+                  <StockProductsTable
+                    stockProducts={stockProducts}
+                    refetchProducts={refetchProducts}
+                    selectedProductId={selectedProductId}
+                    setSelectedProductId={setSelectedProductId}
+                    onProductCardRefresh={handleProductCardRefresh}
+                  />
+                  {totalPages > 1 && (
+                    <ProductsPagination
+                      count={totalPages}
+                      currentPage={page}
+                      onPageChange={p => setPage(p)}
+                    />
+                  )}
+                </>
+              )
+            ) : (
+              <CircularProgress sx={{ m: 'auto' }} />
+            )}
+          </Box>
+        </Box>
       </StocksContainer>
       <StockModalForm
         isProducts={stockProducts.some(product => product.quantity > 0)}

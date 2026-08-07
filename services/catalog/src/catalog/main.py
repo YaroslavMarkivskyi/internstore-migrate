@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from catalog.config import Settings, load_settings
 from catalog.db import make_session_factory
+from catalog.inventory_client import InventoryClient
 from catalog.kafka import KafkaEventProducer
 from catalog.minio_client import MinioClient
 from catalog.outbox_worker import run_outbox_worker
@@ -44,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         secret_key=settings.minio_secret_key,
         bucket=settings.minio_bucket,
     )
+    app.state.inventory_client = InventoryClient(settings.inventory_base_url, settings.inventory_timeout_seconds)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

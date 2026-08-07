@@ -4,6 +4,7 @@ import applyCaseMiddleware from 'axios-case-converter';
 
 import { refresh } from '@services/http/public/auth';
 import {
+  clearCredentials,
   getAccessToken,
   getRefreshToken,
   updateAccessToken,
@@ -41,45 +42,73 @@ api.interceptors.request.use(
   }
 );
 
+// Shared across every request that 401s while a refresh is already
+// in-flight -- without this, a page firing several parallel requests right
+// as the access token expires triggers one refresh call *per request*
+// instead of one. Besides being wasteful, this is a genuine bug: any
+// Keycloak client with refresh-token rotation enabled invalidates a
+// refresh token on first use, so every one of those concurrent calls
+// after the first would fail outright (already-consumed token), turning a
+// single ordinary token-expiry moment into a cascade of visible auth
+// failures / an unwanted logout instead of one silent, transparent retry.
+let refreshPromise: Promise<string | null> | null = null;
+
+const performRefresh = async (refreshToken: string): Promise<string | null> => {
+  try {
+    const refreshResponse = await refresh({ refresh: refreshToken });
+    if (!refreshResponse?.access) return null;
+    store.dispatch(updateAccessToken(refreshResponse.access));
+    return refreshResponse.access;
+  } catch {
+    return null;
+  }
+};
+
 api.interceptors.response.use(
   resp => resp,
   async error => {
     const originalRequest = error.config;
 
     if (
-      error.response?.status === 401 &&
-      originalRequest &&
-      !originalRequest.headers?.['X-Retry']
+      error.response?.status !== 401 ||
+      !originalRequest ||
+      originalRequest.headers?.['X-Retry']
     ) {
-      // call refresh endpoint
-      const refreshToken = getRefreshToken();
-
-      if (!refreshToken) {
-        return Promise.reject(error);
-      }
-
-      try {
-        const refreshResponse = await refresh({ refresh: refreshToken });
-
-        // Store the new access token in Redux
-        if (refreshResponse && refreshResponse.access) {
-          store.dispatch(updateAccessToken(refreshResponse.access));
-        }
-
-        // prevent infinite retrying
-        const headers = new AxiosHeaders(originalRequest.headers);
-        headers.set('X-Retry', 'true');
-        originalRequest.headers = headers;
-
-        // call one more time
-        return api(originalRequest);
-      } catch {
-        // If refresh fails, reject with the original error
-        return Promise.reject(error);
-      }
-    } else {
       return Promise.reject(error);
     }
+
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) {
+      return Promise.reject(error);
+    }
+
+    if (!refreshPromise) {
+      refreshPromise = performRefresh(refreshToken).finally(() => {
+        refreshPromise = null;
+      });
+    }
+
+    const newAccessToken = await refreshPromise;
+
+    if (!newAccessToken) {
+      // The refresh token itself is dead (expired/revoked/already
+      // consumed by someone else) -- nothing left to retry with, so this
+      // is a real logout rather than a transient blip. Clearing here
+      // (instead of leaving stale tokens in the store) stops every other
+      // still-pending request from silently repeating this exact same
+      // failed refresh attempt.
+      store.dispatch(clearCredentials());
+      return Promise.reject(error);
+    }
+
+    // prevent infinite retrying
+    const headers = new AxiosHeaders(originalRequest.headers);
+    headers.set('X-Retry', 'true');
+    originalRequest.headers = headers;
+
+    // call one more time -- re-enters the request interceptor above,
+    // which reads the freshly-dispatched access token from the store.
+    return api(originalRequest);
   }
 );
 

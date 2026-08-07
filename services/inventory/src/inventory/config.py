@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     database_url: str
     internal_token_secret: str
     kafka_bootstrap_servers: str
+    # For unpublishing a product in Catalog once it hits zero quantity
+    # across every stock (see stock_sync.py) -- same
+    # container-to-container bypass-nginx pattern as Orders -> Catalog.
+    catalog_base_url: str
+    catalog_timeout_seconds: float = 5.0
     # Realistic production default; docker-compose.yml overrides both to
     # short values so the DoD's expired-reservation scenario is actually
     # runnable in local dev/tests instead of only declared.

@@ -24,7 +24,14 @@ export const getProducts = async (
     fetchCategories(),
   ]);
 
-  let products = rawProducts.map(raw => toProductPublic(raw, categories));
+  // Catalog's GET /products makes no distinction between admin and public
+  // callers (see admin/products.ts's own separate fetch of the same
+  // endpoint, which deliberately keeps unpublished products for editing)
+  // -- filtering unpublished/out-of-stock-unpublished products out of
+  // customer-facing browsing surfaces is entirely this layer's job.
+  let products = rawProducts
+    .filter(raw => raw.isPublished)
+    .map(raw => toProductPublic(raw, categories));
 
   if (filterParams.ids?.length) {
     const idSet = new Set(filterParams.ids);

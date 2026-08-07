@@ -2,12 +2,13 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from inventory.auth import get_internal_claims, require_admin
+from inventory.catalog_client import CatalogClient, get_catalog_client
 from inventory.db import get_session
-from inventory.models import Stock, StockItem
+from inventory.models import ReservationItem, Stock, StockItem
 from inventory.outbox import add_outbox_event
 from inventory.schemas import (
     AvailabilityResultItem,
@@ -21,6 +22,7 @@ from inventory.schemas import (
     StockRead,
     StockUpdate,
 )
+from inventory.stock_sync import unpublish_if_out_of_stock
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
@@ -156,6 +158,7 @@ async def update_stock_item_quantity(
     item_id: uuid.UUID,
     payload: StockItemQuantityUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
+    catalog_client: Annotated[CatalogClient, Depends(get_catalog_client)],
 ) -> StockItem:
     item = await session.get(StockItem, item_id)
     if item is None or item.stock_id != stock_id:
@@ -165,6 +168,9 @@ async def update_stock_item_quantity(
 
     await session.commit()
     await session.refresh(item)
+
+    await unpublish_if_out_of_stock(session, catalog_client, item.product_id)
+
     return item
 
 
@@ -177,10 +183,12 @@ async def delete_stock_item(
     stock_id: uuid.UUID,
     item_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    catalog_client: Annotated[CatalogClient, Depends(get_catalog_client)],
 ) -> None:
     item = await session.get(StockItem, item_id)
     if item is None or item.stock_id != stock_id:
         raise HTTPException(status_code=404, detail="Stock item not found")
+    product_id = item.product_id
     # reserved_quantity is held by in-flight RESERVED reservations (see
     # StockItem's own docstring) -- removing the row out from under one
     # would leave its reservation_items pointing at nothing, so the
@@ -193,8 +201,18 @@ async def delete_stock_item(
     if item.reserved_quantity > 0:
         raise HTTPException(status_code=409, detail="Item has quantity held by an in-progress reservation")
 
+    # reserved_quantity == 0 means no *active* RESERVED reservation holds
+    # this item, but ReservationItem rows from past RELEASED/CONSUMED
+    # reservations still FK-reference it as history -- those aren't
+    # in-progress holds, just an audit trail, so they don't need to block
+    # this delete the way an active hold does. The FK has no ON DELETE
+    # CASCADE, so they're removed explicitly here first.
+    await session.execute(delete(ReservationItem).where(ReservationItem.stock_item_id == item_id))
+
     await session.delete(item)
     await session.commit()
+
+    await unpublish_if_out_of_stock(session, catalog_client, product_id)
 
 
 @router.post(

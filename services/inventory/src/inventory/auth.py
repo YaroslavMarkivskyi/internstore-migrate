@@ -50,3 +50,16 @@ def require_admin(
     if claims.role != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
     return claims
+
+
+# The identity this service presents on its own outbound calls to Catalog
+# (unpublishing a product that just hit zero stock everywhere -- see
+# stock_sync.py). Same pattern as ai-assistant's mint_internal_token: some
+# of the call sites (the order-events Kafka consumer) have no inbound
+# request token to forward, since they're triggered by an event, not an
+# HTTP request, so this mints a fresh one from the same shared secret every
+# service validates against. Used uniformly (even from the HTTP-triggered
+# call sites) so both paths behave identically instead of one forwarding a
+# borrowed token and the other minting.
+def mint_internal_token(secret: str) -> str:
+    return jwt.encode({"sub": "inventory", "role": "admin", "iss": ISSUER}, secret, algorithm="HS256")

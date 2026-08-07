@@ -1,13 +1,14 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from catalog.auth import require_admin
 from catalog.db import get_session
+from catalog.inventory_client import InventoryClient, InventoryUnavailableError, get_inventory_client
 from catalog.minio_client import MinioClient
 from catalog.minio_dep import get_minio_client
 from catalog.models import Category, Product
@@ -62,6 +63,8 @@ async def update_product(
     product_id: uuid.UUID,
     payload: ProductUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
+    inventory_client: Annotated[InventoryClient, Depends(get_inventory_client)],
+    x_internal_token: Annotated[str | None, Header()] = None,
 ) -> Product:
     product = await session.get(Product, product_id)
     if product is None or product.is_deleted:
@@ -73,6 +76,21 @@ async def update_product(
         category = await session.get(Category, updates["category_id"])
         if category is None:
             raise HTTPException(status_code=422, detail="Unknown category_id")
+
+    if updates.get("is_published") is True and not product.is_published:
+        # Mirrors the symmetric rule Inventory enforces the other way (see
+        # stock_sync.unpublish_if_out_of_stock): a product with zero
+        # quantity across every stock shouldn't be orderable, so it
+        # shouldn't be (re)publishable either. require_admin already
+        # proved x_internal_token is valid; forwarded as-is rather than
+        # minting a new one since this call is on behalf of that same
+        # already-authenticated request.
+        try:
+            quantity = await inventory_client.get_total_quantity(str(product_id), x_internal_token or "")
+        except InventoryUnavailableError as exc:
+            raise HTTPException(status_code=503, detail="Inventory temporarily unavailable, please retry") from exc
+        if quantity <= 0:
+            raise HTTPException(status_code=422, detail="Cannot publish a product with no stock in any warehouse")
 
     temp_fields = {"min_temperature", "max_temperature"}
     temp_changed = any(field in updates and getattr(product, field) != updates[field] for field in temp_fields)

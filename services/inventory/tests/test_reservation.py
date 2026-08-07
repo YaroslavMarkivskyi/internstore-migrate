@@ -79,11 +79,13 @@ async def test_consume_reservation_decrements_quantity_and_marks_consumed(sessio
     await try_reserve(session, order_id, [{"product_id": str(product_id), "quantity": 4}], TTL_SECONDS)
     await session.commit()
 
-    reservation = await consume_reservation(session, order_id)
+    result = await consume_reservation(session, order_id)
     await session.commit()
 
-    assert reservation is not None
+    assert result is not None
+    reservation, product_ids = result
     assert reservation.status == ReservationStatus.CONSUMED
+    assert product_ids == [product_id]
     await session.refresh(item)
     assert item.reserved_quantity == 0
     assert item.quantity == 6

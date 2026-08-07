@@ -108,6 +108,13 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: catalog-product-images
+      # For checking a product's cross-stock quantity before letting it be
+      # (re)published — see catalog/inventory_client.py. Deliberately no
+      # `depends_on: inventory` for this, same reasoning as Orders' own
+      # lack of one: Catalog should boot and serve fine even if Inventory
+      # is briefly unavailable, this call just 503s in that case.
+      INVENTORY_BASE_URL: http://inventory:8000
+      INVENTORY_TIMEOUT_SECONDS: "5.0"
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/catalog/src:/app/src
@@ -154,6 +161,11 @@ services:
       # checker — still short enough to demo the saga by just waiting.
       RESERVATION_TTL_SECONDS: "300"
       RESERVATION_CHECK_INTERVAL_SECONDS: "5"
+      # For unpublishing a product once it hits zero stock everywhere (see
+      # stock_sync.py) — same container-to-container bypass-nginx pattern
+      # as Orders -> Catalog.
+      CATALOG_BASE_URL: http://catalog:8000
+      CATALOG_TIMEOUT_SECONDS: "5.0"
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/inventory/src:/app/src

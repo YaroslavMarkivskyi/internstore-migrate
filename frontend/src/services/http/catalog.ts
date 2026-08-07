@@ -17,6 +17,7 @@ export interface CatalogProductRaw {
   description: string | null;
   minTemperature: number | null;
   maxTemperature: number | null;
+  isPublished: boolean;
 }
 
 export const fetchCategories = async (): Promise<ICategory[]> => {

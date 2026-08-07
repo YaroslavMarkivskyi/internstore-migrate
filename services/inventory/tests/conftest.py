@@ -2,6 +2,7 @@ import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from inventory.catalog_client import get_catalog_client
 from inventory.config import Settings
 from inventory.db import Base, make_session_factory
 from inventory.main import create_app
@@ -18,12 +19,28 @@ def mint_internal_token(sub: str, role: str) -> str:
     )
 
 
+class FakeCatalogClient:
+    """Swapped in via app.dependency_overrides — no real HTTP call is made."""
+
+    def __init__(self) -> None:
+        self.unpublished: list[str] = []
+
+    async def unpublish_product(self, product_id: str) -> None:
+        self.unpublished.append(product_id)
+
+
 @pytest.fixture
-async def client():
+def fake_catalog_client() -> FakeCatalogClient:
+    return FakeCatalogClient()
+
+
+@pytest.fixture
+async def client(fake_catalog_client: FakeCatalogClient):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
         kafka_bootstrap_servers="kafka.invalid:9092",
+        catalog_base_url="http://catalog.invalid",
     )
     session_factory = make_session_factory(settings.database_url)
 
@@ -33,6 +50,7 @@ async def client():
 
     app = create_app(settings=settings)
     app.state.session_factory = session_factory
+    app.dependency_overrides[get_catalog_client] = lambda: fake_catalog_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

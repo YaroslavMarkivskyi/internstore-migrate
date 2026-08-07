@@ -48,24 +48,17 @@ describe('StockTabs', () => {
   it('clicking on edit icon calls onEditClick and prevents navigation', () => {
     const { onEditClick, history } = setup('2');
 
-    const teslaTab = screen.getByText('Tesla');
-    const editIcon = teslaTab.querySelector('svg');
-
-    if (editIcon) {
-      fireEvent.click(editIcon);
-    }
+    fireEvent.click(screen.getByLabelText('Edit stock'));
 
     expect(onEditClick).toHaveBeenCalledWith({ id: '2', name: 'Tesla' });
     expect(history.location.pathname).toBe('/admin/stocks/1'); // no nav occurred
   });
 
-  it('does not render edit icon for unselected tabs', () => {
+  it('only renders an edit icon for the selected tab', () => {
     setup('1');
 
-    const appleTab = screen.getByText('Apple');
-    const teslaTab = screen.getByText('Tesla');
-
-    expect(appleTab.querySelector('svg')).toBeInTheDocument();
-    expect(teslaTab.querySelector('svg')).toBeNull();
+    // Apple (id "1") is selected -- exactly one edit icon, and it's Apple's.
+    const editIcons = screen.getAllByLabelText('Edit stock');
+    expect(editIcons).toHaveLength(1);
   });
 });

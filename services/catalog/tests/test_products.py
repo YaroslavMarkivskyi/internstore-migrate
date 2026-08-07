@@ -289,3 +289,43 @@ async def test_update_product_without_temperature_change_stages_no_threshold_eve
     # field change (price here) still stages ProductUpdated for AI
     # Assistant's re-embedding consumer.
     assert [e.event_type for e in events] == ["ProductUpdated"]
+
+
+async def test_republish_rejected_when_out_of_stock(client, admin_token, fake_inventory_client):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+    await client.patch(
+        f"/products/{product_id}",
+        json={"is_published": False},
+        headers={"x-internal-token": admin_token},
+    )
+    fake_inventory_client.set_quantity(product_id, 0)
+
+    resp = await client.patch(
+        f"/products/{product_id}",
+        json={"is_published": True},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 422
+
+    still_unpublished = await client.get(f"/products/{product_id}")
+    assert still_unpublished.json()["is_published"] is False
+
+
+async def test_republish_succeeds_when_in_stock(client, admin_token, fake_inventory_client):
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+    await client.patch(
+        f"/products/{product_id}",
+        json={"is_published": False},
+        headers={"x-internal-token": admin_token},
+    )
+    fake_inventory_client.set_quantity(product_id, 5)
+
+    resp = await client.patch(
+        f"/products/{product_id}",
+        json={"is_published": True},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_published"] is True

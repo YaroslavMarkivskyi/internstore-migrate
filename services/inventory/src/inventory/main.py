@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from inventory.catalog_client import CatalogClient
 from inventory.config import Settings, load_settings
 from inventory.consumers.order_events import GROUP_ID, TOPIC as ORDER_EVENTS_TOPIC, make_dispatch
 from inventory.consumers.telemetry_events import (
@@ -35,7 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings.kafka_bootstrap_servers,
             ORDER_EVENTS_TOPIC,
             GROUP_ID,
-            make_dispatch(app.state.session_factory, settings.reservation_ttl_seconds),
+            make_dispatch(app.state.session_factory, settings.reservation_ttl_seconds, app.state.catalog_client),
         )
     )
     telemetry_consumer_task = asyncio.create_task(
@@ -66,6 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="inventory", lifespan=lifespan)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
+    app.state.catalog_client = CatalogClient(
+        settings.catalog_base_url, settings.catalog_timeout_seconds, settings.internal_token_secret
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:

@@ -64,10 +64,14 @@ async def try_reserve(
     return reservation
 
 
-async def consume_reservation(session: AsyncSession, order_id: uuid.UUID) -> Reservation | None:
+async def consume_reservation(session: AsyncSession, order_id: uuid.UUID) -> tuple[Reservation, list[uuid.UUID]] | None:
     """PaymentConfirmed: final decrement. Returns None (no-op) if there's no
     RESERVED reservation for this order — already consumed/released, so a
-    redelivered PaymentConfirmed doesn't double-decrement."""
+    redelivered PaymentConfirmed doesn't double-decrement. The returned
+    product_ids are every product this decrement touched, for the caller to
+    check against Catalog (see stock_sync.unpublish_if_out_of_stock) once
+    this commits -- a product hitting zero stock across every stock is
+    exactly what "consuming the last unit" looks like."""
     result = await session.execute(
         select(Reservation).where(Reservation.order_id == order_id, Reservation.status == ReservationStatus.RESERVED)
     )
@@ -76,13 +80,15 @@ async def consume_reservation(session: AsyncSession, order_id: uuid.UUID) -> Res
         return None
 
     await session.refresh(reservation, attribute_names=["items"])
+    product_ids: set[uuid.UUID] = set()
     for reservation_item in reservation.items:
         stock_item = await session.get(StockItem, reservation_item.stock_item_id)
         stock_item.reserved_quantity -= reservation_item.quantity
         stock_item.quantity -= reservation_item.quantity
+        product_ids.add(stock_item.product_id)
 
     reservation.status = ReservationStatus.CONSUMED
-    return reservation
+    return reservation, list(product_ids)
 
 
 async def release_reservation(session: AsyncSession, reservation: Reservation) -> None:

@@ -16,6 +16,7 @@ router = APIRouter(prefix="/items", tags=["items"])
 async def list_items(
     session: Annotated[AsyncSession, Depends(get_session)],
     stock_id: Annotated[uuid.UUID | None, Query()] = None,
+    product_id: Annotated[uuid.UUID | None, Query()] = None,
     min_quantity: Annotated[int | None, Query(ge=0)] = None,
     max_quantity: Annotated[int | None, Query(ge=0)] = None,
 ) -> list[ConsolidatedItemRead]:
@@ -24,6 +25,11 @@ async def list_items(
 
     if stock_id is not None:
         stmt = stmt.where(StockItem.stock_id == stock_id)
+    if product_id is not None:
+        # Lets Catalog check a single product's cross-stock total (see
+        # catalog's inventory_client.py) without pulling every product's
+        # aggregate just to find one.
+        stmt = stmt.where(StockItem.product_id == product_id)
 
     stmt = stmt.group_by(StockItem.product_id)
 

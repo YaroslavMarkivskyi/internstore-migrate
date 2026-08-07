@@ -79,3 +79,27 @@ async def test_duplicate_order_created_same_event_id_reserves_only_once(session)
 
     outbox = (await session.execute(select(OutboxEvent))).scalars().all()
     assert len(outbox) == 1  # exactly one StockReserved published, not two
+
+
+async def test_payment_confirmed_unpublishes_product_when_last_unit_consumed(client, fake_catalog_client):
+    from inventory.consumers.order_events import make_dispatch
+    from inventory.reservation import try_reserve
+
+    product_id = uuid.uuid4()
+    order_id = uuid.uuid4()
+
+    async with client.app.state.session_factory() as session:
+        await _make_stock_item(session, quantity=3, product_id=product_id)
+        await try_reserve(session, order_id, [{"product_id": str(product_id), "quantity": 3}], TTL_SECONDS)
+        await session.commit()
+
+    dispatch = make_dispatch(client.app.state.session_factory, TTL_SECONDS, fake_catalog_client)
+    await dispatch(
+        {
+            "event_id": str(uuid.uuid4()),
+            "event_type": "PaymentConfirmed",
+            "payload": {"order_id": str(order_id)},
+        }
+    )
+
+    assert fake_catalog_client.unpublished == [str(product_id)]

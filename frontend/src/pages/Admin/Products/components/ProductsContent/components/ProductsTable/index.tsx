@@ -8,12 +8,16 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
 } from '@mui/material';
+
+import { isAxiosError } from 'axios';
 
 import IOSSwitch from '@components/UI/admin/IOSSwitch';
 import colors from '@constants/colors';
 import { imagePlaceholderUrl } from '@constants/urls';
 import { toggleProductPublish } from '@services/http/admin/products';
+import showToast from '@utils/showToast';
 
 import ProductsMenuPopup from '../ProductsMenuPopup';
 
@@ -52,9 +56,17 @@ const ProductsTable = ({
     if (!existing) {
       return;
     }
-    const data = {
-      isPublished: !products.find(product => product.id === id)?.isPublished,
-    };
+    // Same rule the backend enforces (update_product, catalog) --
+    // checked here too so the switch doesn't even flash a false "on"
+    // before the request round-trips and reverts it.
+    if (!existing.isPublished && existing.totalQuantity <= 0) {
+      showToast({
+        message: 'Cannot publish a product with no stock in any warehouse',
+        type: 'error',
+      });
+      return;
+    }
+    const data = { isPublished: !existing.isPublished };
     toggleProductPublish(id, data)
       .then(() => {
         setProducts(prev =>
@@ -70,12 +82,14 @@ const ProductsTable = ({
         );
       })
       .catch(error => {
-        // add toast notification
-        // toast.error('Error toggling publish status');
-        console.error('Error toggling publish status:', error);
+        const detail = isAxiosError(error)
+          ? (error.response?.data as { detail?: string } | undefined)?.detail
+          : undefined;
+        showToast({
+          message: detail ?? 'Error toggling publish status',
+          type: 'error',
+        });
       });
-    // Refresh optionally
-    // void refresh?.();
   };
 
   return (
@@ -154,10 +168,23 @@ const ProductsTable = ({
                   <TableCell>{product.price}</TableCell>
                   <TableCell>{product.totalQuantity}</TableCell>
                   <TableCell>
-                    <IOSSwitch
-                      checked={product.isPublished}
-                      onChange={() => handlePublishToggle(product.id)}
-                    />
+                    <Tooltip
+                      title={
+                        !product.isPublished && product.totalQuantity <= 0
+                          ? 'No stock in any warehouse — add stock before publishing'
+                          : ''
+                      }
+                    >
+                      <span>
+                        <IOSSwitch
+                          checked={product.isPublished}
+                          disabled={
+                            !product.isPublished && product.totalQuantity <= 0
+                          }
+                          onChange={() => handlePublishToggle(product.id)}
+                        />
+                      </span>
+                    </Tooltip>
                   </TableCell>
                   <ActionsCell>
                     <ProductsMenuPopup

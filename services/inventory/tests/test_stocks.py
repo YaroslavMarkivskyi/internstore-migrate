@@ -434,3 +434,71 @@ async def test_delete_stock_item_wrong_stock(client, admin_token):
 
     resp = await client.delete(f"/stocks/{stock_b}/items/{item_id}", headers=headers)
     assert resp.status_code == 404
+
+
+async def test_delete_stock_item_unpublishes_product_when_last_stock(client, admin_token, fake_catalog_client):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    product_id = str(uuid.uuid4())
+    created = await client.post(
+        f"/stocks/{stock_id}/items",
+        json={"product_id": product_id, "quantity": 5},
+        headers=headers,
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.delete(f"/stocks/{stock_id}/items/{item_id}", headers=headers)
+    assert resp.status_code == 204
+    assert fake_catalog_client.unpublished == [product_id]
+
+
+async def test_delete_stock_item_does_not_unpublish_when_other_stock_still_has_it(
+    client, admin_token, fake_catalog_client
+):
+    headers = {"x-internal-token": admin_token}
+    stock_a = await create_stock(client, admin_token, name="Stock A")
+    stock_b = await create_stock(client, admin_token, name="Stock B")
+    product_id = str(uuid.uuid4())
+    await client.post(
+        f"/stocks/{stock_a}/items", json={"product_id": product_id, "quantity": 5}, headers=headers
+    )
+    created_b = await client.post(
+        f"/stocks/{stock_b}/items", json={"product_id": product_id, "quantity": 3}, headers=headers
+    )
+    item_id = created_b.json()["id"]
+
+    resp = await client.delete(f"/stocks/{stock_b}/items/{item_id}", headers=headers)
+    assert resp.status_code == 204
+    assert fake_catalog_client.unpublished == []
+
+
+async def test_update_stock_item_quantity_to_zero_unpublishes_product(client, admin_token, fake_catalog_client):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    product_id = str(uuid.uuid4())
+    created = await client.post(
+        f"/stocks/{stock_id}/items", json={"product_id": product_id, "quantity": 5}, headers=headers
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.patch(
+        f"/stocks/{stock_id}/items/{item_id}", json={"quantity": 0}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert fake_catalog_client.unpublished == [product_id]
+
+
+async def test_update_stock_item_quantity_above_zero_does_not_unpublish(client, admin_token, fake_catalog_client):
+    headers = {"x-internal-token": admin_token}
+    stock_id = await create_stock(client, admin_token)
+    product_id = str(uuid.uuid4())
+    created = await client.post(
+        f"/stocks/{stock_id}/items", json={"product_id": product_id, "quantity": 5}, headers=headers
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.patch(
+        f"/stocks/{stock_id}/items/{item_id}", json={"quantity": 2}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert fake_catalog_client.unpublished == []

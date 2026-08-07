@@ -4,6 +4,7 @@ from httpx import ASGITransport, AsyncClient
 
 from catalog.config import Settings
 from catalog.db import Base, make_session_factory
+from catalog.inventory_client import get_inventory_client
 from catalog.main import create_app
 from catalog.minio_dep import get_minio_client
 
@@ -40,8 +41,29 @@ def fake_minio_client() -> FakeMinioClient:
     return FakeMinioClient()
 
 
+class FakeInventoryClient:
+    """Swapped in via app.dependency_overrides -- no real HTTP call is
+    made. Quantities default to a nonzero value so publish-related tests
+    that don't care about stock don't have to set one up explicitly."""
+
+    def __init__(self) -> None:
+        self.quantities: dict[str, int] = {}
+        self.default_quantity = 10
+
+    def set_quantity(self, product_id: str, quantity: int) -> None:
+        self.quantities[product_id] = quantity
+
+    async def get_total_quantity(self, product_id: str, internal_token: str) -> int:
+        return self.quantities.get(product_id, self.default_quantity)
+
+
 @pytest.fixture
-async def client(fake_minio_client: FakeMinioClient):
+def fake_inventory_client() -> FakeInventoryClient:
+    return FakeInventoryClient()
+
+
+@pytest.fixture
+async def client(fake_minio_client: FakeMinioClient, fake_inventory_client: FakeInventoryClient):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
@@ -50,6 +72,7 @@ async def client(fake_minio_client: FakeMinioClient):
         minio_public_base_url="http://minio.invalid:9000",
         minio_access_key="test",
         minio_secret_key="test",
+        inventory_base_url="http://inventory.invalid",
     )
     session_factory = make_session_factory(settings.database_url)
 
@@ -60,6 +83,7 @@ async def client(fake_minio_client: FakeMinioClient):
     app = create_app(settings=settings)
     app.state.session_factory = session_factory
     app.dependency_overrides[get_minio_client] = lambda: fake_minio_client
+    app.dependency_overrides[get_inventory_client] = lambda: fake_inventory_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
