@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry
+  labels:
+    app: telemetry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telemetry
+  template:
+    metadata:
+      labels:
+        app: telemetry
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: telemetry
+        image: internstore/telemetry:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+          - configMapRef:
+              name: telemetry-config
+          - secretRef:
+              name: telemetry-secret
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      - name: telemetry-opa
+        image: openpolicyagent/opa:latest
+        imagePullPolicy: IfNotPresent
+        args: ["run", "--server", "--addr=:8181", "/policies/telemetry.rego", "/policies/common.rego"]
+        volumeMounts:
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      volumes:
+      - name: policies
+        configMap:
+          name: opa-policies

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notifications-config
+  labels:
+    app: notifications
+data:
+  PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  SMTP_HOST: "mailpit"
+  SMTP_PORT: "1025"

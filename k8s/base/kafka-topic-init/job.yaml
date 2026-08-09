@@ -1,0 +1,38 @@
+# Same topic list/creation loop as compose's kafka-topic-init container —
+# run once, create topics, exit.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-init
+  labels:
+    app: kafka-topic-init
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app: kafka-topic-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: kafka-topic-init
+        image: apache/kafka:3.7.0
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            # ai-assistant consumes catalog-events and chat-events (both
+            # already listed below); it produces nothing itself, so there's
+            # no separate ai-assistant-events topic to create.
+            # ops-events (STR-139): checkout-workflow's release_stock
+            # activity publishes EscalationRequired here once compensation
+            # retries are exhausted; Notifications consumes it for the
+            # admin alert. See docs/EVENT_BROKER.md.
+            # Note: compose's version of this script writes `$$topic`
+            # because compose itself collapses `$$` -> `$` when
+            # interpolating the command string. There's no such
+            # interpolation layer here, so this is the single-`$` bash
+            # variable reference directly.
+            for topic in order-events inventory-events telemetry-events catalog-events chat-events ops-events; do
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$topic" --partitions 1 --replication-factor 1
+            done

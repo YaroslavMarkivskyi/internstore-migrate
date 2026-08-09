@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chat-config
+  labels:
+    app: chat
+data:
+  PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  OUTBOX_POLL_INTERVAL_SECONDS: "1.0"
+  REDIS_URL: "redis://redis:6379"
+  MINIO_ENDPOINT: "http://minio:9000"
+  MINIO_PUBLIC_BASE_URL: "http://localhost:9000"
+  MINIO_BUCKET: "chat-attachments"
+  OPA_URL: "http://localhost:8181"

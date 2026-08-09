@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-backend
+  labels:
+    app: auth-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-backend
+  template:
+    metadata:
+      labels:
+        app: auth-backend
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: auth-backend
+        image: internstore/auth-backend:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+        envFrom:
+          - configMapRef:
+              name: auth-backend-config
+          - secretRef:
+              name: auth-backend-secret
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"

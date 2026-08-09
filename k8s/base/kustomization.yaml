@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+# Shared
+- opa-policies
+
+# Stateful infra
+- postgres-keycloak
+- postgres-catalog
+- postgres-inventory
+- postgres-orders
+- postgres-telemetry
+- postgres-security
+- postgres-chat
+- postgres-ai
+- postgres-payments
+- postgres-temporal
+- kafka
+- kafka-topic-init
+- redis
+- keycloak
+- temporal
+- temporal-ui
+- minio
+- minio-init
+- mock-camera
+
+# Stateless domain services
+- auth-backend
+- catalog
+- inventory
+- orders
+- payments
+- telemetry
+- security
+- chat
+- notifications
+- checkout-workflow-worker
+- ai-assistant
+- mcp-gateway
+
+# Gateway
+- nginx

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ai
+  labels:
+    app: postgres-ai
+spec:
+  selector:
+    app: postgres-ai
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP

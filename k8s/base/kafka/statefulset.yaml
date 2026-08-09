@@ -1,0 +1,96 @@
+# Single-node KRaft-mode broker+controller (apache/kafka:3.7.0) — confirmed
+# from docker-compose.yml's KAFKA_PROCESS_ROLES: broker,controller /
+# KAFKA_CONTROLLER_QUORUM_VOTERS: no separate Zookeeper service exists to
+# port. Compose's PLAINTEXT_HOST://:29092 host-debug listener (for
+# host-side tools) is deliberately dropped here — no host port is needed
+# in-cluster, every consumer/producer is itself a pod using the
+# ClusterIP Service's DNS name (see k8s/README.md).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: kafka
+        image: apache/kafka:3.7.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9092
+        - containerPort: 9093
+        env:
+        - name: KAFKA_NODE_ID
+          value: "1"
+        - name: KAFKA_PROCESS_ROLES
+          value: "broker,controller"
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://kafka:9092"
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+        - name: KAFKA_CONTROLLER_LISTENER_NAMES
+          value: "CONTROLLER"
+        - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+          value: "1@kafka:9093"
+        - name: KAFKA_INTER_BROKER_LISTENER_NAME
+          value: "PLAINTEXT"
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+          value: "1"
+        - name: CLUSTER_ID
+          value: "4L6g3nShT-eMCtK--X86sw"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/kafka/data
+          subPath: kafka
+        readinessProbe:
+          exec:
+            command: ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 10
+        livenessProbe:
+          exec:
+            command: ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 10
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: kafka-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+  labels:
+    app: kafka
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi

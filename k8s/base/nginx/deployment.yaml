@@ -1,0 +1,53 @@
+# nginx.conf is baked into the internstore/nginx:local image unchanged
+# (same `build: ./nginx` Dockerfile compose uses, COPY nginx.conf
+# /etc/nginx/nginx.conf) rather than mounted via a ConfigMap — nothing
+# needs overriding for K8s. Verified finding (k8s/README.md): nginx.conf's
+# existing short-form upstream names (catalog:8000, orders:8000, ...) with
+# its resolver-based proxy_pass (STR-135) resolve correctly against K8s's
+# own DNS search path as long as nginx and every backend Service share the
+# `default` namespace — no config changes required.
+# The self-signed dev TLS cert is regenerated at container start by
+# docker-entrypoint-certs.sh (baked into the image) if missing — no PVC
+# needed to persist it across pod restarts; the verification scripts use
+# `curl -sk`, so a fresh cert each restart doesn't break anything locally.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: nginx
+        image: internstore/nginx:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        - containerPort: 8443
+        readinessProbe:
+          tcpSocket:
+            port: 8443
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 8443
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"

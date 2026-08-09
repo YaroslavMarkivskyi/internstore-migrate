@@ -1,0 +1,17 @@
+# Demonstrates the overlay-patch mechanism with something that's actually
+# safe to apply blanket across every Deployment/StatefulSet regardless of
+# how many containers a given pod has (containers[0] is always that pod's
+# main container, whether or not it also carries an OPA sidecar at
+# index 1) — a JSON6902 patch targeting a specific container *name* can't
+# be applied blanket like this without accidentally injecting a phantom
+# container into pods that don't have one by that name, so index 0 is the
+# only universally-safe target.
+#
+# imagePullPolicy is deliberately NOT overridden here: base already sets
+# IfNotPresent, which is correct for both `kind load docker-image`-d local
+# images (found already-present, so never pulled) and a future GCP overlay
+# pulling from a real registry — no local-vs-GCP divergence to patch. See
+# k8s/README.md.
+- op: replace
+  path: /spec/template/spec/containers/0/resources/limits/memory
+  value: "768Mi"

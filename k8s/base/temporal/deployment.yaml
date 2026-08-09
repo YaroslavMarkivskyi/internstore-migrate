@@ -1,0 +1,59 @@
+# temporalio/auto-setup runs its own schema migrations against
+# postgres-temporal at boot, same as compose (auto-setup is dev-only; a
+# real deployment would run `temporal sql-tool`/server-side schema setup
+# once instead — out of scope here, GCP follow-up territory).
+# compose defines no healthcheck for this service at all (temporal has no
+# cheap HTTP endpoint to hit) — a raw TCP probe on the gRPC port is a
+# strict improvement over that total absence without inventing an HTTP
+# endpoint that doesn't exist, so it's added here rather than omitted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  labels:
+    app: temporal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal
+  template:
+    metadata:
+      labels:
+        app: temporal
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: temporal
+        image: temporalio/auto-setup:1.27.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 7233
+        env:
+        - name: DB
+          value: "postgres12"
+        - name: DB_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: "temporal"
+        - name: POSTGRES_PWD
+          value: "temporal"
+        - name: POSTGRES_SEEDS
+          value: "postgres-temporal"
+        readinessProbe:
+          tcpSocket:
+            port: 7233
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 7233
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"

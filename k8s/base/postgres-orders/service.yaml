@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-orders
+  labels:
+    app: postgres-orders
+spec:
+  selector:
+    app: postgres-orders
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP

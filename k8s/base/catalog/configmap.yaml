@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-config
+  labels:
+    app: catalog
+data:
+  PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  MINIO_ENDPOINT: "http://minio:9000"
+  MINIO_PUBLIC_BASE_URL: "http://localhost:9000"
+  MINIO_BUCKET: "catalog-product-images"
+  INVENTORY_BASE_URL: "http://inventory:8000"
+  INVENTORY_TIMEOUT_SECONDS: "5.0"
+  OPA_URL: "http://localhost:8181"

@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-orders
+  labels:
+    app: postgres-orders
+spec:
+  serviceName: postgres-orders
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-orders
+  template:
+    metadata:
+      labels:
+        app: postgres-orders
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+        envFrom:
+        - secretRef:
+            name: postgres-orders-secret
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          # Postgres refuses to initdb into a non-empty mount point that
+          # also contains the volume's own lost+found dir — subPath sidesteps
+          # that without needing an initContainer, same net effect as
+          # compose's named volume (which mounts a dedicated dir, not the PVC
+          # root) mapping straight to /var/lib/postgresql/data.
+          subPath: postgres
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "orders"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "orders"]
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: postgres-orders-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-orders-data
+  labels:
+    app: postgres-orders
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

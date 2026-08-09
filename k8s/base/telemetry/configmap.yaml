@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telemetry-config
+  labels:
+    app: telemetry
+data:
+  PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  VIOLATION_CHECK_INTERVAL_SECONDS: "5"
+  VIOLATION_WINDOW_SECONDS: "20"
+  OPA_URL: "http://localhost:8181"

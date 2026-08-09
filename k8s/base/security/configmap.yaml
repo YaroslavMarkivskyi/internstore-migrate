@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-config
+  labels:
+    app: security
+data:
+  PORT: "8000"
+  CAMERA_BASE_URL: "http://mock-camera:8001"
+  OPA_URL: "http://localhost:8181"

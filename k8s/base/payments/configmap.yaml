@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payments-config
+  labels:
+    app: payments
+data:
+  PORT: "8000"
+  PAYMENT_FAIL_ON_AMOUNT_SUFFIX: "99"
+  OPA_URL: "http://localhost:8181"

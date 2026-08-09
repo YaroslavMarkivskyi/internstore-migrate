@@ -1,0 +1,87 @@
+# Verified against docker-compose.yml before assuming: the keycloak
+# service itself has NO volume of its own — its only mount is the
+# read-only realm-export.json import file. All of Keycloak's actual state
+# (realms, users, sessions) lives in keycloak-db (postgres-keycloak here),
+# via KC_DB=postgres. So there is no PVC to add here to "match the compose
+# volume" — there isn't one — and `start-dev --import-realm` re-importing
+# on every boot (idempotent, skip-if-exists per entity) against that same
+# Postgres instance reproduces compose's behavior exactly. No extra
+# Job/initContainer needed for the realm import either.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  labels:
+    app: keycloak
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: keycloak
+        image: quay.io/keycloak/keycloak:25.0
+        imagePullPolicy: IfNotPresent
+        args: ["start-dev", "--import-realm"]
+        ports:
+        - containerPort: 8080
+        - containerPort: 9000
+        env:
+        - name: KC_DB
+          value: "postgres"
+        - name: KC_DB_URL
+          value: "jdbc:postgresql://postgres-keycloak:5432/keycloak"
+        - name: KC_DB_USERNAME
+          value: "keycloak"
+        - name: KC_DB_PASSWORD
+          value: "keycloak"
+        - name: KEYCLOAK_ADMIN
+          value: "admin"
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          value: "admin"
+        - name: KC_HEALTH_ENABLED
+          value: "true"
+        # Pins the `iss` claim to the externally-reachable URL, same
+        # reasoning as compose — see auth-backend's KEYCLOAK_ISSUER, which
+        # must match this exactly. Assumes Keycloak stays reachable at
+        # localhost:8081 via NodePort/port-forward (see k8s/README.md).
+        - name: KC_HOSTNAME
+          value: "http://localhost:8081"
+        volumeMounts:
+        - name: realm-export
+          mountPath: /opt/keycloak/data/import/realm-export.json
+          subPath: realm-export.json
+          readOnly: true
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 9000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+      volumes:
+      - name: realm-export
+        configMap:
+          name: keycloak-realm-export

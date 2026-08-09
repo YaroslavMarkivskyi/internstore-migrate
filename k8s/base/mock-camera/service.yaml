@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-camera
+  labels:
+    app: mock-camera
+spec:
+  selector:
+    app: mock-camera
+  ports:
+  - port: 8001
+    targetPort: 8001
+  type: ClusterIP

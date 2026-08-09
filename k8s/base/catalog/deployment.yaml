@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  labels:
+    app: catalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: catalog
+  template:
+    metadata:
+      labels:
+        app: catalog
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: catalog
+        image: internstore/catalog:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+          - configMapRef:
+              name: catalog-config
+          - secretRef:
+              name: catalog-secret
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      - name: catalog-opa
+        image: openpolicyagent/opa:latest
+        imagePullPolicy: IfNotPresent
+        args: ["run", "--server", "--addr=:8181", "/policies/catalog.rego", "/policies/common.rego"]
+        volumeMounts:
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      volumes:
+      - name: policies
+        configMap:
+          name: opa-policies

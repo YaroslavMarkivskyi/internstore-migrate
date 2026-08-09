@@ -1,0 +1,21 @@
+# The one deliberate exception to "no NodePort" — this is the cluster's
+# single ingress point, not a service-to-service call (per the ticket).
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  selector:
+    app: nginx
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    nodePort: 30082
+  - name: https
+    port: 8443
+    targetPort: 8443
+    nodePort: 30843
+  type: NodePort

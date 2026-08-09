@@ -1,0 +1,28 @@
+# One-shot bucket provisioning — same mc script as compose's minio-init
+# container, run as a Job instead of a long-running pod (per the ticket).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  labels:
+    app: minio-init
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app: minio-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: minio-init
+        image: minio/mc:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            mc alias set local http://minio:9000 minioadmin minioadmin &&
+            mc mb --ignore-existing local/chat-attachments &&
+            mc anonymous set download local/chat-attachments &&
+            mc mb --ignore-existing local/catalog-product-images &&
+            mc anonymous set download local/catalog-product-images

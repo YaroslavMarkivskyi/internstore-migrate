@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-assistant-config
+  labels:
+    app: ai-assistant
+data:
+  PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  REDIS_URL: "redis://redis:6379"
+  CHAT_SERVICE_URL: "http://chat:8000"
+  ORDERS_SERVICE_URL: "http://orders:8000"
+  AI_MODE_DEFAULT: "ai"
+  AI_RATE_LIMIT: "10"
+  MCP_GATEWAY_URL: "http://mcp-gateway:8000"

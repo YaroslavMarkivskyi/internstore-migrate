@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inventory-config
+  labels:
+    app: inventory
+data:
+  PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  RESERVATION_TTL_SECONDS: "300"
+  RESERVATION_CHECK_INTERVAL_SECONDS: "5"
+  CATALOG_BASE_URL: "http://catalog:8000"
+  CATALOG_TIMEOUT_SECONDS: "5.0"
+  OPA_URL: "http://localhost:8181"

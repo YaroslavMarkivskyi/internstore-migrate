@@ -1,0 +1,22 @@
+# NodePort — Keycloak, like nginx, is a direct browser-facing entry point
+# (the frontend redirects here for login) rather than a service-to-service
+# call, so this is a deliberate exception to "no NodePort", same carve-out
+# as nginx's own Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  labels:
+    app: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    nodePort: 30081
+  - name: health
+    port: 9000
+    targetPort: 9000
+  type: NodePort

@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory
+  labels:
+    app: inventory
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory
+  template:
+    metadata:
+      labels:
+        app: inventory
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: inventory
+        image: internstore/inventory:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+          - configMapRef:
+              name: inventory-config
+          - secretRef:
+              name: inventory-secret
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      - name: inventory-opa
+        image: openpolicyagent/opa:latest
+        imagePullPolicy: IfNotPresent
+        args: ["run", "--server", "--addr=:8181", "/policies/inventory.rego", "/policies/common.rego"]
+        volumeMounts:
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      volumes:
+      - name: policies
+        configMap:
+          name: opa-policies

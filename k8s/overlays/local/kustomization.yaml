@@ -1,0 +1,21 @@
+# kind/minikube overlay — this ticket's target environment.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: default
+
+resources:
+- ../../base
+
+# Local-only tweak: bump every workload's memory limit up a bit (see
+# patches/bump-memory-limit.yaml) — a stand-in for whatever this cluster's
+# actual local resource headroom calls for. imagePullPolicy is NOT
+# overridden here; base's IfNotPresent already does the right thing for
+# `kind load docker-image`-d images (see that patch file's comment).
+patches:
+- path: patches/bump-memory-limit.yaml
+  target:
+    kind: Deployment
+- path: patches/bump-memory-limit.yaml
+  target:
+    kind: StatefulSet

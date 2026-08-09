@@ -1,0 +1,34 @@
+# Single ConfigMap shared by every domain service's OPA sidecar container
+# (catalog, inventory, orders, payments, telemetry, security, chat — see
+# each service's deployment.yaml).
+#
+# The files under ./policies/ are a MIRROR of the repo's real source of
+# truth at /policies/*.rego (STR-140) — not a live reference to it.
+# `kubectl apply -k` (and `kubectl kustomize`, which this was validated
+# with) refuses to read configMapGenerator files from outside a
+# kustomization's own directory tree by default, with no CLI flag to
+# relax that for the `kubectl` built-in kustomize path — only the
+# standalone `kustomize` binary's `--load-restrictor` does, and this
+# manifest set is meant to work with plain `kubectl apply -k`. Run
+# `k8s/base/opa-policies/sync-policies.sh` after editing any policies/*.rego
+# file to re-mirror it here; kustomize has no way to do this
+# automatically given that constraint.
+# disableNameSuffixHash keeps the ConfigMap name stable (`opa-policies`)
+# since every deployment.yaml references it by a fixed name rather than
+# being wired through kustomize's name-reference rewriting.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+- name: opa-policies
+  files:
+  - policies/catalog.rego
+  - policies/chat.rego
+  - policies/checkout.rego
+  - policies/common.rego
+  - policies/inventory.rego
+  - policies/orders.rego
+  - policies/payments.rego
+  - policies/security.rego
+  - policies/telemetry.rego
+generatorOptions:
+  disableNameSuffixHash: true
