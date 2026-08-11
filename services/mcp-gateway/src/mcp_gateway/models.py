@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, Float, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from mcp_gateway.db import Base
@@ -23,5 +23,10 @@ class ProductEmbedding(Base):
     product_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(250), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # STR-146: added for search_products' price/category filters — populated
+    # from ProductUpdated's own `price`/`category_name` fields (see
+    # ai-assistant's embeddings.upsert_product_embedding).
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    category_name: Mapped[str | None] = mapped_column(String(15), nullable=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

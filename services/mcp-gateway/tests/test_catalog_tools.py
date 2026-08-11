@@ -10,7 +10,7 @@ BASE_URL = "http://catalog.invalid"
 
 
 def _client() -> CatalogToolsClient:
-    return CatalogToolsClient(BASE_URL, timeout_seconds=5.0, internal_token_secret="test-secret")
+    return CatalogToolsClient(BASE_URL, timeout_seconds=5.0)
 
 
 @respx.mock
@@ -19,9 +19,10 @@ async def test_get_product_calls_catalog_by_id():
         return_value=httpx.Response(200, json={"id": "prod-1", "name": "Frozen Peas", "min_temperature": -18})
     )
 
-    result = await _client().get_product("prod-1")
+    result = await _client().get_product("caller-token", "prod-1")
 
     assert route.called
+    assert route.calls.last.request.headers["x-internal-token"] == "caller-token"
     assert result["name"] == "Frozen Peas"
 
 
@@ -31,7 +32,7 @@ async def test_list_categories_returns_catalog_response():
         return_value=httpx.Response(200, json=[{"id": "cat-1", "name": "Frozen"}])
     )
 
-    result = await _client().list_categories()
+    result = await _client().list_categories("caller-token")
 
     assert result == [{"id": "cat-1", "name": "Frozen"}]
 
@@ -61,11 +62,17 @@ def _fake_openai_client() -> AsyncMock:
 
 
 async def test_search_products_embeds_query_and_returns_nearest_rows():
-    rows = [SimpleNamespace(product_id="prod-1", name="Frozen Peas", description="1kg bag")]
+    rows = [
+        SimpleNamespace(
+            product_id="prod-1", name="Frozen Peas", description="1kg bag", price=4.5, category_name="Frozen"
+        )
+    ]
     openai_client = _fake_openai_client()
     search_client = ProductSearchClient(_fake_session_factory(rows), openai_client, "text-embedding-3-small")
 
-    result = await search_client.search_products("frozen vegetables", limit=5)
+    result = await search_client.search_products("caller-token", "frozen vegetables", limit=5)
 
     openai_client.embeddings.create.assert_awaited_once_with(model="text-embedding-3-small", input="frozen vegetables")
-    assert result == [{"product_id": "prod-1", "name": "Frozen Peas", "description": "1kg bag"}]
+    assert result == [
+        {"product_id": "prod-1", "name": "Frozen Peas", "description": "1kg bag", "price": 4.5, "category": "Frozen"}
+    ]

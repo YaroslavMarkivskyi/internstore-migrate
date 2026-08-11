@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 
 from auth_backend.auth.external_token import ExternalTokenVerifier
 from auth_backend.auth.guest_session import GUEST_SESSION_TTL_SECONDS, GuestSessionStore
-from auth_backend.auth.internal_token import MintableClaims, mint_internal_token
+from auth_backend.auth.internal_token import MintableClaims, mint_internal_token, verify_internal_token_for_refresh
 from auth_backend.auth.revocation import RevocationChecker
 from auth_backend.config import Settings, load_settings
 
@@ -105,6 +105,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {"sub": claims.sub, "email": claims.email, "role": claims.role, "internalToken": internal_token}
         )
+
+    # STR-146: re-mints a still-valid internal token with a fresh exp,
+    # same sub/role. Exists for callers that hold a real user's internal
+    # token across a sequence of internal calls longer than the 60s TTL
+    # (the shopping agent's ReAct loop, see services/ai-assistant) and can't
+    # just re-hit /auth/verify — that path requires the original Keycloak
+    # bearer token/guest cookie, neither of which a downstream service like
+    # AI Assistant holds. Requires the presented token to still be validly
+    # signed and unexpired — this extends a live session, it never
+    # resurrects an expired one.
+    @app.post("/auth/refresh")
+    async def refresh(request: Request) -> Response:
+        token = request.headers.get("x-internal-token")
+        if not token:
+            return JSONResponse({"error": "Missing internal token"}, status_code=401)
+
+        try:
+            claims = verify_internal_token_for_refresh(token, settings.internal_token_secret)
+        except ValueError:
+            return JSONResponse({"error": "Invalid or expired internal token"}, status_code=401)
+
+        internal_token = mint_internal_token(
+            MintableClaims(sub=claims.sub, role=claims.role),
+            settings.internal_token_secret,
+            settings.internal_token_ttl_seconds,
+        )
+        return JSONResponse({"internalToken": internal_token})
 
     # nginx `auth_request` target: on-prem entry point. Same validation logic
     # an AWS ALB Lambda@Edge/authorizer would call — this handler has no

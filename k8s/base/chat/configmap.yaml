@@ -13,3 +13,7 @@ data:
   MINIO_PUBLIC_BASE_URL: "http://localhost:9000"
   MINIO_BUCKET: "chat-attachments"
   OPA_URL: "http://localhost:8181"
+  # STR-146: forwards a registered customer's own internal-token here
+  # synchronously on every message, so the shopping agent's ReAct loop has a
+  # real per-customer identity to propagate into cart-mutating tool calls.
+  AI_ASSISTANT_SERVICE_URL: "http://ai-assistant:8000"

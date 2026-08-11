@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, Float, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_assistant.db import Base
@@ -14,14 +14,19 @@ class ProductEmbedding(Base):
     """One row per Catalog product, kept in sync by the catalog-events
     consumer (ProductUpdated). A separate database from Catalog's own —
     this service never touches Catalog's tables directly, only the
-    event-driven copy of {name, description, temperatures, category} it
-    needs for RAG."""
+    event-driven copy of {name, description, price, temperatures, category}
+    it needs for RAG."""
 
     __tablename__ = "product_embeddings"
 
     product_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(250), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # STR-146: added for the shopping agent's search_products price/category
+    # filters (see mcp-gateway's ProductSearchClient, which mirrors this
+    # table read-only) — not used for embedding text or RAG matching itself.
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    category_name: Mapped[str | None] = mapped_column(String(15), nullable=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

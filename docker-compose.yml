@@ -716,6 +716,12 @@ services:
       # STR-140: sidecar, same pod/network namespace — see chat-opa below.
       # Not yet consumed by this service's own code, same as telemetry's.
       OPA_URL: http://localhost:8181
+      # STR-146: forwards a registered customer's own internal-token here on
+      # every message, synchronously, so the shopping agent's ReAct loop has
+      # a real per-customer identity to propagate into cart-mutating tool
+      # calls — bypasses the chat-events Kafka topic, which has no token to
+      # carry (see ai-assistant's own chat_events.py, guest-only now).
+      AI_ASSISTANT_SERVICE_URL: http://ai-assistant:8000
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/chat/src:/app/src
@@ -781,10 +787,13 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AI_MODE_DEFAULT: ai
       AI_RATE_LIMIT: "10"
-      # Not yet consumed by this service's own code (see STR-136/STR-138) —
-      # wired through now so the AI Assistant container can reach the
-      # Gateway once context.py/agent.py adopt it.
+      # STR-146: the shopping ReAct loop's tool calls all go through here
+      # now (see react_loop.py/mcp_client.py) — this was wired through
+      # ahead of time but unused until this ticket.
       MCP_GATEWAY_URL: http://mcp-gateway:8000
+      # STR-146: used to refresh the customer's internal-token mid-loop when
+      # it's close to its 60s TTL (see token_manager.py/auth_backend_client.py).
+      AUTH_BACKEND_URL: http://auth-backend:3000
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/ai-assistant/src:/app/src

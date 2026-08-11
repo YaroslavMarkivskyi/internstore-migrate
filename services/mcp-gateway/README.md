@@ -8,12 +8,14 @@ service.
 
 Internal-only: no nginx route, never reachable from the browser. Every
 request (from AI Assistant, or any future client) must carry the same
-`X-Internal-Token` every other domain service requires. This service in
-turn mints its own token (`sub: mcp-gateway`, `role: admin`) on every
-outbound call to a domain service — a single tool call can fan out to
-whichever service holds the data, so it needs the same read access an admin
-has everywhere, not a narrower per-domain role. See
-`src/mcp_gateway/auth.py`.
+`X-Internal-Token` every other domain service requires. **STR-146:** the
+Gateway no longer mints its own token for outbound calls — it forwards the
+caller's own already-verified token unchanged to whichever domain service a
+tool call fans out to (see `src/mcp_gateway/auth.py`'s
+`get_raw_internal_token`). This is what makes `add_to_cart`/`get_cart`'s
+ownership check mean anything: a tool call runs as whoever actually called
+`/mcp/tools/call` (a customer, a guest, an admin, or AI Assistant's own
+`assistant`-role token), never as a fixed Gateway identity.
 
 ## Protocol endpoints
 
@@ -45,6 +47,9 @@ every other inter-service call in this repo is.
 | `get_order_status` | `order_id: str` | Order status, items, timestamps, contact info |
 | `list_customer_orders` | `customer_id: str`, `limit: int = 5` | Recent orders with status |
 | `get_pending_orders` | `older_than_minutes: int = 60` | Orders stuck in `pending`, admin use |
+| `get_cart` | — | Caller's own cart contents. Scoped entirely by the forwarded token's `sub` — no `customer_id` argument exists to hallucinate |
+| `add_to_cart` | `product_id: str`, `quantity: int` | Adds to the caller's own cart (accumulates existing quantity) |
+| `remove_from_cart` | `product_id: str` | Removes a product from the caller's own cart |
 
 ### Inventory
 
@@ -58,7 +63,7 @@ every other inter-service call in this repo is.
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `search_products` | `query: str`, `limit: int = 5` | Semantic search via pgvector — queries AI Assistant's own `product_embeddings` table directly (see `AI_DB_URL`), not a Catalog HTTP call |
+| `search_products` | `query: str`, `limit: int = 5`, `filters: {price_min, price_max, category}? = None` | Semantic search via pgvector — queries AI Assistant's own `product_embeddings` table directly (see `AI_DB_URL`), not a Catalog HTTP call. Filters are plain SQL predicates applied after the vector ordering |
 | `get_product` | `product_id: str` | Full product details including temperature range |
 | `list_categories` | — | All categories |
 
@@ -86,14 +91,19 @@ every other inter-service call in this repo is.
 
 ## Usage from AI Assistant
 
-`MCP_GATEWAY_URL` is wired into AI Assistant's compose environment
-(`http://mcp-gateway:8000`), not yet consumed by its own code — the actual
-swap from AI Assistant's direct `OrdersClient` HTTP call to an MCP tool
-call, and the OpenAI function-calling `tools` parameter built from
-`GET /mcp/tools`, land in a follow-up ticket. Any MCP-compatible client
-(Claude Desktop, a custom agent) can otherwise call this service directly:
-fetch `GET /mcp/tools` for the schema, then `POST /mcp/tools/call` per
-invocation.
+**STR-146:** AI Assistant's shopping ReAct loop (`react_loop.py`) is this
+service's first real consumer — it fetches `GET /mcp/tools`, filters to
+exactly `search_products`/`get_cart`/`add_to_cart`/`remove_from_cart`, builds
+the OpenAI function-calling `tools` parameter from those specs, and forwards
+the customer's own internal-token (refreshed via auth-backend if the loop
+outlives its 60s TTL) on every `POST /mcp/tools/call`. The Gateway's full
+16-tool catalog still exists for other admin-facing use, but nothing outside
+that 4-tool subset is ever offered to the shopping agent's model, and no
+checkout/payment tool exists in the registry at all — see
+`src/mcp_gateway/router.py`'s `build_tool_registry` for the enforced
+boundary. Any MCP-compatible client (Claude Desktop, a custom agent) can
+otherwise call this service directly: fetch `GET /mcp/tools` for the schema,
+then `POST /mcp/tools/call` per invocation.
 
 ## Demo query
 

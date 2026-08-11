@@ -45,6 +45,32 @@ TOOL_SPECS: list[ToolSpec] = [
         },
     },
     {
+        "name": "get_cart",
+        "description": "Get the caller's own current cart contents. Scoped to whoever's token was forwarded — there is no customer_id argument.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "add_to_cart",
+        "description": "Add a quantity of a product to the caller's own cart (accumulates if already present).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "product_id": {"type": "string", "description": "Product UUID"},
+                "quantity": {"type": "integer", "description": "Quantity to add, must be positive"},
+            },
+            "required": ["product_id", "quantity"],
+        },
+    },
+    {
+        "name": "remove_from_cart",
+        "description": "Remove a product entirely from the caller's own cart.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"product_id": {"type": "string", "description": "Product UUID"}},
+            "required": ["product_id"],
+        },
+    },
+    {
         "name": "check_availability",
         "description": "Check available stock for a product across warehouses.",
         "input_schema": {
@@ -72,12 +98,21 @@ TOOL_SPECS: list[ToolSpec] = [
     },
     {
         "name": "search_products",
-        "description": "Semantic search over the product catalog.",
+        "description": "Semantic search over the product catalog, with optional price/category filters.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
                 "limit": {"type": "integer", "default": 5},
+                "filters": {
+                    "type": "object",
+                    "description": "Optional. All fields optional.",
+                    "properties": {
+                        "price_min": {"type": "number"},
+                        "price_max": {"type": "number"},
+                        "category": {"type": "string"},
+                    },
+                },
             },
             "required": ["query"],
         },

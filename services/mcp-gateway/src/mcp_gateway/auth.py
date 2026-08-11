@@ -6,15 +6,6 @@ from pydantic import BaseModel
 
 ISSUER = "internstore-gateway"
 
-# The identity this service presents on every outbound call to a domain
-# service. "admin" is the highest internal trust level any domain service
-# recognizes (see e.g. services/orders/src/orders/auth.py's
-# require_admin_or_assistant) -- the Gateway fans a single MCP tool call out
-# to whichever domain service holds the data, so it needs the same read
-# access an admin has everywhere, not a narrower per-domain role.
-SUB = "mcp-gateway"
-ROLE = "admin"
-
 
 class InternalClaims(BaseModel):
     sub: str
@@ -53,5 +44,15 @@ def get_internal_claims(
         raise HTTPException(status_code=401, detail="Invalid internal token") from exc
 
 
-def mint_internal_token(secret: str) -> str:
-    return jwt.encode({"sub": SUB, "role": ROLE, "iss": ISSUER}, secret, algorithm="HS256")
+# STR-146: the Gateway used to mint its own admin-identity token
+# (sub="mcp-gateway", role="admin") for every outbound call to a domain
+# service, regardless of who actually called /mcp/tools/call — fine for a
+# read-only tool set, but wrong once add_to_cart/remove_from_cart exist:
+# ownership has to resolve against the real customer, not the Gateway. The
+# Gateway now forwards the caller's own already-verified token unchanged
+# (see main.py's call_tool_endpoint and router.call_tool) instead of minting
+# a new identity — there is no more Gateway-owned outbound token to mint.
+def get_raw_internal_token(x_internal_token: Annotated[str | None, Header()] = None) -> str:
+    if x_internal_token is None:
+        raise HTTPException(status_code=401, detail="Missing internal token")
+    return x_internal_token

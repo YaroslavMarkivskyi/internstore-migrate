@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     minio_secret_key: str
     minio_bucket: str = "chat-attachments"
     history_replay_limit: int = 50
+    # STR-146: called synchronously for registered customers' messages, to
+    # forward their internal-token into the shopping agent's ReAct loop
+    # (see chat.ws.room and ai_assistant_client.py). Guests never trigger
+    # this (see ws/room.py) — no agent access for them.
+    ai_assistant_service_url: str
 
 
 def load_settings() -> Settings:

@@ -23,7 +23,7 @@ def _sender_role_to_map(sender_type: str) -> str:
     return "assistant" if sender_type == "assistant" else "user"
 
 
-def _is_registered_customer(sender_id: str) -> bool:
+def is_registered_customer(sender_id: str) -> bool:
     # Guest sessions use auth-backend's guest_id (not a UUID); registered
     # customers use their Keycloak sub (a UUID) — see Room.customer_id vs
     # Room.session_id in services/chat/src/chat/models.py.
@@ -75,7 +75,7 @@ async def build_messages(
     ]
 
     context_sections = []
-    if _is_registered_customer(sender_id):
+    if is_registered_customer(sender_id):
         orders = await orders_client.get_recent_orders(sender_id, order_history_limit)
         context_sections.append(_format_order_history(orders))
 

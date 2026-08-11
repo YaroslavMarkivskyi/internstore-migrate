@@ -8,7 +8,7 @@ BASE_URL = "http://telemetry.invalid"
 
 
 def _client() -> TelemetryToolsClient:
-    return TelemetryToolsClient(BASE_URL, timeout_seconds=5.0, internal_token_secret="test-secret")
+    return TelemetryToolsClient(BASE_URL, timeout_seconds=5.0)
 
 
 @respx.mock
@@ -23,7 +23,7 @@ async def test_get_store_temperature_filters_from_store_list():
         )
     )
 
-    result = await _client().get_store_temperature("store-2")
+    result = await _client().get_store_temperature("caller-token", "store-2")
 
     assert result["current_temperature"] == 9.5
     assert result["has_open_violation"] is True
@@ -34,7 +34,7 @@ async def test_get_store_temperature_unknown_store_raises():
     respx.get(f"{BASE_URL}/stores").mock(return_value=httpx.Response(200, json=[]))
 
     with pytest.raises(StoreNotFoundError):
-        await _client().get_store_temperature("missing-store")
+        await _client().get_store_temperature("caller-token", "missing-store")
 
 
 @respx.mock
@@ -52,7 +52,7 @@ async def test_get_active_incidents_only_fans_out_to_violating_stores():
         return_value=httpx.Response(200, json=[{"id": "incident-1", "temperature_at_outbreak": 9.5}])
     )
 
-    result = await _client().get_active_incidents()
+    result = await _client().get_active_incidents("caller-token")
 
     assert incidents_route.called
     assert len(result) == 1

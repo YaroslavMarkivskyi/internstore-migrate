@@ -87,7 +87,7 @@ async def test_mode_human_skips_response():
         chat_client=chat_client,
         orders_client=orders_client,
         settings=_Settings(),
-        payload={"room_id": ROOM_ID, "sender_id": "11111111-1111-1111-1111-111111111111", "content": "hi"},
+        payload={"room_id": ROOM_ID, "sender_id": "guest-session-1", "content": "hi"},
     )
 
     openai_client.chat.completions.create.assert_not_awaited()
@@ -109,7 +109,7 @@ async def test_rate_limit_hit_sends_final_message_and_switches_to_human():
         chat_client=chat_client,
         orders_client=orders_client,
         settings=_Settings(),
-        payload={"room_id": ROOM_ID, "sender_id": "11111111-1111-1111-1111-111111111111", "content": "hi"},
+        payload={"room_id": ROOM_ID, "sender_id": "guest-session-1", "content": "hi"},
     )
 
     chat_client.post_message.assert_awaited_once_with(ROOM_ID, RATE_LIMIT_MESSAGE)

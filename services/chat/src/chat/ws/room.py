@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -174,6 +175,23 @@ async def room_websocket(
                         {"room_id": room_id, "sender_id": claims.sub, "content": content},
                     )
                 await session.commit()
+
+            # STR-146: registered customers only — guests get no shopping-
+            # agent access (see AIAssistantClient's docstring and
+            # ai-assistant's own independent role check). Fired as a
+            # background task, not awaited, so a slow/unavailable AI
+            # Assistant never delays this customer's own message send; the
+            # CustomerMessageSent outbox event above still fires for every
+            # customer/guest either way, but ai-assistant's Kafka consumer
+            # now ignores registered customers (see chat_events.py) since
+            # they're handled here instead, with a real token to forward.
+            if claims.role == "customer" and content:
+                raw_token = websocket.headers.get("x-internal-token", "")
+                asyncio.create_task(
+                    app.state.ai_assistant_client.notify_shopping_agent(
+                        room_id=room_id, sender_id=claims.sub, message=content, token=raw_token
+                    )
+                )
 
             await pubsub.publish(
                 room_id,

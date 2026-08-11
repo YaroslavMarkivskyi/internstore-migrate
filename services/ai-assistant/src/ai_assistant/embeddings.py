@@ -41,12 +41,16 @@ async def upsert_product_embedding(
                 product_id=product_id,
                 name=payload["name"],
                 description=payload.get("description"),
+                price=payload.get("price"),
+                category_name=payload.get("category_name"),
                 embedding=vector,
             )
         )
     else:
         existing.name = payload["name"]
         existing.description = payload.get("description")
+        existing.price = payload.get("price")
+        existing.category_name = payload.get("category_name")
         existing.embedding = vector
 
 

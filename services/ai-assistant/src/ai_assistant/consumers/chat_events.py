@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from ai_assistant.agent import RATE_LIMIT_MESSAGE, check_and_increment_rate_limit, generate_reply, get_mode
 from ai_assistant.chat_client import ChatClient
 from ai_assistant.config import Settings
-from ai_assistant.context import build_messages
+from ai_assistant.context import build_messages, is_registered_customer
 from ai_assistant.orders_client import OrdersClient
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,18 @@ async def handle_customer_message_sent(
     sender_id = payload["sender_id"]
     content = payload.get("content")
     if not content:
+        return
+
+    # STR-146: registered customers are handled synchronously instead, via
+    # Chat calling POST /agent/shopping directly with the customer's own
+    # internal-token (see main.py) — that's the only path that can
+    # propagate a real per-customer identity into a cart-mutating tool
+    # call. This Kafka-driven consumer has no inbound token to forward (see
+    # ai_assistant/auth.py's own docstring) and keeps handling guests only,
+    # with the original non-agentic, tool-less reply — guests get no
+    # shopping-agent access per the ticket, and this path never touches
+    # cart tools regardless.
+    if is_registered_customer(sender_id):
         return
 
     mode = await get_mode(redis, room_id, settings.ai_mode_default)

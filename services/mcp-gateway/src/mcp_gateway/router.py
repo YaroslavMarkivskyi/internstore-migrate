@@ -39,6 +39,16 @@ def build_tool_registry(clients: GatewayClients) -> dict[str, ToolFunc]:
         "get_order_status": clients.orders.get_order_status,
         "list_customer_orders": clients.orders.list_customer_orders,
         "get_pending_orders": clients.orders.get_pending_orders,
+        # STR-146: cart write-tools. Deliberately not present here:
+        # checkout/charge_payment/finalize-order or anything like them —
+        # this dict *is* the enforced boundary the ticket calls for. An
+        # agent asking for "checkout" gets ToolNotFoundError (see
+        # call_tool below) no matter what the caller's prompt says, because
+        # there is simply no registry entry to route to — not because an
+        # LLM was told not to.
+        "get_cart": clients.orders.get_cart,
+        "add_to_cart": clients.orders.add_to_cart,
+        "remove_from_cart": clients.orders.remove_from_cart,
         "check_availability": clients.inventory.check_availability,
         "get_stock_levels": clients.inventory.get_stock_levels,
         "get_unavailable_items": clients.inventory.get_unavailable_items,
@@ -55,7 +65,7 @@ def build_tool_registry(clients: GatewayClients) -> dict[str, ToolFunc]:
     }
 
 
-async def call_tool(registry: dict[str, ToolFunc], name: str, arguments: dict[str, Any]) -> Any:
+async def call_tool(registry: dict[str, ToolFunc], name: str, arguments: dict[str, Any], token: str) -> Any:
     if name not in registry:
         raise ToolNotFoundError(name)
-    return await registry[name](**arguments)
+    return await registry[name](token=token, **arguments)

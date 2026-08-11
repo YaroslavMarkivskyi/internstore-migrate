@@ -56,6 +56,31 @@ async def test_upsert_creates_new_row_when_none_exists():
     assert added.embedding == FAKE_VECTOR
 
 
+async def test_upsert_stores_price_and_category_for_search_filters():
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=None)
+    session.add = MagicMock()
+    client = _fake_openai_client()
+    product_id = uuid.uuid4()
+
+    await upsert_product_embedding(
+        session,
+        client,
+        "text-embedding-3-small",
+        {
+            "product_id": str(product_id),
+            "name": "Gouda",
+            "description": "Aged cheese",
+            "price": 12.5,
+            "category_name": "Dairy",
+        },
+    )
+
+    added = session.add.call_args.args[0]
+    assert added.price == 12.5
+    assert added.category_name == "Dairy"
+
+
 async def test_upsert_updates_existing_row_in_place():
     session = AsyncMock()
     existing = ProductEmbedding(

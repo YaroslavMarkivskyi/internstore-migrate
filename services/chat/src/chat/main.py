@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from chat.ai_assistant_client import AIAssistantClient
 from chat.config import Settings, load_settings
 from chat.db import make_session_factory
 from chat.kafka import KafkaEventProducer
@@ -60,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # identity, just a way to tell instances apart.
     app.state.instance_id = str(uuid.uuid4())
     app.state.admin_local_refcounts = {}
+    app.state.ai_assistant_client = AIAssistantClient(settings.ai_assistant_service_url, 10.0)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

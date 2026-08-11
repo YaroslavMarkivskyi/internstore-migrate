@@ -149,6 +149,11 @@ async def update_product(
                 "product_id": str(product.id),
                 "name": product.name,
                 "description": product.description,
+                # STR-146: price wasn't previously part of this payload —
+                # added so the shopping agent's search_products filters
+                # (price_min/price_max) have something to filter on (see
+                # ai-assistant's product_embeddings table).
+                "price": float(product.price),
                 "min_temperature": float(product.min_temperature) if product.min_temperature is not None else None,
                 "max_temperature": float(product.max_temperature) if product.max_temperature is not None else None,
                 "category_name": category.name,

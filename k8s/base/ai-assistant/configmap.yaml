@@ -13,3 +13,6 @@ data:
   AI_MODE_DEFAULT: "ai"
   AI_RATE_LIMIT: "10"
   MCP_GATEWAY_URL: "http://mcp-gateway:8000"
+  # STR-146: refreshes the customer's forwarded internal-token mid-ReAct-loop
+  # via auth-backend's POST /auth/refresh when it's close to its 60s TTL.
+  AUTH_BACKEND_URL: "http://auth-backend:3000"

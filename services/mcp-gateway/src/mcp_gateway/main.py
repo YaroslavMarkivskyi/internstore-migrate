@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from mcp_gateway.auth import InternalClaims, get_internal_claims
+from mcp_gateway.auth import InternalClaims, get_internal_claims, get_raw_internal_token
 from mcp_gateway.config import Settings, load_settings
 from mcp_gateway.db import make_session_factory
 from mcp_gateway.router import GatewayClients, ToolNotFoundError, build_tool_registry, call_tool
@@ -30,18 +30,17 @@ class ToolCallRequest(BaseModel):
 
 def build_clients(settings: Settings) -> GatewayClients:
     timeout = settings.http_timeout_seconds
-    secret = settings.internal_token_secret
     session_factory = make_session_factory(settings.ai_db_url)
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
     return GatewayClients(
-        orders=OrdersToolsClient(settings.orders_service_url, timeout, secret),
-        inventory=InventoryToolsClient(settings.inventory_service_url, timeout, secret),
-        catalog=CatalogToolsClient(settings.catalog_service_url, timeout, secret),
+        orders=OrdersToolsClient(settings.orders_service_url, timeout),
+        inventory=InventoryToolsClient(settings.inventory_service_url, timeout),
+        catalog=CatalogToolsClient(settings.catalog_service_url, timeout),
         product_search=ProductSearchClient(session_factory, openai_client, settings.embedding_model),
-        telemetry=TelemetryToolsClient(settings.telemetry_service_url, timeout, secret),
-        security=SecurityToolsClient(settings.security_service_url, timeout, secret),
-        chat=ChatToolsClient(settings.chat_service_url, timeout, secret),
+        telemetry=TelemetryToolsClient(settings.telemetry_service_url, timeout),
+        security=SecurityToolsClient(settings.security_service_url, timeout),
+        chat=ChatToolsClient(settings.chat_service_url, timeout),
     )
 
 
@@ -73,13 +72,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def list_tools(claims: Annotated[InternalClaims, Depends(get_internal_claims)]) -> dict[str, Any]:
         return {"tools": TOOL_SPECS}
 
+    # STR-146: `claims` still proves the caller presented a validly-signed,
+    # unexpired internal token (get_internal_claims) — but the *value*
+    # forwarded downstream is the raw token itself (get_raw_internal_token),
+    # not a claims-derived re-mint. Every tool call now runs as whoever
+    # actually called this endpoint (customer, guest, admin, or the
+    # Assistant's own token), not as the Gateway's old fixed admin identity —
+    # that's what makes Orders' ownership check on add_to_cart/get_cart mean
+    # anything.
     @app.post("/mcp/tools/call")
     async def call_tool_endpoint(
         payload: ToolCallRequest,
         claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+        token: Annotated[str, Depends(get_raw_internal_token)],
     ) -> dict[str, Any]:
+        del claims  # validated by the Depends above; only the raw token is forwarded
         try:
-            result = await call_tool(app.state.tool_registry, payload.name, payload.arguments)
+            result = await call_tool(app.state.tool_registry, payload.name, payload.arguments, token)
         except ToolNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except TypeError as exc:

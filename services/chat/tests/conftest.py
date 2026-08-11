@@ -61,6 +61,7 @@ async def app_and_client(fake_minio_client: FakeMinioClient, tmp_path):
         minio_public_base_url="http://minio.invalid:9000",
         minio_access_key="test",
         minio_secret_key="test",
+        ai_assistant_service_url="http://ai-assistant.invalid",
     )
     session_factory = make_session_factory(settings.database_url)
 
@@ -95,6 +96,14 @@ async def app_and_client(fake_minio_client: FakeMinioClient, tmp_path):
 
     app.state.pubsub = PubSubRouter(app.state.redis, app.state.ws_manager)
     app.state.minio_client = fake_minio_client
+    # STR-146: real AIAssistantClient does a live httpx call to
+    # ai_assistant_service_url — swapped for a mock so WS tests that send a
+    # customer message don't attempt real network I/O (or block on a DNS
+    # timeout against the deliberately-invalid host above) via the
+    # fire-and-forget asyncio.create_task in ws/room.py.
+    from unittest.mock import AsyncMock
+
+    app.state.ai_assistant_client = AsyncMock()
 
     from chat.minio_dep import get_minio_client
 
