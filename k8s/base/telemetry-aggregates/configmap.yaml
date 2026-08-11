@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telemetry-aggregates-config
+  labels:
+    app: telemetry-aggregates
+data:
+  PORT: "8000"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  BACKFILL_INTERVAL_MINUTES: "15"

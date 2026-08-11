@@ -1,0 +1,65 @@
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from telemetry_aggregates.backfill import run_backfill_loop
+from telemetry_aggregates.config import Settings, load_settings
+from telemetry_aggregates.consumers.telemetry_events import (
+    GROUP_ID as TELEMETRY_EVENTS_GROUP_ID,
+    TOPIC as TELEMETRY_EVENTS_TOPIC,
+    make_dispatch as make_telemetry_events_dispatch,
+)
+from telemetry_aggregates.db import make_session_factory
+from telemetry_aggregates.kafka import run_consumer_loop
+from telemetry_aggregates.routers import aggregates
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    settings: Settings = app.state.settings
+
+    consumer_task = asyncio.create_task(
+        run_consumer_loop(
+            settings.kafka_bootstrap_servers,
+            TELEMETRY_EVENTS_TOPIC,
+            TELEMETRY_EVENTS_GROUP_ID,
+            make_telemetry_events_dispatch(app.state.session_factory),
+        )
+    )
+    backfill_task = asyncio.create_task(
+        run_backfill_loop(
+            app.state.session_factory,
+            app.state.telemetry_session_factory,
+            settings.backfill_interval_minutes,
+        )
+    )
+
+    tasks = (consumer_task, backfill_task)
+    try:
+        yield
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or load_settings()
+
+    app = FastAPI(title="telemetry-aggregates", lifespan=lifespan)
+    app.state.settings = settings
+    app.state.session_factory = make_session_factory(settings.database_url)
+    # Read-only in practice (see README) — scoped to a read-only DB role at
+    # the Postgres level where the deployment target supports it; SQLite in
+    # tests has no such concept, so this stays a plain session factory.
+    app.state.telemetry_session_factory = make_session_factory(settings.telemetry_db_url)
+
+    @app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.include_router(aggregates.router)
+
+    return app

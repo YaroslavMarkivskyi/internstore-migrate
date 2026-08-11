@@ -11,6 +11,7 @@ resources:
 - postgres-inventory
 - postgres-orders
 - postgres-telemetry
+- postgres-telemetry-aggregates
 - postgres-security
 - postgres-chat
 - postgres-ai
@@ -33,6 +34,7 @@ resources:
 - orders
 - payments
 - telemetry
+- telemetry-aggregates
 - security
 - chat
 - notifications

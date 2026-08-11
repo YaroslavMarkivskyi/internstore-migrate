@@ -553,6 +553,54 @@ services:
     # Dev-only synthetic data source — not a real DHT22 sensor. See
     # docs/EVENT_BROKER.md's accepted-gaps section.
 
+  # STR-147: CQRS read model for Telemetry — hourly aggregates, own
+  # Postgres instance, no shared tables with telemetry-db. See
+  # services/telemetry-aggregates/README.md.
+  telemetry-aggregates-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: telemetry-aggregates
+      POSTGRES_USER: telemetry-aggregates
+      POSTGRES_PASSWORD: telemetry-aggregates
+    volumes:
+      - telemetry_aggregates_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry-aggregates"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  telemetry-aggregates:
+    build: ./services/telemetry-aggregates
+    environment:
+      PORT: "8000"
+      DATABASE_URL: postgresql+asyncpg://telemetry-aggregates:telemetry-aggregates@telemetry-aggregates-db:5432/telemetry-aggregates
+      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as telemetry.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
+      # Read-only in intent — see README's "Backfill job" section. Points
+      # at telemetry-db's own instance; this service never writes there.
+      TELEMETRY_DB_URL: postgresql+asyncpg://telemetry:telemetry@telemetry-db:5432/telemetry
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Short dev/test value so scripts/test-telemetry-aggregates.sh doesn't
+      # have to wait a real 15 minutes for a backfill cycle — same pattern
+      # as telemetry's VIOLATION_CHECK_INTERVAL_SECONDS override.
+      # Settings.py's own default (15) is the realistic value anywhere
+      # else this service runs.
+      BACKFILL_INTERVAL_MINUTES: "0.2"
+    volumes:
+      - ./services/telemetry-aggregates/src:/app/src
+      - ./services/telemetry-aggregates/migrations:/app/migrations
+      - ./services/telemetry-aggregates/alembic.ini:/app/alembic.ini
+    depends_on:
+      telemetry-aggregates-db:
+        condition: service_healthy
+      telemetry-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    # Not exposed on the host — only reachable through nginx, same as
+    # telemetry.
+
   security-db:
     image: postgres:16-alpine
     environment:
@@ -914,6 +962,7 @@ services:
       - inventory
       - orders
       - telemetry
+      - telemetry-aggregates
       - security
       - chat
 
@@ -971,6 +1020,7 @@ volumes:
   inventory_db_data:
   orders_db_data:
   telemetry_db_data:
+  telemetry_aggregates_db_data:
   security_db_data:
   chat_db_data:
   ai_db_data:

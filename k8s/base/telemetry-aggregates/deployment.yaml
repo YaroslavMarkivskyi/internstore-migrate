@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-aggregates
+  labels:
+    app: telemetry-aggregates
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telemetry-aggregates
+  template:
+    metadata:
+      labels:
+        app: telemetry-aggregates
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: telemetry-aggregates
+        image: internstore/telemetry-aggregates:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+          - configMapRef:
+              name: telemetry-aggregates-config
+          - secretRef:
+              name: telemetry-aggregates-secret
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"

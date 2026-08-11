@@ -1,0 +1,67 @@
+# STR-147: telemetry-aggregates' own Postgres instance — physical
+# separation from postgres-telemetry, not a shared schema. See
+# services/telemetry-aggregates/README.md.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-telemetry-aggregates
+  labels:
+    app: postgres-telemetry-aggregates
+spec:
+  serviceName: postgres-telemetry-aggregates
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-telemetry-aggregates
+  template:
+    metadata:
+      labels:
+        app: postgres-telemetry-aggregates
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+        envFrom:
+        - secretRef:
+            name: postgres-telemetry-aggregates-secret
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          subPath: postgres
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "telemetry-aggregates"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "telemetry-aggregates"]
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: postgres-telemetry-aggregates-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-telemetry-aggregates-data
+  labels:
+    app: postgres-telemetry-aggregates
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

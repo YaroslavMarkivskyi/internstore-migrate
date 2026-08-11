@@ -22,7 +22,7 @@ topics per event type.
 |---|---|---|
 | `order-events` | `OrderCreated`, `PaymentConfirmed`, `OrderRejected`, `OrderCancelled` | Orders service |
 | `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired` | Inventory service |
-| `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized` | Telemetry service |
+| `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized`, `TemperatureRecorded` | Telemetry service |
 | `catalog-events` | `ProductThresholdUpdated`, `ProductUpdated` | Catalog service |
 | `chat-events` | `UnreadMessageReceived`, `CustomerMessageSent`, `AdminRequested`, `AIModeEnabled` | Chat service |
 | `ops-events` | `EscalationRequired` | checkout-workflow (STR-139) |
@@ -63,6 +63,20 @@ itself — replies are injected back into Chat via a synchronous internal
 call (`POST /rooms/{id}/messages`), not published to Kafka, so there's no
 `ai-assistant-events` topic. See
 [services/ai-assistant/README.md](../services/ai-assistant/README.md).
+
+`telemetry-aggregates` (STR-147) consumes `telemetry-events`' new
+`TemperatureRecorded` — staged by Telemetry's `POST /measurements` handler
+via its existing outbox (same instance/topic, no new topic) — to maintain
+a CQRS read model of hourly temperature aggregates on its own Postgres
+instance (`telemetry-aggregates-db`), independent of telemetry-db. This is
+a hybrid update path: the Kafka consumer applies a running-average
+incremental update per event, and a periodic backfill job
+(`BACKFILL_INTERVAL_MINUTES`, default 15) recomputes and overwrites the
+current + previous hour directly from telemetry-db's raw readings as the
+correctness backstop. See
+[services/telemetry-aggregates/README.md](../services/telemetry-aggregates/README.md)
+for the full idempotency guarantee and why violation detection
+deliberately does **not** read from this service.
 
 ## MCP Gateway (not a Kafka participant)
 

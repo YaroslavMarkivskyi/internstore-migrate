@@ -21,6 +21,7 @@ declare -A IMAGES=(
   [payments]="services/payments"
   [checkout-workflow-worker]="services/checkout-workflow"
   [telemetry]="services/telemetry"
+  [telemetry-aggregates]="services/telemetry-aggregates"
   [mock-camera]="services/security/mock-camera"
   [security]="services/security"
   [notifications]="services/notifications"

@@ -62,7 +62,21 @@ synthetic data rather than reading a real DHT22 sensor.
     new) and a `store_product_thresholds` row for that
     `{store_id, product_id}` pair (`max_temp` stays whatever's cached,
     `null` if this is a new pair).
-- Producer (outbox): `TemperatureThresholdViolated` on `telemetry-events`.
+- Producer (outbox):
+  - `TemperatureThresholdViolated` on `telemetry-events`.
+  - `TemperatureRecorded` on `telemetry-events` (STR-147) — staged after
+    every `POST /measurements` insert, one event per `{store_id,
+    product_id}` pair the store currently tracks (`POST /measurements`
+    itself only carries `{store_id, temperature, humidity}`; product
+    association is looked up from `store_product_thresholds`, same as
+    `violations.py`'s own per-`{store, product}` loop). A store with no
+    tracked products yet stages nothing. Payload:
+    `{store_id, product_id, temperature, humidity, recorded_at}`. Consumed
+    by `services/telemetry-aggregates` to maintain hourly aggregates for
+    chart/reporting queries — see
+    [services/telemetry-aggregates/README.md](../telemetry-aggregates/README.md).
+    This service's own tables and endpoints are unchanged by that
+    consumer.
 
 Both consumers dedup via a `processed_events` ledger, same pattern as
 Inventory/Orders.
