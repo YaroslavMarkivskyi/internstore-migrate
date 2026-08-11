@@ -7,7 +7,10 @@
 # have a single k8s/ home, and so the two real bugs found while actually
 # running it (below) don't have to be re-discovered by whoever reaches
 # for it next. The compose original remains the source of truth for
-# local docker-compose dev; this file is not meant to replace it.
+# local docker-compose dev; this file is not meant to replace it. If you
+# fix a bug here, check whether the same bug exists in the compose
+# original too -- see STR-151, which found fixes made in one copy that
+# were never ported to the other.
 #
 # End-to-end verification of the reservation saga (Orders outbox + Inventory
 # idempotent consumer) through the real gateway, real Keycloak-issued

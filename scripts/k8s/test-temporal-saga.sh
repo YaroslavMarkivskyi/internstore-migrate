@@ -4,7 +4,9 @@
 # calls (for querying workflow history) become `kubectl run` one-shot
 # pods addressing temporal:7233 via in-cluster DNS. The compose original
 # remains the source of truth for local docker-compose dev; this file is
-# not meant to replace it.
+# not meant to replace it. If you fix a bug here, check whether the same
+# bug exists in the compose original too -- see STR-151, which found
+# fixes made in one copy that were never ported to the other.
 #
 # End-to-end verification of the Temporal-orchestrated checkout
 # (STR-139) through the real gateway, real Keycloak-issued tokens, a real

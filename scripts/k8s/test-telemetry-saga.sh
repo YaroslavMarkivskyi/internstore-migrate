@@ -31,7 +31,10 @@
 # kill the port-forward). Not left running as part of the normal stack.
 #
 # The compose original remains the source of truth for local
-# docker-compose dev; this file is not meant to replace it.
+# docker-compose dev; this file is not meant to replace it. If you fix a
+# bug here, check whether the same bug exists in the compose original too
+# -- see STR-151, which found fixes made in one copy that were never
+# ported to the other.
 #
 # End-to-end verification of the telemetry saga (Telemetry violation
 # detection + outbox -> Inventory idempotent consumer -> Notifications

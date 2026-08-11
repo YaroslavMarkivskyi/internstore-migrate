@@ -5,7 +5,9 @@
 # against nginx's NodePort. Copied here anyway so all in-scope saga
 # scripts have a single k8s/ home. The compose original remains the
 # source of truth for local docker-compose dev; this file is not meant to
-# replace it.
+# replace it. If you fix a bug here, check whether the same bug exists in
+# the compose original too -- see STR-151, which found fixes made in one
+# copy that were never ported to the other.
 #
 # End-to-end verification of the Security service (STR-127) through the
 # real gateway and real Keycloak-issued tokens — not the in-process JWTs

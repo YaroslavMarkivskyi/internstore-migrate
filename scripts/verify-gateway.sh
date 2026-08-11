@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# K8s counterpart: scripts/k8s/verify-gateway.sh (STR-145). If you fix a
+# bug in this script, check whether the same bug exists there too -- see
+# STR-151, which found fixes made in one copy that were never ported to
+# the other.
+#
 # End-to-end verification of the nginx + auth-backend Gateway, beyond just
 # "a request with a valid token returns 200". Covers:
 #
@@ -9,8 +14,9 @@
 #   3. Internal-token isolation: Catalog only trusts a verified internal
 #      token (separate HMAC secret from the external JWT, short TTL enforced
 #      downstream), never the raw external JWT or unverified headers
-#   4. JWKS caching: auth-backend keeps validating already-cached keys with
-#      Keycloak stopped (no synchronous per-request call to Keycloak)
+#   4. Keycloak-unreachable behavior: auth-backend's AUTH-05 revocation
+#      check fails closed (401) on a not-yet-introspected token when
+#      Keycloak is stopped, rather than silently trusting it
 #   5. WebSocket proxy: nginx still gates /ws/ with auth_request for an
 #      unauthenticated handshake attempt (full authenticated WS round-trip
 #      is covered by test-chat-saga.sh, which owns a real chat room)
@@ -50,7 +56,12 @@ KC_ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
 
 # A random-suffixed category name so repeat runs against a persistent dev DB
 # don't collide with a previous run's leftover row.
-PROBE_CATEGORY="gw-probe-$RANDOM"
+#
+# STR-151: shortened from "gw-probe-$RANDOM" (already 13-14 chars) -- the
+# "-guest" suffix used below pushes it past Catalog's `name` schema limit
+# (max_length=15), so that assertion 422s instead of 403ing. Found already
+# fixed in scripts/k8s/verify-gateway.sh (STR-145); ported back here.
+PROBE_CATEGORY="gw-$RANDOM"
 
 STATUS=$($CURL -o /dev/null -w "%{http_code}" -X POST "$GATEWAY_URL/api/catalog/categories" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -142,13 +153,25 @@ STATUS=$(DIRECT http://catalog:8000/categories -H "X-Internal-Token: $INTERNAL")
 [ "$STATUS" = "401" ] || fail "expired internal token still accepted by Catalog (got $STATUS)"
 pass "internal token TTL (~60s) is enforced downstream, independent of the external token's lifetime"
 
-echo "=== 4. JWKS caching survives Keycloak being unreachable ==="
+echo "=== 4. Keycloak-unreachable behavior ==="
+# STR-151: this used to assert 200 ("JWKS cached in-process, no synchronous
+# per-request call to Keycloak"), but auth-backend's RevocationChecker
+# (AUTH-05, auth/revocation.py) does its own live token introspection call
+# to Keycloak per *token* (30s TTL cache, keyed by token hash) independent
+# of JWKS caching, and deliberately fails closed (treats the token as
+# revoked -> 401) when Keycloak is unreachable and that token's
+# introspection isn't already cached -- "an unreachable or erroring
+# Keycloak must not silently fall back to trusting the token" per that
+# file's own comment. A fresh token minted right before Keycloak goes down
+# was never introspected, so it 401s, correctly, by design. AUTH-05 was
+# apparently added after this assertion was written. Found already fixed
+# in scripts/k8s/verify-gateway.sh (STR-145); ported back here.
 TOKEN=$(login "customer@example.com" "Customer123")
 docker compose stop keycloak >/dev/null
 STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categories" -H "Authorization: Bearer $TOKEN")
 docker compose start keycloak >/dev/null
-[ "$STATUS" = "200" ] || fail "verification failed with Keycloak stopped (got $STATUS) -- JWKS should be cached in-process"
-pass "auth-backend validates already-cached JWKS keys with Keycloak stopped (no synchronous per-request call)"
+[ "$STATUS" = "401" ] || fail "verification with Keycloak stopped got $STATUS, expected 401 (AUTH-05 fail-closed revocation check on an uncached token)"
+pass "auth-backend fails closed (401) on a not-yet-introspected token with Keycloak unreachable (AUTH-05) -- correct secure-by-default behavior, not a JWKS-caching gap"
 
 echo "waiting for keycloak to report healthy again..."
 for _ in $(seq 1 20); do

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# K8s counterpart: scripts/k8s/test-security-saga.sh (STR-145). If you fix
+# a bug in this script, check whether the same bug exists there too -- see
+# STR-151, which found fixes made in one copy that were never ported to
+# the other.
+#
 # End-to-end verification of the Security service (STR-127) through the
 # real gateway and real Keycloak-issued tokens — not the in-process JWTs
 # the pytest suite mints. Security has no Kafka dependency (access control

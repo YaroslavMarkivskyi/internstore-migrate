@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# K8s counterpart: scripts/k8s/test-telemetry-saga.sh (STR-145). If you fix
+# a bug in this script, check whether the same bug exists there too -- see
+# STR-151, which found fixes made in one copy that were never ported to
+# the other.
+#
 # End-to-end verification of the telemetry saga (Telemetry violation
 # detection + outbox -> Inventory idempotent consumer -> Notifications
 # email) through the real gateway, real Keycloak-issued tokens, and a real

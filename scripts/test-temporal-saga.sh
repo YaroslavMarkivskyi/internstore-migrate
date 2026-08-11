@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# K8s counterpart: scripts/k8s/test-temporal-saga.sh (STR-145). If you fix
+# a bug in this script, check whether the same bug exists there too -- see
+# STR-151, which found fixes made in one copy that were never ported to
+# the other.
+#
 # End-to-end verification of the Temporal-orchestrated checkout
 # (STR-139) through the real gateway, real Keycloak-issued tokens, a real
 # Temporal server, and a real Kafka broker (for the escalation/fan-out
@@ -120,15 +125,19 @@ poll_until() {
 # workflow-worker's own tooling works) and sits on the compose network
 # already, so `docker compose exec` into it instead of spinning up a
 # separate throwaway container -- no extra image, no pull, one less moving
-# part. Also needed --detailed: the default `workflow show` table only
-# prints generic event types (ActivityTaskScheduled, ...), never the
-# activity's own name (reserve_stock, charge_payment, ...) that this
-# check actually greps for.
+# part.
+#
+# STR-151: `--detailed`'s table output never contains activity type names
+# at all -- just event kinds (ActivityTaskScheduled, ActivityTaskCompleted,
+# ...) with no indication of *which* activity. This assertion could never
+# have passed as written. Found already fixed in
+# scripts/k8s/test-temporal-saga.sh (STR-145), which uses `--output json`
+# to surface the real `activityType.name` field; ported back here.
 assert_workflow_history_contains() {
   local workflow_id="$1" expected_names="$2"
   local history
   history=$(docker compose exec -T temporal temporal workflow show \
-    --address temporal:7233 --workflow-id "$workflow_id" --detailed 2>&1) \
+    --address temporal:7233 --workflow-id "$workflow_id" --output json 2>&1) \
     || fail "temporal workflow show failed for $workflow_id: $history"
 
   for name in $expected_names; do

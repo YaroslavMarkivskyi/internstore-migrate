@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# K8s counterpart: scripts/k8s/test-chat-saga.sh (STR-145). If you fix a
+# bug in this script, check whether the same bug exists there too -- see
+# STR-151, which found fixes made in one copy that were never ported to
+# the other.
+#
 # End-to-end verification of the Chat service (STR-128) through the real
 # gateway, real Keycloak-issued tokens, real Redis pub/sub, and a real
 # Postgres-backed outbox -> Kafka -> Notifications -> Mailpit hop — not
