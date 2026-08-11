@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from ai_assistant.agent import RATE_LIMIT_MESSAGE, check_and_increment_rate_limit, generate_reply, get_mode
 from ai_assistant.chat_client import ChatClient
 from ai_assistant.config import Settings
-from ai_assistant.context import build_messages, is_registered_customer
+from ai_assistant.context import build_messages
 from ai_assistant.orders_client import OrdersClient
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,13 @@ async def handle_customer_message_sent(
 ) -> None:
     room_id = payload["room_id"]
     sender_id = payload["sender_id"]
+    # STR-148: this used to be guessed from sender_id's shape
+    # (is_registered_customer) — broken, since guest session ids are
+    # uuid4() same as a real customer's Keycloak sub, so it misclassified
+    # every guest as a customer and silently starved guests of any reply
+    # at all (see chat/ws/room.py's staging of this field for the fuller
+    # story). sender_role now comes straight from the event payload.
+    sender_role = payload.get("sender_role")
     content = payload.get("content")
     if not content:
         return
@@ -44,7 +51,7 @@ async def handle_customer_message_sent(
     # with the original non-agentic, tool-less reply — guests get no
     # shopping-agent access per the ticket, and this path never touches
     # cart tools regardless.
-    if is_registered_customer(sender_id):
+    if sender_role == "customer":
         return
 
     mode = await get_mode(redis, room_id, settings.ai_mode_default)
@@ -68,6 +75,7 @@ async def handle_customer_message_sent(
             orders_client=orders_client,
             room_id=room_id,
             sender_id=sender_id,
+            sender_role=sender_role or "guest",
             customer_message=content,
             conversation_history_limit=settings.conversation_history_limit,
             order_history_limit=settings.order_history_limit,

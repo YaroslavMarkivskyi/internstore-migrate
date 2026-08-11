@@ -9,6 +9,7 @@ import httpx
 import respx
 
 ORDERS_URL = "http://orders.invalid"
+PRODUCT_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _mint(sub: str, role: str = "customer") -> str:
@@ -21,12 +22,12 @@ def _mint(sub: str, role: str = "customer") -> str:
 async def test_add_to_cart_forwards_the_calling_customers_token(client):
     caller_token = _mint("customer-alice")
     route = respx.post(f"{ORDERS_URL}/cart").mock(
-        return_value=httpx.Response(201, json={"items": [{"product_id": "prod-1", "quantity": 2}]})
+        return_value=httpx.Response(201, json={"items": [{"product_id": PRODUCT_ID, "quantity": 2}]})
     )
 
     resp = await client.post(
         "/mcp/tools/call",
-        json={"name": "add_to_cart", "arguments": {"product_id": "prod-1", "quantity": 2}},
+        json={"name": "add_to_cart", "arguments": {"product_id": PRODUCT_ID, "quantity": 2}},
         headers={"X-Internal-Token": caller_token},
     )
 
@@ -66,6 +67,22 @@ async def test_add_to_cart_has_no_customer_id_argument_to_hallucinate(client, ad
     )
 
     assert resp.status_code == 422
+
+
+async def test_add_to_cart_with_non_uuid_product_id_returns_actionable_422(client, admin_token):
+    # STR-148: found live — the shopping agent's LLM occasionally sends a
+    # product's name/description instead of its product_id. This must
+    # surface as a 422 with a message that actually explains the mistake
+    # (see tools/orders.py's _require_uuid), not a bare 500 from Orders'
+    # own validation error reaching an unhandled exception here.
+    resp = await client.post(
+        "/mcp/tools/call",
+        json={"name": "add_to_cart", "arguments": {"product_id": "Aged Dutch Gouda", "quantity": 1}},
+        headers={"X-Internal-Token": admin_token},
+    )
+
+    assert resp.status_code == 422
+    assert "must be a UUID" in resp.json()["detail"]
 
 
 async def test_get_cart_has_no_customer_id_argument(client, admin_token):

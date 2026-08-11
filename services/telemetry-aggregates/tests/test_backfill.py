@@ -8,10 +8,14 @@ from telemetry_aggregates.telemetry_read_models import store_product_thresholds,
 HOUR = datetime(2026, 8, 11, 14, 0, tzinfo=timezone.utc)
 
 
-async def _seed_telemetry_db(telemetry_session_factory, store_id, product_id, temperatures, hour=HOUR):
+async def _seed_telemetry_db(
+    telemetry_session_factory, store_id, product_id, temperatures, hour=HOUR, tracked_since=None
+):
     async with telemetry_session_factory() as session:
         await session.execute(
-            store_product_thresholds.insert().values(store_id=store_id, product_id=product_id)
+            store_product_thresholds.insert().values(
+                store_id=store_id, product_id=product_id, tracked_since=tracked_since or hour - timedelta(days=1)
+            )
         )
         for i, temp in enumerate(temperatures):
             await session.execute(
@@ -89,6 +93,51 @@ async def test_backfill_covers_current_and_previous_hour(session_factory, teleme
 
     assert float(previous_row.avg_temperature) == 5.0
     assert float(current_row.avg_temperature) == 10.0
+
+
+async def test_backfill_does_not_attribute_readings_recorded_before_product_was_tracked(
+    session_factory, telemetry_session_factory
+):
+    """STR-148 live-verification regression: a product added to a store
+    mid-hour must not retroactively pick up readings recorded earlier in
+    that same hour, before the {store, product} pairing existed — the
+    incremental consumer never sent an event for those older readings
+    (telemetry only fans TemperatureRecorded out to *currently* tracked
+    products at POST /measurements time), so backfill must match that,
+    not silently include them via a timeless snapshot of
+    store_product_thresholds."""
+    store_id, existing_product, new_product = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    # existing_product has been tracked since well before the hour starts.
+    await _seed_telemetry_db(
+        telemetry_session_factory, store_id, existing_product, [4.0, 6.0], tracked_since=HOUR - timedelta(days=1)
+    )
+    # new_product is only added 20 minutes into the hour.
+    async with telemetry_session_factory() as session:
+        await session.execute(
+            store_product_thresholds.insert().values(
+                store_id=store_id, product_id=new_product, tracked_since=HOUR + timedelta(minutes=20)
+            )
+        )
+        # One more reading after new_product started being tracked.
+        await session.execute(
+            temperature_readings.insert().values(store_id=store_id, temperature=8.0, recorded_at=HOUR + timedelta(minutes=25))
+        )
+        await session.commit()
+
+    await run_backfill_once(session_factory, telemetry_session_factory, now=HOUR + timedelta(minutes=50))
+
+    async with session_factory() as session:
+        existing_row = await session.get(HourlyAggregate, (store_id, existing_product, HOUR))
+        new_row = await session.get(HourlyAggregate, (store_id, new_product, HOUR))
+
+    # existing_product correctly sees all 3 readings in the hour.
+    assert existing_row.reading_count == 3
+    assert float(existing_row.avg_temperature) == (4.0 + 6.0 + 8.0) / 3
+    # new_product only sees the one reading recorded after it was tracked —
+    # not the two that predate its association with the store.
+    assert new_row.reading_count == 1
+    assert float(new_row.avg_temperature) == 8.0
 
 
 async def test_backfill_is_idempotent_across_repeated_runs(session_factory, telemetry_session_factory):

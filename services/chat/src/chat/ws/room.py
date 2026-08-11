@@ -172,7 +172,17 @@ async def room_websocket(
                     add_outbox_event(
                         session,
                         "CustomerMessageSent",
-                        {"room_id": room_id, "sender_id": claims.sub, "content": content},
+                        # STR-148: sender_role explicitly included — found
+                        # live that ai-assistant's consumer was trying to
+                        # infer "is this a registered customer" from
+                        # whether sender_id merely *looks like* a UUID,
+                        # which silently broke the moment guest session
+                        # ids (also plain uuid4() — see auth-backend's
+                        # GuestSessionStore.create) started being handled
+                        # differently from customers (STR-146): every
+                        # guest message was misclassified as a customer's,
+                        # so guests stopped getting any AI reply at all.
+                        {"room_id": room_id, "sender_id": claims.sub, "sender_role": claims.role, "content": content},
                     )
                 await session.commit()
 

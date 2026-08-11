@@ -23,7 +23,7 @@ topics per event type.
 | `order-events` | `OrderCreated`, `PaymentConfirmed`, `OrderRejected`, `OrderCancelled` | Orders service |
 | `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired` | Inventory service |
 | `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized`, `TemperatureRecorded` | Telemetry service |
-| `catalog-events` | `ProductThresholdUpdated`, `ProductUpdated` | Catalog service |
+| `catalog-events` | `ProductThresholdUpdated`, `ProductUpdated`, `ProductDeleted` | Catalog service |
 | `chat-events` | `UnreadMessageReceived`, `CustomerMessageSent`, `AdminRequested`, `AIModeEnabled` | Chat service |
 | `ops-events` | `EscalationRequired` | checkout-workflow (STR-139) |
 

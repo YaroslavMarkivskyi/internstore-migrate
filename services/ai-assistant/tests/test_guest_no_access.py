@@ -35,6 +35,14 @@ async def test_guest_message_over_kafka_never_reaches_the_tool_calling_loop(monk
     # chat-events consumer (unchanged from before STR-146) — this proves
     # that path never imports or calls into the MCP Gateway/ReAct loop at
     # all, regardless of what the guest asks for.
+    #
+    # STR-148: sender_id is deliberately a plain UUID here (matching a real
+    # guest session id — see auth-backend's GuestSessionStore), not a
+    # human-readable "guest-session-1"-style string. The old
+    # is_registered_customer(sender_id) shape-guess this dispatch used to
+    # rely on happened to work on non-UUID-looking ids like that one, which
+    # is exactly why the real bug (guest ids are uuid4() too) went
+    # unnoticed by this test suite until live verification caught it.
     import ai_assistant.consumers.chat_events as chat_events_module
 
     called_generate_reply = AsyncMock(return_value="Here's some general help.")
@@ -78,7 +86,12 @@ async def test_guest_message_over_kafka_never_reaches_the_tool_calling_loop(monk
         chat_client=chat_client,
         orders_client=orders_client,
         settings=_Settings(),
-        payload={"room_id": ROOM_ID, "sender_id": "guest-session-1", "content": "add cheese to my cart"},
+        payload={
+            "room_id": ROOM_ID,
+            "sender_id": "22222222-2222-2222-2222-222222222222",
+            "sender_role": "guest",
+            "content": "add cheese to my cart",
+        },
     )
 
     called_generate_reply.assert_awaited_once()
@@ -107,6 +120,7 @@ async def test_registered_customer_message_over_kafka_is_skipped_entirely():
         payload={
             "room_id": "room_11111111-1111-1111-1111-111111111111",
             "sender_id": "11111111-1111-1111-1111-111111111111",
+            "sender_role": "customer",
             "content": "add cheese to my cart",
         },
     )

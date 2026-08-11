@@ -64,8 +64,14 @@ ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
 
 echo "=== 1. Seed a product + a stock carrying it (ItemAdded -> Telemetry's store_product_thresholds) ==="
 CATEGORY_ID=$($CURL -X POST "$CATALOG_URL/categories" -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" -d '{"name": "Aggregates smoke"}' | jq -r .id)
-[ -n "$CATEGORY_ID" ] && [ "$CATEGORY_ID" != "null" ] || fail "could not create category"
+  -H "Content-Type: application/json" -d '{"name": "Cold Chain"}' | jq -r '.id // empty')
+if [ -z "$CATEGORY_ID" ]; then
+  # Category may already exist from a previous run — reuse it (same
+  # resilience pattern as test-shopping-agent.sh).
+  CATEGORY_ID=$($CURL "$CATALOG_URL/categories" -H "Authorization: Bearer $ADMIN_TOKEN" \
+    | jq -r '.[] | select(.name == "Cold Chain") | .id' | head -n1)
+fi
+[ -n "$CATEGORY_ID" ] && [ "$CATEGORY_ID" != "null" ] || fail "could not create or find a Cold Chain category"
 
 PRODUCT_ID=$($CURL -X POST "$CATALOG_URL/products" -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
@@ -91,7 +97,16 @@ aggregate_json() {
   $CURL "$AGGREGATES_URL/aggregates/$STOCK_ID/$PRODUCT_ID?period=week" -H "Authorization: Bearer $ADMIN_TOKEN"
 }
 
-reading_count() { aggregate_json | jq '[.[].reading_count] | add // 0'; }
+# Tolerates transient non-JSON responses (e.g. nginx 502 in the brief
+# window right after `docker compose start` before the upstream is
+# actually accepting connections) by falling back to "0" instead of
+# letting jq's parse error kill the whole script under `set -o
+# pipefail` — poll_until needs this to be able to retry.
+reading_count() {
+  local body
+  body=$(aggregate_json)
+  echo "$body" | jq '[.[].reading_count] | add // 0' 2>/dev/null || echo "0"
+}
 
 echo "=== 2. Incremental path: send readings, verify GET /aggregates reflects them within seconds ==="
 FIRST_BATCH=(4.0 5.0 6.0)
@@ -110,16 +125,20 @@ for t in "${SECOND_BATCH[@]}"; do send_reading "$t"; done
 pass "sent ${#SECOND_BATCH[@]} more readings while telemetry-aggregates is down (still land in telemetry-db raw table)"
 
 TOTAL_COUNT=$(( ${#FIRST_BATCH[@]} + ${#SECOND_BATCH[@]} ))
-STILL_STALE=$(reading_count)
-[ "$STILL_STALE" = "${#FIRST_BATCH[@]}" ] || fail "expected reading_count to still be stale (${#FIRST_BATCH[@]}) while consumer is down, got $STILL_STALE"
-pass "aggregate correctly stale ($STILL_STALE) while telemetry-aggregates is down"
+# Not checked here: querying GET /aggregates while telemetry-aggregates
+# itself is stopped can't return anything meaningful (nginx 502s, not
+# valid JSON) — the "still stale" property is inherent to the scenario,
+# not something worth asserting via the very endpoint that's down.
 
 echo "=== 4. Restart, wait past a backfill cycle, verify self-correction to the true average ==="
+RESTART_TS=$(date +%s)
 docker compose start telemetry-aggregates >/dev/null
 pass "telemetry-aggregates restarted"
 
 poll_until 60 "reading_count" "$TOTAL_COUNT" \
   "aggregate self-corrected to include all $TOTAL_COUNT readings (incremental catch-up and/or backfill)"
+CONVERGED_TS=$(date +%s)
+echo "INFO: convergence took $((CONVERGED_TS - RESTART_TS))s after restart (BACKFILL_INTERVAL_MINUTES=0.2, i.e. 12s, in docker-compose.yml's dev override)"
 
 ALL_TEMPS=("${FIRST_BATCH[@]}" "${SECOND_BATCH[@]}")
 TRUE_AVG=$(python3 -c "print(sum([${ALL_TEMPS[*]/%/,}]) / $TOTAL_COUNT)")

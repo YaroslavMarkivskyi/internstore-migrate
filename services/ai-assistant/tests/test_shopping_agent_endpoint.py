@@ -30,6 +30,28 @@ async def test_customer_message_runs_the_agent_and_posts_the_reply(client, app, 
     )
 
 
+async def test_customer_message_fetches_and_forwards_room_history(client, app, customer_token):
+    """STR-148 regression: POST /agent/shopping must fetch the room's prior
+    messages and pass them into the ReAct loop — without it, the agent
+    treats every message as the start of a brand new conversation."""
+    app.state.chat_client.get_recent_messages = AsyncMock(
+        return_value=[{"sender_type": "customer", "content": "find me a gouda under $20"}]
+    )
+    app.state.mcp_client.list_tools = AsyncMock(return_value=[])
+    app.state.openai_client.chat.completions.create = AsyncMock(return_value=_response("Added it to your cart."))
+
+    resp = await client.post(
+        "/agent/shopping",
+        json={"room_id": ROOM_ID, "sender_id": "customer-1", "message": "add it to my cart"},
+        headers={"X-Internal-Token": customer_token},
+    )
+
+    assert resp.status_code == 200
+    app.state.chat_client.get_recent_messages.assert_awaited_once_with(ROOM_ID, app.state.settings.conversation_history_limit)
+    sent_messages = app.state.openai_client.chat.completions.create.call_args.kwargs["messages"]
+    assert {"role": "user", "content": "find me a gouda under $20"} in sent_messages
+
+
 async def test_human_mode_room_skips_the_agent_entirely(client, app, customer_token):
     await app.state.redis.set(f"chat:{ROOM_ID}:mode", "human")
 

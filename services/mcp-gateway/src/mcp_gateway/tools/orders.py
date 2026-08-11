@@ -1,6 +1,27 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
+
+
+def _require_uuid(product_id: str) -> None:
+    # STR-148: found live — a caller (in practice, the shopping agent's
+    # LLM) occasionally passes something that isn't a real product_id at
+    # all (a product's name text, a name fragment) instead of the UUID a
+    # prior search_products/get_cart result actually returned. Without
+    # this, that reaches Orders, which 422s with a generic Pydantic
+    # message, which httpx.raise_for_status() flattens into "Client error
+    # '422 Unprocessable Entity' for url '...'" with no actual detail —
+    # useless feedback for the model to self-correct from within the same
+    # ReAct loop. Failing fast here with an explicit, actionable message
+    # gives it something to actually act on.
+    try:
+        uuid.UUID(product_id)
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(
+            f"product_id must be a UUID from a previous search_products or get_cart result, "
+            f"got {product_id!r} — do not use a product's name or description as its id."
+        ) from exc
 
 
 class OrdersToolsClient:
@@ -57,6 +78,7 @@ class OrdersToolsClient:
         return resp.json()
 
     async def add_to_cart(self, token: str, product_id: str, quantity: int) -> dict:
+        _require_uuid(product_id)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.post(
                 f"{self._base_url}/cart",
@@ -67,6 +89,7 @@ class OrdersToolsClient:
         return resp.json()
 
     async def remove_from_cart(self, token: str, product_id: str) -> dict:
+        _require_uuid(product_id)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.delete(f"{self._base_url}/cart/items/{product_id}", headers=self._headers(token))
         resp.raise_for_status()

@@ -30,8 +30,16 @@ async def run_backfill_once(
     telemetry/routers/measurements.py); a store's readings apply to every
     product it currently tracks (`store_product_thresholds`), mirroring
     exactly how telemetry fans out one `TemperatureRecorded` event per
-    tracked product for a single physical reading. Returns the number of
-    `{store, product, hour}` rows written.
+    tracked product for a single physical reading — **as of the time each
+    reading was recorded**, not the current snapshot. A reading from before
+    a product was ever added to the store is excluded from that product's
+    aggregate (via `store_product_thresholds.tracked_since`), same as the
+    incremental consumer never received a `TemperatureRecorded` event for
+    that pairing in the first place — see STR-148's live-verification
+    finding in the README for why this matters (backfill used to
+    retroactively fold pre-association readings into a newly-tracked
+    product's aggregate). Returns the number of `{store, product, hour}`
+    rows written.
     """
     now = now or datetime.now(timezone.utc)
     current_bucket = truncate_to_hour(now)
@@ -42,35 +50,49 @@ async def run_backfill_once(
     async with telemetry_session_factory() as telemetry_session:
         threshold_rows = (
             await telemetry_session.execute(
-                select(store_product_thresholds.c.store_id, store_product_thresholds.c.product_id)
+                select(
+                    store_product_thresholds.c.store_id,
+                    store_product_thresholds.c.product_id,
+                    store_product_thresholds.c.tracked_since,
+                )
             )
         ).all()
         products_by_store: dict = defaultdict(list)
-        for store_id, product_id in threshold_rows:
-            products_by_store[store_id].append(product_id)
+        for store_id, product_id, tracked_since in threshold_rows:
+            products_by_store[store_id].append((product_id, tracked_since))
 
         for bucket in buckets:
             window_end = bucket + timedelta(hours=1)
             reading_rows = (
                 await telemetry_session.execute(
-                    select(temperature_readings.c.store_id, temperature_readings.c.temperature).where(
+                    select(
+                        temperature_readings.c.store_id,
+                        temperature_readings.c.temperature,
+                        temperature_readings.c.recorded_at,
+                    ).where(
                         temperature_readings.c.recorded_at >= bucket,
                         temperature_readings.c.recorded_at < window_end,
                     )
                 )
             ).all()
 
-            temps_by_store: dict = defaultdict(list)
-            for store_id, temperature in reading_rows:
-                temps_by_store[store_id].append(float(temperature))
+            readings_by_store: dict = defaultdict(list)
+            for store_id, temperature, recorded_at in reading_rows:
+                readings_by_store[store_id].append((float(temperature), recorded_at))
 
-            if not temps_by_store:
+            if not readings_by_store:
                 continue
 
             async with aggregates_session_factory() as agg_session:
-                for store_id, temps in temps_by_store.items():
-                    for product_id in products_by_store.get(store_id, []):
-                        avg, lo, hi, count = full_stats(temps)
+                for store_id, readings in readings_by_store.items():
+                    for product_id, tracked_since in products_by_store.get(store_id, []):
+                        applicable_temps = [temp for temp, recorded_at in readings if recorded_at >= tracked_since]
+                        if not applicable_temps:
+                            # Every reading in this window predates this
+                            # product being added to the store — nothing to
+                            # attribute to it yet.
+                            continue
+                        avg, lo, hi, count = full_stats(applicable_temps)
                         row = await agg_session.get(HourlyAggregate, (store_id, product_id, bucket))
                         if row is None:
                             agg_session.add(

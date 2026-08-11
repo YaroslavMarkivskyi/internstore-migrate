@@ -199,4 +199,12 @@ async def delete_product(
         await session.delete(image)
 
     product.is_deleted = True
+    # STR-148: found live — without this, AI Assistant's product_embeddings
+    # row for this product never gets cleaned up (it only ever reacts to
+    # ProductUpdated), so search_products keeps surfacing a product_id that
+    # no longer exists in Catalog at all. A shopping-agent conversation
+    # with several similarly-named search results was observed picking one
+    # of these dead ids and failing downstream at Orders. See
+    # ai-assistant's catalog_events.py for the consumer side.
+    add_outbox_event(session, "ProductDeleted", {"product_id": str(product.id)})
     await session.commit()

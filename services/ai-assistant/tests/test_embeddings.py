@@ -2,8 +2,13 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from ai_assistant.consumers.catalog_events import handle_product_updated
-from ai_assistant.embeddings import build_embedding_text, search_similar_products, upsert_product_embedding
+from ai_assistant.consumers.catalog_events import handle_product_deleted, handle_product_updated
+from ai_assistant.embeddings import (
+    build_embedding_text,
+    delete_product_embedding,
+    search_similar_products,
+    upsert_product_embedding,
+)
 from ai_assistant.models import ProcessedEvent, ProductEmbedding
 
 FAKE_VECTOR = [0.1] * 1536
@@ -117,6 +122,39 @@ async def test_search_similar_products_returns_top_results():
     assert len(results) == 2
     assert results[0]["name"] == "Frozen Peas"
     assert all("product_id" in r and "description" in r for r in results)
+
+
+async def test_delete_product_embedding_removes_existing_row():
+    session = AsyncMock()
+    existing = ProductEmbedding(product_id=uuid.uuid4(), name="Gone", description=None, embedding=[0.0] * 1536)
+    session.get = AsyncMock(return_value=existing)
+    session.delete = AsyncMock()
+
+    await delete_product_embedding(session, {"product_id": str(existing.product_id)})
+
+    session.delete.assert_awaited_once_with(existing)
+
+
+async def test_delete_product_embedding_is_a_noop_if_never_embedded():
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=None)
+    session.delete = AsyncMock()
+
+    await delete_product_embedding(session, {"product_id": str(uuid.uuid4())})
+
+    session.delete.assert_not_awaited()
+
+
+async def test_handle_product_deleted_skips_already_processed_event():
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=ProcessedEvent(event_id=uuid.uuid4()))
+    session.delete = AsyncMock()
+    session.add = MagicMock()
+
+    await handle_product_deleted(session, uuid.uuid4(), {"product_id": str(uuid.uuid4())})
+
+    session.delete.assert_not_awaited()
+    session.add.assert_not_called()
 
 
 async def test_handle_product_updated_skips_already_processed_event():

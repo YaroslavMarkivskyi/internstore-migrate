@@ -73,6 +73,15 @@ class StoreProductThreshold(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # STR-148: set once at insert (no onupdate — unlike updated_at, which
+    # bumps on every ProductThresholdUpdated too) so it's a true "this pair
+    # started being tracked at X" marker. Added because telemetry-aggregates'
+    # backfill.py was found retroactively attributing a store's readings
+    # recorded *before* a product was added to it to that product's
+    # aggregate — it only had "is this pair tracked" (a snapshot), not
+    # "since when", so it couldn't tell those older readings didn't apply
+    # yet. See services/telemetry-aggregates/backfill.py.
+    tracked_since: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ProcessedEvent(Base):

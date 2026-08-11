@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock
 from ai_assistant.context import SYSTEM_PROMPT, build_messages
 
 REGISTERED_CUSTOMER_ID = "11111111-1111-1111-1111-111111111111"
-GUEST_ID = "guest-session-42"
+# STR-148: deliberately also a plain UUID — guest session ids are uuid4()
+# too (see auth-backend's GuestSessionStore), the exact shape collision
+# that made the old sender_id-shape guess (is_registered_customer) wrong.
+GUEST_ID = "22222222-2222-2222-2222-222222222222"
 ROOM_ID = f"room_{REGISTERED_CUSTOMER_ID}"
 
 
@@ -62,6 +65,7 @@ async def test_build_messages_assembles_history_orders_and_products():
         orders_client=orders_client,
         room_id=ROOM_ID,
         sender_id=REGISTERED_CUSTOMER_ID,
+        sender_role="customer",
         customer_message="Where's my order?",
         conversation_history_limit=20,
         order_history_limit=5,
@@ -95,6 +99,7 @@ async def test_build_messages_skips_order_history_for_guest():
         orders_client=orders_client,
         room_id=f"room_{GUEST_ID}",
         sender_id=GUEST_ID,
+        sender_role="guest",
         customer_message="What's in stock?",
         conversation_history_limit=20,
         order_history_limit=5,

@@ -42,6 +42,7 @@ def app(settings: Settings):
     app = create_app(settings=settings)
     app.state.redis = fakeredis.aioredis.FakeRedis(server=fakeredis.aioredis.FakeServer(), decode_responses=True)
     app.state.chat_client = AsyncMock()
+    app.state.chat_client.get_recent_messages = AsyncMock(return_value=[])
     app.state.mcp_client = AsyncMock()
     app.state.auth_backend_client = AsyncMock()
     app.state.openai_client = AsyncMock()

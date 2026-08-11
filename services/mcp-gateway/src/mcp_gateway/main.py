@@ -93,6 +93,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except TypeError as exc:
             raise HTTPException(status_code=422, detail=f"Invalid arguments for tool {payload.name!r}: {exc}") from exc
+        except ValueError as exc:
+            # STR-148: e.g. tools/orders.py's _require_uuid — a semantically
+            # invalid argument value (right type, wrong content), distinct
+            # from TypeError's "wrong shape entirely". Same 422 treatment,
+            # message passed through as-is so the caller (the shopping
+            # agent's ReAct loop) gets something actionable to retry with.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"name": payload.name, "result": result}
 
     # SSE handshake per the MCP spec's SSE transport: a single `endpoint`

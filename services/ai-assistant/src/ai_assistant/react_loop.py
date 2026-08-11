@@ -25,6 +25,12 @@ action beyond building a cart. If asked to complete a purchase, tell the \
 customer to review their cart and check out themselves.
 Before adding items, check the current cart with get_cart so you don't \
 create duplicate lines or ignore quantities already there.
+CRITICAL: add_to_cart and remove_from_cart take a product_id argument, which \
+must be exactly the "product_id" value from a prior search_products or \
+get_cart result — a UUID string. Never invent one, and never pass a \
+product's name, description, or any other text field as product_id, even if \
+it looks identifying. If you don't have a real product_id from a tool \
+result yet, call search_products or get_cart first instead of guessing.
 When you add or remove a cart item, say so plainly in your reply (what \
 changed, how many items are in the cart now, and the price if you have it) \
 so the customer doesn't have to check the cart UI separately.
@@ -51,6 +57,13 @@ def _to_openai_tools(tool_specs: list[dict]) -> list[dict]:
     ]
 
 
+def _sender_role_to_map(sender_type: str) -> str:
+    # Same mapping as context.py's copy for the guest/Kafka-driven agent —
+    # the assistant's own past replies read back as "assistant", everyone
+    # else (customer, admin) reads as "user".
+    return "assistant" if sender_type == "assistant" else "user"
+
+
 async def run_shopping_agent(
     *,
     openai_client: AsyncOpenAI,
@@ -59,6 +72,7 @@ async def run_shopping_agent(
     chat_model: str,
     message: str,
     token: RefreshableToken,
+    history: list[dict] | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     refresh_margin_seconds: int = DEFAULT_REFRESH_MARGIN_SECONDS,
 ) -> str:
@@ -66,12 +80,28 @@ async def run_shopping_agent(
     products and read/mutate the cart via the MCP Gateway, forwarding (and
     refreshing — see token_manager.py) the customer's own internal-token the
     whole way, until the model produces a final answer with no further tool
-    calls, or `max_iterations` is reached (reuses STR-137's cap of 5)."""
+    calls, or `max_iterations` is reached (reuses STR-137's cap of 5).
+
+    `history` (Chat's own room messages, oldest-first — see
+    ChatClient.get_recent_messages) gives the model the prior turns of this
+    conversation. Found missing during STR-148's live verification: without
+    it, each WebSocket message hit this loop as a completely isolated
+    exchange, so "add it to my cart" right after "find me a Gouda under
+    $20" had no idea what "it" referred to — every unit test happened to
+    mock a single self-contained turn, so this never surfaced until a real
+    multi-turn conversation against a real model."""
     tool_specs = await mcp_client.list_tools(token.value)
     openai_tools = _to_openai_tools(tool_specs)
 
+    conversation = [
+        {"role": _sender_role_to_map(entry["sender_type"]), "content": entry["content"]}
+        for entry in (history or [])
+        if entry.get("content")
+    ]
+
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
+        *conversation,
         {"role": "user", "content": message},
     ]
 
@@ -115,7 +145,9 @@ async def run_shopping_agent(
                 # not found", a 401 from a stale token the refresh above
                 # missed) so it can recover or apologize, rather than
                 # crashing the whole request over one bad tool call.
-                logger.warning("Shopping agent tool call %s failed: %s", call.function.name, exc)
+                logger.warning(
+                    "Shopping agent tool call %s(%s) failed: %s", call.function.name, call.function.arguments, exc
+                )
                 content = json.dumps({"error": str(exc)})
             messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
 

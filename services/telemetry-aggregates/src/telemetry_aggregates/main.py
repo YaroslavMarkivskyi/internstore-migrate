@@ -51,9 +51,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="telemetry-aggregates", lifespan=lifespan)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
-    # Read-only in practice (see README) — scoped to a read-only DB role at
-    # the Postgres level where the deployment target supports it; SQLite in
-    # tests has no such concept, so this stays a plain session factory.
+    # Connects as the telemetry_readonly Postgres role in real deployments
+    # (see README's "Backfill job" section) — enforced at the DB level via
+    # GRANT, not by anything in this client code; SQLite in tests has no
+    # such concept, so this stays a plain session factory either way.
     app.state.telemetry_session_factory = make_session_factory(settings.telemetry_db_url)
 
     @app.get("/health")

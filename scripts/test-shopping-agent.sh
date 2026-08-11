@@ -52,9 +52,33 @@ CUSTOMER_SUB=$(sub_of "$CUSTOMER_TOKEN")
 [ -n "$CUSTOMER_SUB" ] && [ "$CUSTOMER_SUB" != "null" ] || fail "could not resolve customer sub via /me"
 ROOM_ID="room_${CUSTOMER_SUB}"
 
+# This test customer's room is fixed (deterministic room id, same customer
+# every run) — once the shopping agent actually has conversation memory
+# (STR-148 fix: it didn't before), a stale product mention from a *prior*
+# run of this very script leaking into this run's context via room history
+# is a real failure mode, not a hypothetical one (caught live: the agent
+# added an old run's product instead of this run's). Reset the room before
+# seeding so every run starts from a clean conversation, same as every
+# other script here creating its own fresh product/stock instead of reusing
+# state from a previous run.
+$CURL -X DELETE "$GATEWAY_URL/chat/rooms/$ROOM_ID" -H "Authorization: Bearer $ADMIN_TOKEN" >/dev/null
+pass "reset room $ROOM_ID to start from a clean conversation"
+
 echo "=== Confirm no orders exist for this customer before we start ==="
 BEFORE_ORDER_COUNT=$($CURL "$GATEWAY_URL/orders/orders" -H "Authorization: Bearer $CUSTOMER_TOKEN" | jq 'length')
 pass "customer has $BEFORE_ORDER_COUNT order(s) on record before the run"
+
+echo
+echo "=== Clear any leftover cart items from a previous run ==="
+# Now that the shopping agent has real conversation memory (STR-148 fix)
+# it also calls get_cart before adding — a stale item left over from a
+# previous run of this script is a real source of ambiguity for the model
+# (which product does "it" refer to?), not just cosmetic leftover state.
+EXISTING_CART=$($CURL "$GATEWAY_URL/orders/cart" -H "Authorization: Bearer $CUSTOMER_TOKEN")
+echo "$EXISTING_CART" | jq -r '.items[].product_id' | while read -r pid; do
+  [ -n "$pid" ] && $CURL -X DELETE "$GATEWAY_URL/orders/cart/items/$pid" -H "Authorization: Bearer $CUSTOMER_TOKEN" >/dev/null
+done
+pass "cart cleared before starting"
 
 echo
 echo "=== Seed a real, searchable Gouda product under \$20 ==="
@@ -67,6 +91,44 @@ if [ -z "$CATEGORY_ID" ]; then
     | jq -r '.[] | select(.name == "Dairy") | .id' | head -n1)
 fi
 [ -n "$CATEGORY_ID" ] || fail "could not create or find a Dairy category"
+
+# Remove any "Gouda Cheese ..." products left over from a previous run of
+# this script — without this, search_products' embedding similarity search
+# has multiple near-identical Gouda matches to choose from (they all embed
+# almost identically: same name prefix, same "Aged Dutch Gouda"
+# description). Caught live: with several candidates in the results, the
+# model once used a *name* fragment ("3688142-176", from a stale prior
+# run's product name) as if it were the product_id argument — a real
+# hallucination that only showed up with real search-result ambiguity, not
+# a hypothetical. DELETE /products/{id} 409s on a published product (see
+# catalog/routers/products.py) — has to be unpublished first, and the
+# original version of this cleanup silently ignored that failure (piped to
+# /dev/null with no status check), so it looked like it worked while
+# leaving every stale product in place.
+$CURL "$GATEWAY_URL/catalog/products" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  | jq -r '.[] | select((.name | startswith("Gouda Cheese")) and (.is_deleted | not)) | .id' \
+  | while read -r pid; do
+      [ -z "$pid" ] && continue
+      $CURL -X PATCH "$GATEWAY_URL/catalog/products/$pid" -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" -d '{"is_published": false}' >/dev/null
+      STATUS=$(curl -sk -o /dev/null -w "%{http_code}" -X DELETE "$GATEWAY_URL/catalog/products/$pid" \
+        -H "Authorization: Bearer $ADMIN_TOKEN")
+      # 404 here means a previous run of this script already deleted it
+      # (GET /products lists soft-deleted rows too, with no is_deleted
+      # filter — catalog's own pre-existing behavior, not something this
+      # script controls) — a no-op, not a failure.
+      case "$STATUS" in
+        204|404) ;;
+        *) fail "could not delete leftover product $pid (status $STATUS)" ;;
+      esac
+    done
+sleep 3  # let the ProductDeleted outbox event reach AI Assistant's catalog-events
+         # consumer and remove the stale product_embeddings row (see catalog's
+         # OUTBOX_POLL_INTERVAL_SECONDS=1.0 dev override) — without this, a
+         # search moments later can still find the just-deleted product's
+         # embedding, since the outbox/Kafka propagation is async. Caught
+         # live: the agent picked up a just-deleted prior run's product.
+pass "cleared any leftover Gouda Cheese products from previous runs"
 
 PRODUCT_NAME="Gouda Cheese $$-$RANDOM"
 PRODUCT_ID=$($CURL -X POST "$GATEWAY_URL/catalog/products" \
@@ -84,6 +146,18 @@ $CURL -X PATCH "$GATEWAY_URL/catalog/products/$PRODUCT_ID" \
   -d "{\"name\": \"$PRODUCT_NAME\"}" >/dev/null
 pass "created and staged embedding for product $PRODUCT_ID ($PRODUCT_NAME, \$12.50)"
 
+# Genuine pre-existing gap, not something introduced by STR-148: nothing
+# here waited for the embed pipeline (outbox poll -> Kafka ->
+# ai-assistant's catalog-events consumer -> OpenAI embeddings call) to
+# actually finish before the chat below relies on search_products finding
+# this product. It usually got away with it since establishing the
+# websocket + the model's own round-trip added incidental delay, but
+# caught live: a run where that wasn't enough, search_products found
+# nothing, and the agent (with no cart context) hallucinated a stale
+# product name fragment as a product_id on the following add_to_cart
+# call instead. Explicit wait, same pattern as the sleeps elsewhere in
+# this script and test-telemetry-saga.sh.
+sleep 5
 echo
 echo "=== Chat: ask for a Gouda under \$20, then ask to add it to the cart ==="
 (
@@ -139,7 +213,18 @@ async def main() -> None:
         # a generous window, same order of magnitude as test-ai-assistant.sh.
         search_reply = await recv_until(ws, lambda f: f.get("sender_type") == "assistant", 45, "agent's search reply")
         content = (search_reply.get("content") or "")
-        assert "gouda" in content.lower() or PRODUCT_NAME.lower() in content.lower(), (
+        content_lower = content.lower()
+        # "gouda" alone is too loose — it also matches a negative reply
+        # ("no Gouda cheeses available under $20"), which is exactly what
+        # search_products returns if the embedding pipeline hasn't caught
+        # up yet (see the sleep above this was added for). Require an
+        # actual positive signal: either this run's specific product name
+        # or the seeded price, and reject the known negative phrasings.
+        found_something = PRODUCT_NAME.lower() in content_lower or "$12.5" in content
+        sounds_negative = any(
+            phrase in content_lower for phrase in ("no gouda", "didn't find", "couldn't find", "not available", "no cheeses")
+        )
+        assert found_something and not sounds_negative, (
             f"agent reply did not reference a real Catalog product match: {search_reply}"
         )
         print("PASS: agent replied referencing a real product match from Catalog", flush=True)

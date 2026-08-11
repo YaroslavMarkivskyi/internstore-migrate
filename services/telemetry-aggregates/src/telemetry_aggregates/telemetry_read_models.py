@@ -27,4 +27,10 @@ store_product_thresholds = Table(
     metadata,
     Column("store_id", Uuid, primary_key=True),
     Column("product_id", Uuid, primary_key=True),
+    # STR-148: when this {store, product} pairing started being tracked —
+    # never updated after insert (unlike updated_at, which also bumps on
+    # ProductThresholdUpdated). backfill.py uses this to avoid folding a
+    # store's pre-existing readings into a product's aggregate before that
+    # product was ever associated with the store.
+    Column("tracked_since", DateTime(timezone=True), nullable=False),
 )

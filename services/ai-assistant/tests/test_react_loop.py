@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from ai_assistant.react_loop import FALLBACK_REPLY, SHOPPING_TOOL_NAMES, run_shopping_agent
+from ai_assistant.react_loop import FALLBACK_REPLY, SHOPPING_TOOL_NAMES, SYSTEM_PROMPT, run_shopping_agent
 from ai_assistant.token_manager import RefreshableToken
 
 TOOL_SPECS = [
@@ -97,6 +97,58 @@ async def test_executes_tool_call_then_returns_models_follow_up_answer():
 
     assert reply == "Added 2x Gouda to your cart."
     mcp_client.call_tool.assert_awaited_once_with(token.value, "add_to_cart", {"product_id": "prod-1", "quantity": 2})
+
+
+async def test_history_is_included_ahead_of_the_current_message():
+    """STR-148 live-verification regression: without prior turns in the
+    messages array, "add it to my cart" right after "find me a Gouda"
+    has no antecedent for "it" — confirmed against a real model, not
+    caught by any pre-existing unit test since each one only ever
+    exercised a single isolated turn."""
+    mcp_client, auth_backend_client, openai_client = _fake_deps()
+    openai_client.chat.completions.create = AsyncMock(return_value=_response("Added it."))
+
+    await run_shopping_agent(
+        openai_client=openai_client,
+        mcp_client=mcp_client,
+        auth_backend_client=auth_backend_client,
+        chat_model="gpt-4o",
+        message="add it to my cart",
+        token=RefreshableToken(_no_exp_token()),
+        history=[
+            {"sender_type": "customer", "content": "find me a gouda under $20"},
+            {"sender_type": "assistant", "content": "I found Gouda Cheese for $12.50."},
+        ],
+    )
+
+    sent_messages = openai_client.chat.completions.create.call_args.kwargs["messages"]
+    assert sent_messages == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "find me a gouda under $20"},
+        {"role": "assistant", "content": "I found Gouda Cheese for $12.50."},
+        {"role": "user", "content": "add it to my cart"},
+    ]
+
+
+async def test_history_with_no_content_is_skipped():
+    mcp_client, auth_backend_client, openai_client = _fake_deps()
+    openai_client.chat.completions.create = AsyncMock(return_value=_response("ok"))
+
+    await run_shopping_agent(
+        openai_client=openai_client,
+        mcp_client=mcp_client,
+        auth_backend_client=auth_backend_client,
+        chat_model="gpt-4o",
+        message="hi",
+        token=RefreshableToken(_no_exp_token()),
+        history=[{"sender_type": "customer", "content": ""}, {"sender_type": "customer", "content": None}],
+    )
+
+    sent_messages = openai_client.chat.completions.create.call_args.kwargs["messages"]
+    assert sent_messages == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "hi"},
+    ]
 
 
 async def test_stops_after_max_iterations_and_returns_fallback():

@@ -33,7 +33,11 @@ async def _seed_raw_readings(telemetry_session_factory, store_id, product_id, te
     consumer, telemetry-db's raw table already reflects that reading,
     independent of Kafka."""
     async with telemetry_session_factory() as session:
-        await session.execute(store_product_thresholds.insert().values(store_id=store_id, product_id=product_id))
+        await session.execute(
+            store_product_thresholds.insert().values(
+                store_id=store_id, product_id=product_id, tracked_since=HOUR - timedelta(days=1)
+            )
+        )
         for i, temp in enumerate(temperatures):
             await session.execute(
                 temperature_readings.insert().values(

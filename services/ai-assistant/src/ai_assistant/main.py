@@ -132,6 +132,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.chat_client.set_mode(payload.room_id, "human")
             return {"status": "rate_limited"}
 
+        # STR-148: without this, every message was handled as a completely
+        # isolated turn — see react_loop.py's own docstring for the bug
+        # this caused ("add it to my cart" right after a search had no
+        # antecedent for "it"), found via live verification, not any unit
+        # test (they all mock a single self-contained turn).
+        history = await app.state.chat_client.get_recent_messages(
+            payload.room_id, settings.conversation_history_limit
+        )
         reply = await run_shopping_agent(
             openai_client=app.state.openai_client,
             mcp_client=app.state.mcp_client,
@@ -139,6 +147,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chat_model=settings.chat_model,
             message=payload.message,
             token=RefreshableToken(token),
+            history=history,
             max_iterations=settings.max_react_iterations,
             refresh_margin_seconds=settings.token_refresh_margin_seconds,
         )

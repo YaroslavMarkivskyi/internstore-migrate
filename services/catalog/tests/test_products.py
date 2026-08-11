@@ -251,6 +251,34 @@ async def test_delete_unpublished_product_succeeds(client, admin_token):
     assert redelete.status_code == 404
 
 
+async def test_delete_product_stages_product_deleted_event(client, admin_token):
+    """STR-148: without this, AI Assistant's product_embeddings row for a
+    deleted product never gets cleaned up, and search_products keeps
+    surfacing a product_id that no longer exists at all — found live."""
+    category_id = await create_category(client, admin_token)
+    product_id = await create_product(client, admin_token, category_id)
+    await client.patch(
+        f"/products/{product_id}",
+        json={"is_published": False},
+        headers={"x-internal-token": admin_token},
+    )
+
+    resp = await client.delete(f"/products/{product_id}", headers={"x-internal-token": admin_token})
+    assert resp.status_code == 204
+
+    from sqlalchemy import select
+
+    from catalog.models import OutboxEvent
+
+    async with client.app.state.session_factory() as session:
+        result = await session.execute(select(OutboxEvent))
+        events = list(result.scalars().all())
+
+    deleted_events = [e for e in events if e.event_type == "ProductDeleted"]
+    assert len(deleted_events) == 1
+    assert deleted_events[0].payload == {"product_id": product_id}
+
+
 async def test_delete_product_requires_admin(client, admin_token, customer_token):
     category_id = await create_category(client, admin_token)
     product_id = await create_product(client, admin_token, category_id)

@@ -1,5 +1,3 @@
-import uuid
-
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,17 +19,6 @@ def _sender_role_to_map(sender_type: str) -> str:
     # past replies are "assistant", everyone else (customer, admin) reads as
     # "user" from the model's point of view.
     return "assistant" if sender_type == "assistant" else "user"
-
-
-def is_registered_customer(sender_id: str) -> bool:
-    # Guest sessions use auth-backend's guest_id (not a UUID); registered
-    # customers use their Keycloak sub (a UUID) — see Room.customer_id vs
-    # Room.session_id in services/chat/src/chat/models.py.
-    try:
-        uuid.UUID(sender_id)
-    except ValueError:
-        return False
-    return True
 
 
 def _format_order_history(orders: list[dict]) -> str:
@@ -62,6 +49,7 @@ async def build_messages(
     orders_client: OrdersClient,
     room_id: str,
     sender_id: str,
+    sender_role: str,
     customer_message: str,
     conversation_history_limit: int,
     order_history_limit: int,
@@ -75,7 +63,16 @@ async def build_messages(
     ]
 
     context_sections = []
-    if is_registered_customer(sender_id):
+    # STR-148: was `is_registered_customer(sender_id)`, a heuristic that
+    # guessed "customer" whenever sender_id merely looked like a UUID —
+    # broken by construction, since guest session ids are uuid4() too (see
+    # auth-backend's GuestSessionStore). sender_role now comes straight
+    # from the CustomerMessageSent event payload (chat/ws/room.py), not a
+    # guess. In practice this function is currently only ever called for
+    # guests (chat_events.py skips registered customers before reaching
+    # here — see that module), but takes the real role rather than baking
+    # that assumption in here too.
+    if sender_role == "customer":
         orders = await orders_client.get_recent_orders(sender_id, order_history_limit)
         context_sections.append(_format_order_history(orders))
 

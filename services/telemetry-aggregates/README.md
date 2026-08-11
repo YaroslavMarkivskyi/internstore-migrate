@@ -133,9 +133,17 @@ correct — see "Idempotency guarantee" above.
 
 **This is the one place this service reads telemetry-db** — the deliberate
 exception to the "no cross-database dependency" preference stated above.
-Its connection (`TELEMETRY_DB_URL`) should be scoped to a read-only
-database role where the deployment target supports it (Postgres row-level
-grants); this service never writes to telemetry-db.
+Its connection (`TELEMETRY_DB_URL`) connects as `telemetry_readonly`, a
+dedicated Postgres role telemetry provisions in its own migration
+(`services/telemetry/migrations/versions/69ff8539f688_...py`), GRANTed
+`SELECT` only on the two tables this job reads
+(`temperature_readings`, `store_product_thresholds`) — not the full-access
+`telemetry` user. This was a real gap caught by STR-148's live
+verification: the connection had been documented as "read-only in intent"
+since this service's own STR-147 delivery, but nothing had actually
+provisioned a role that enforces it — `docker-compose.yml`'s
+`TELEMETRY_DB_URL` connected as the full read-write `telemetry` user until
+that ticket's fix.
 
 Telemetry's raw readings carry only `store_id` — `POST /measurements`
 takes `{store_id, temperature, humidity}`, with product association

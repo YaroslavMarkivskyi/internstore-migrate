@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 import respx
 
 from mcp_gateway.tools.orders import OrdersToolsClient
 
 BASE_URL = "http://orders.invalid"
+PRODUCT_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _client() -> OrdersToolsClient:
@@ -77,27 +79,55 @@ async def test_get_cart_forwards_caller_token():
 @respx.mock
 async def test_add_to_cart_forwards_caller_token_and_body():
     route = respx.post(f"{BASE_URL}/cart").mock(
-        return_value=httpx.Response(201, json={"items": [{"product_id": "prod-1", "quantity": 2}]})
+        return_value=httpx.Response(201, json={"items": [{"product_id": PRODUCT_ID, "quantity": 2}]})
     )
 
-    result = await _client().add_to_cart("customer-alices-token", "prod-1", 2)
+    result = await _client().add_to_cart("customer-alices-token", PRODUCT_ID, 2)
 
     assert route.called
     assert route.calls.last.request.headers["x-internal-token"] == "customer-alices-token"
     sent_body = route.calls.last.request.content
-    assert b"prod-1" in sent_body and b'"quantity":2' in sent_body
-    assert result == {"items": [{"product_id": "prod-1", "quantity": 2}]}
+    assert PRODUCT_ID.encode() in sent_body and b'"quantity":2' in sent_body
+    assert result == {"items": [{"product_id": PRODUCT_ID, "quantity": 2}]}
 
 
 @respx.mock
 async def test_remove_from_cart_forwards_caller_token():
-    route = respx.delete(f"{BASE_URL}/cart/items/prod-1").mock(return_value=httpx.Response(204))
+    route = respx.delete(f"{BASE_URL}/cart/items/{PRODUCT_ID}").mock(return_value=httpx.Response(204))
 
-    result = await _client().remove_from_cart("customer-alices-token", "prod-1")
+    result = await _client().remove_from_cart("customer-alices-token", PRODUCT_ID)
 
     assert route.called
     assert route.calls.last.request.headers["x-internal-token"] == "customer-alices-token"
-    assert result == {"removed_product_id": "prod-1"}
+    assert result == {"removed_product_id": PRODUCT_ID}
+
+
+# --- STR-148: found live — the shopping agent's LLM occasionally passes a
+# product's name/description text instead of the product_id a prior
+# search_products/get_cart result actually returned. Failing fast here
+# (before ever reaching Orders) with a message that explains what's wrong
+# gives the ReAct loop something actionable to retry with, instead of a
+# generic 500 with no useful detail.
+
+
+@respx.mock
+async def test_add_to_cart_rejects_a_non_uuid_product_id():
+    route = respx.post(f"{BASE_URL}/cart")
+
+    with pytest.raises(ValueError, match="must be a UUID"):
+        await _client().add_to_cart("customer-alices-token", "Aged Dutch Gouda", 1)
+
+    assert not route.called  # never even reaches Orders
+
+
+@respx.mock
+async def test_remove_from_cart_rejects_a_non_uuid_product_id():
+    route = respx.delete(f"{BASE_URL}/cart/items/not-a-uuid")
+
+    with pytest.raises(ValueError, match="must be a UUID"):
+        await _client().remove_from_cart("customer-alices-token", "not-a-uuid")
+
+    assert not route.called
 
 
 @respx.mock

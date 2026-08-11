@@ -54,6 +54,18 @@ async def upsert_product_embedding(
         existing.embedding = vector
 
 
+async def delete_product_embedding(session: AsyncSession, payload: dict) -> None:
+    """STR-148: the ProductDeleted counterpart to upsert_product_embedding
+    — without this, a deleted Catalog product's row lingers here forever
+    (nothing else ever removes it) and search_products keeps returning a
+    product_id that's now permanently dead, since Catalog never publishes
+    anything else this table reacts to."""
+    product_id = uuid.UUID(payload["product_id"])
+    existing = await session.get(ProductEmbedding, product_id)
+    if existing is not None:
+        await session.delete(existing)
+
+
 async def search_similar_products(
     session: AsyncSession, client: AsyncOpenAI, model: str, query_text: str, limit: int
 ) -> list[dict]:
