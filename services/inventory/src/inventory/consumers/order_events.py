@@ -3,10 +3,10 @@ from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from inventory import commands
 from inventory.catalog_client import CatalogClient
 from inventory.models import ProcessedEvent
 from inventory.outbox import add_outbox_event
-from inventory.reservation import consume_reservation, try_reserve
 from inventory.stock_sync import unpublish_if_out_of_stock
 
 TOPIC = "order-events"
@@ -33,11 +33,21 @@ async def handle_order_created(
     session.add(ProcessedEvent(event_id=event_id))
 
     order_id = uuid.UUID(payload["order_id"])
-    reservation = await try_reserve(session, order_id, payload["items"], ttl_seconds)
+    # STR-149: build_reserve (not the retrying `commands.reserve`) is used
+    # directly against this handler's own session -- ADR 0002's
+    # single-partition order-events topic means only one consumer instance
+    # ever processes this at a time, so there's no concurrent writer here
+    # to retry against (same reasoning the pre-STR-149 try_reserve
+    # docstring documented). The event append + projection update land in
+    # the same transaction as this handler's ProcessedEvent/outbox rows,
+    # committed once by dispatch() below.
+    outcome = await commands.build_reserve(session, order_id, payload["items"], ttl_seconds)
 
-    if reservation is None:
+    if outcome is None:
         add_outbox_event(session, "StockReservationFailed", {"order_id": str(order_id)})
     else:
+        appends, _result = outcome
+        await commands.apply(session, appends)
         add_outbox_event(session, "StockReserved", {"order_id": str(order_id)})
     return []
 
@@ -50,11 +60,12 @@ async def handle_payment_confirmed(
     session.add(ProcessedEvent(event_id=event_id))
 
     order_id = uuid.UUID(payload["order_id"])
-    result = await consume_reservation(session, order_id)
-    if result is None:
+    outcome = await commands.build_consume(session, order_id)
+    if outcome is None:
         return []
 
-    _reservation, product_ids = result
+    appends, product_ids = outcome
+    await commands.apply(session, appends)
     add_outbox_event(session, "StockDecremented", {"order_id": str(order_id)})
     return product_ids
 

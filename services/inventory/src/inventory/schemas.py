@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -109,3 +110,30 @@ class ReleaseStockRequest(BaseModel):
 class ReleaseStockResponse(BaseModel):
     order_id: uuid.UUID
     status: str  # "released" | "not_found"
+
+
+# STR-149: event sourcing additions -- the audit-trail and time-travel
+# payoff. Admin-only, read-only, additive to the frozen reserve/release/
+# check-availability contracts above.
+class StockEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    event_type: str
+    payload: dict
+    sequence_number: int
+    created_at: datetime
+
+
+class StockEventHistoryPage(BaseModel):
+    items: list[StockEventRead]
+    next_cursor: int | None  # last sequence_number seen; pass back as `cursor` for the next page
+
+
+class StockItemAsOf(BaseModel):
+    stock_id: uuid.UUID
+    product_id: uuid.UUID
+    quantity: int
+    reserved_quantity: int
+    is_unavailable: bool
+    as_of: datetime

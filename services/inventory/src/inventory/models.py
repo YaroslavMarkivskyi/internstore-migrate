@@ -1,8 +1,20 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from inventory.db import Base
@@ -24,7 +36,23 @@ class Stock(Base):
 
 
 class StockItem(Base):
+    """STR-149: this is now a read-model *projection*, not a source of
+    truth. It is written exclusively by `projector.project_and_upsert`,
+    inside the same DB transaction as the `stock_events` append that
+    produced it -- never by direct UPDATE/INSERT from request-handling
+    code. See `stock_events` (this file, below) and README.md's "Event
+    sourcing" section.
+    """
+
     __tablename__ = "stock_items"
+    __table_args__ = (
+        # Defense-in-depth, not load-bearing: the projector is the sole
+        # writer and is already serialized per-aggregate by stock_events'
+        # own UNIQUE(aggregate_id, sequence_number) (see event_store.py).
+        # This just makes a projector bug loud instead of silently
+        # producing two rows for one (stock_id, product_id) pair.
+        UniqueConstraint("stock_id", "product_id", name="uq_stock_items_stock_product"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     stock_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stocks.id"), nullable=False)
@@ -115,3 +143,66 @@ class OutboxEvent(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StockEvent(Base):
+    """STR-149: the append-only event log -- the sole source of truth for
+    the `(stock_id, product_id)` aggregate. Never updated or deleted.
+    `stock_items` (above) is a projection folded from this table; it is
+    populated synchronously, in the same transaction as the row here, by
+    `projector.project_and_upsert` -- see event_store.py and README.md.
+
+    Two distinct tables, do not conflate: this is the event-sourcing log
+    (new, STR-149). `OutboxEvent` (above) is the existing, unrelated
+    inter-service Kafka pub/sub outbox (e.g. `StockReserved` notifications
+    to Orders) and is unaffected by this migration.
+
+    `UNIQUE(aggregate_id, sequence_number)` is the concurrency-control
+    mechanism: appending requires knowing the aggregate's current last
+    sequence_number and inserting at +1; a constraint violation means a
+    concurrent writer already claimed that slot (see event_store.py). This
+    is the load-bearing correctness mechanism for the reservation saga --
+    it replaces the row-level locking a directly-mutated `stock_items`
+    UPDATE would have relied on.
+    """
+
+    __tablename__ = "stock_events"
+    __table_args__ = (UniqueConstraint("aggregate_id", "sequence_number", name="uq_stock_events_aggregate_sequence"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    # uuid5(AGGREGATE_NAMESPACE, f"{stock_id}:{product_id}") -- see
+    # events.compute_aggregate_id. Deterministic, so any caller can address
+    # a stream without a lookup table.
+    aggregate_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    sequence_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Python-side default (not server_default=func.now()) deliberately --
+    # the `as-of` endpoint filters on this column to reconstruct
+    # point-in-time state, and SQLite's CURRENT_TIMESTAMP (what
+    # server_default=func.now() compiles to there) only has second
+    # resolution, which would make same-second events indistinguishable.
+    # sequence_number remains the true ordering; created_at only needs to
+    # be monotonic enough to place events relative to a wall-clock cutoff.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class StockSnapshot(Base):
+    """STR-149: periodic snapshots, purely to bound replay cost -- NOT
+    needed for the live projection's correctness or freshness (that's
+    always current by construction, folded synchronously with every event
+    append). Snapshots exist only for (a) disaster-recovery rebuild of
+    `stock_items` from `stock_events`, and (b) bounding replay cost for the
+    `as-of` point-in-time endpoint on aggregates with long histories. See
+    snapshots.py and README.md.
+    """
+
+    __tablename__ = "stock_snapshots"
+
+    aggregate_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    # The sequence_number this snapshot represents state *as of* --
+    # replaying stock_events WHERE aggregate_id = ... AND sequence_number >
+    # this, starting from `state`, reproduces the live projection.
+    sequence_number: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

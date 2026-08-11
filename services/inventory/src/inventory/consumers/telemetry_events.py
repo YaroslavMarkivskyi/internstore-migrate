@@ -1,10 +1,10 @@
 import uuid
 from collections.abc import Awaitable, Callable
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from inventory.models import ProcessedEvent, StockItem
+from inventory import commands
+from inventory.models import ProcessedEvent
 
 TOPIC = "telemetry-events"
 GROUP_ID = "inventory-telemetry-events"
@@ -26,17 +26,18 @@ async def handle_temperature_threshold_violated(session: AsyncSession, event_id:
     if stock_id is None or product_id is None:
         return
 
-    result = await session.execute(
-        select(StockItem).where(
-            StockItem.stock_id == uuid.UUID(stock_id),
-            StockItem.product_id == uuid.UUID(product_id),
-        )
+    # STR-149: build_mark_unavailable directly against this handler's own
+    # session -- same single-consumer-instance reasoning as
+    # order_events.py, no retry loop needed here. Returns None (a no-op)
+    # if the aggregate has never had a StockItemCreated event, mirroring
+    # the pre-STR-149 "if item is None: return" behavior.
+    outcome = await commands.build_mark_unavailable(
+        session, uuid.UUID(stock_id), uuid.UUID(product_id), reason="temperature_threshold_violated"
     )
-    item = result.scalar_one_or_none()
-    if item is None:
+    if outcome is None:
         return
-
-    item.is_unavailable = True
+    appends, _result = outcome
+    await commands.apply(session, appends)
 
 
 HANDLERS: dict[str, Handler] = {

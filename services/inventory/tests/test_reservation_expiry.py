@@ -31,31 +31,35 @@ async def _make_reservation(session: AsyncSession, expires_at: datetime, quantit
     return reservation, item
 
 
-async def test_expired_reservation_is_released_and_publishes_reservation_expired(session):
+async def test_expired_reservation_is_released_and_publishes_reservation_expired(client, session):
     reservation, item = await _make_reservation(session, datetime.now(timezone.utc) - timedelta(seconds=1))
 
-    count = await expire_reservations(session)
-    await session.commit()
+    count = await expire_reservations(client.app.state.session_factory)
 
     assert count == 1
-    await session.refresh(reservation)
-    await session.refresh(item)
-    assert reservation.status == ReservationStatus.RELEASED
-    assert item.reserved_quantity == 0
 
-    outbox = (await session.execute(select(OutboxEvent).where(OutboxEvent.event_type == "ReservationExpired"))).scalars().all()
-    assert len(outbox) == 1
-    assert outbox[0].payload["order_id"] == str(reservation.order_id)
+    async with client.app.state.session_factory() as check_session:
+        refreshed_reservation = await check_session.get(Reservation, reservation.id)
+        refreshed_item = await check_session.get(StockItem, item.id)
+        assert refreshed_reservation.status == ReservationStatus.RELEASED
+        assert refreshed_item.reserved_quantity == 0
+
+        outbox = (
+            await check_session.execute(select(OutboxEvent).where(OutboxEvent.event_type == "ReservationExpired"))
+        ).scalars().all()
+        assert len(outbox) == 1
+        assert outbox[0].payload["order_id"] == str(reservation.order_id)
 
 
-async def test_non_expired_reservation_is_left_alone(session):
+async def test_non_expired_reservation_is_left_alone(client, session):
     reservation, item = await _make_reservation(session, datetime.now(timezone.utc) + timedelta(hours=1))
 
-    count = await expire_reservations(session)
-    await session.commit()
+    count = await expire_reservations(client.app.state.session_factory)
 
     assert count == 0
-    await session.refresh(reservation)
-    await session.refresh(item)
-    assert reservation.status == ReservationStatus.RESERVED
-    assert item.reserved_quantity == 3
+
+    async with client.app.state.session_factory() as check_session:
+        refreshed_reservation = await check_session.get(Reservation, reservation.id)
+        refreshed_item = await check_session.get(StockItem, item.id)
+        assert refreshed_reservation.status == ReservationStatus.RESERVED
+        assert refreshed_item.reserved_quantity == 3

@@ -18,6 +18,7 @@ from inventory.kafka import KafkaEventProducer, run_consumer_loop
 from inventory.outbox_worker import run_outbox_worker
 from inventory.reservation_expiry import run_reservation_expiry_checker
 from inventory.routers import items, stocks
+from inventory.snapshot_worker import run_snapshot_worker
 
 
 @asynccontextmanager
@@ -51,8 +52,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     expiry_task = asyncio.create_task(
         run_reservation_expiry_checker(app.state.session_factory, settings.reservation_check_interval_seconds)
     )
+    snapshot_task = asyncio.create_task(
+        run_snapshot_worker(app.state.session_factory, settings.snapshot_check_interval_seconds)
+    )
 
-    tasks = (outbox_task, consumer_task, telemetry_consumer_task, expiry_task)
+    tasks = (outbox_task, consumer_task, telemetry_consumer_task, expiry_task, snapshot_task)
     try:
         yield
     finally:

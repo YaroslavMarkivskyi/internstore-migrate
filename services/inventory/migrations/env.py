@@ -8,7 +8,12 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from inventory.db import Base
-from inventory.models import Stock, StockItem  # noqa: F401  (registers models on Base.metadata)
+from inventory.models import (  # noqa: F401  (registers models on Base.metadata)
+    Stock,
+    StockEvent,
+    StockItem,
+    StockSnapshot,
+)
 
 config = context.config
 

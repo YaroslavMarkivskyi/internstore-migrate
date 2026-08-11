@@ -1,16 +1,17 @@
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from inventory import commands, events as ev
 from inventory.auth import get_internal_claims, require_authz
 from inventory.catalog_client import CatalogClient, get_catalog_client
 from inventory.db import get_session
-from inventory.models import Reservation, ReservationItem, Stock, StockItem
-from inventory.outbox import add_outbox_event
-from inventory.reservation import release_reservation_by_order_id, try_reserve
+from inventory.models import Stock, StockEvent, StockItem, StockSnapshot
+from inventory.projector import replay
 from inventory.schemas import (
     AvailabilityResultItem,
     CheckAvailabilityRequest,
@@ -20,6 +21,9 @@ from inventory.schemas import (
     ReserveStockRequest,
     ReserveStockResponse,
     StockCreate,
+    StockEventHistoryPage,
+    StockEventRead,
+    StockItemAsOf,
     StockItemCreate,
     StockItemMove,
     StockItemQuantityUpdate,
@@ -130,27 +134,11 @@ async def receive_stock_item(
     stock_id: uuid.UUID,
     payload: StockItemCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
 ) -> StockItem:
     await _get_stock_or_404(session, stock_id)
 
-    existing = await session.execute(
-        select(StockItem).where(
-            StockItem.stock_id == stock_id,
-            StockItem.product_id == payload.product_id,
-        )
-    )
-    item = existing.scalar_one_or_none()
-    if item is not None:
-        item.quantity += payload.quantity
-    else:
-        item = StockItem(stock_id=stock_id, product_id=payload.product_id, quantity=payload.quantity)
-        session.add(item)
-
-    add_outbox_event(session, "ItemAdded", {"stock_id": str(stock_id), "product_id": str(payload.product_id)})
-
-    await session.commit()
-    await session.refresh(item)
-    return item
+    return await commands.receive_stock_item(request.app.state.session_factory, stock_id, payload.product_id, payload.quantity)
 
 
 @router.patch(
@@ -164,15 +152,12 @@ async def update_stock_item_quantity(
     payload: StockItemQuantityUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
     catalog_client: Annotated[CatalogClient, Depends(get_catalog_client)],
+    request: Request,
 ) -> StockItem:
-    item = await session.get(StockItem, item_id)
-    if item is None or item.stock_id != stock_id:
-        raise HTTPException(status_code=404, detail="Stock item not found")
-
-    item.quantity = payload.quantity
-
-    await session.commit()
-    await session.refresh(item)
+    try:
+        item = await commands.set_stock_item_quantity(request.app.state.session_factory, stock_id, item_id, payload.quantity)
+    except commands.StockItemNotFound as exc:
+        raise HTTPException(status_code=404, detail="Stock item not found") from exc
 
     await unpublish_if_out_of_stock(session, catalog_client, item.product_id)
 
@@ -189,33 +174,14 @@ async def delete_stock_item(
     item_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
     catalog_client: Annotated[CatalogClient, Depends(get_catalog_client)],
+    request: Request,
 ) -> None:
-    item = await session.get(StockItem, item_id)
-    if item is None or item.stock_id != stock_id:
-        raise HTTPException(status_code=404, detail="Stock item not found")
-    product_id = item.product_id
-    # reserved_quantity is held by in-flight RESERVED reservations (see
-    # StockItem's own docstring) -- removing the row out from under one
-    # would leave its reservation_items pointing at nothing, so the
-    # in-progress checkout/webhook flow has no item left to consume/release
-    # against. Plain `quantity` (unlike delete_stock's own >0 guard) is
-    # deliberately not checked here: clearing an item down to zero and
-    # actually removing the row are two different admin actions, and
-    # forcing "set quantity to 0 first" would just be busywork for the same
-    # end state.
-    if item.reserved_quantity > 0:
-        raise HTTPException(status_code=409, detail="Item has quantity held by an in-progress reservation")
-
-    # reserved_quantity == 0 means no *active* RESERVED reservation holds
-    # this item, but ReservationItem rows from past RELEASED/CONSUMED
-    # reservations still FK-reference it as history -- those aren't
-    # in-progress holds, just an audit trail, so they don't need to block
-    # this delete the way an active hold does. The FK has no ON DELETE
-    # CASCADE, so they're removed explicitly here first.
-    await session.execute(delete(ReservationItem).where(ReservationItem.stock_item_id == item_id))
-
-    await session.delete(item)
-    await session.commit()
+    try:
+        product_id = await commands.remove_stock_item(request.app.state.session_factory, stock_id, item_id)
+    except commands.StockItemNotFound as exc:
+        raise HTTPException(status_code=404, detail="Stock item not found") from exc
+    except commands.ReservedQuantityHeld as exc:
+        raise HTTPException(status_code=409, detail="Item has quantity held by an in-progress reservation") from exc
 
     await unpublish_if_out_of_stock(session, catalog_client, product_id)
 
@@ -230,47 +196,48 @@ async def move_stock_item(
     item_id: uuid.UUID,
     payload: StockItemMove,
     session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
 ) -> StockItem:
     await _get_stock_or_404(session, stock_id)
     await _get_stock_or_404(session, payload.to_stock_id)
 
-    if payload.to_stock_id == stock_id:
-        raise HTTPException(status_code=422, detail="Source and destination stock must differ")
+    try:
+        return await commands.move_stock_item(
+            request.app.state.session_factory, stock_id, item_id, payload.to_stock_id, payload.quantity
+        )
+    except commands.SameStockError as exc:
+        raise HTTPException(status_code=422, detail="Source and destination stock must differ") from exc
+    except commands.StockItemNotFound as exc:
+        raise HTTPException(status_code=404, detail="Stock item not found") from exc
+    except commands.InsufficientQuantity as exc:
+        raise HTTPException(status_code=422, detail="Insufficient quantity to move") from exc
 
-    source_item = await session.get(StockItem, item_id)
-    if source_item is None or source_item.stock_id != stock_id:
+
+@router.post(
+    "/{stock_id}/items/{item_id}/mark-available",
+    response_model=StockItemRead,
+    dependencies=[Depends(require_authz("update", "stock_item"))],
+)
+async def mark_stock_item_available(
+    stock_id: uuid.UUID,
+    item_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
+) -> StockItem:
+    """STR-149: the admin-facing counterpart to the telemetry-events
+    consumer's automatic MarkedUnavailable -- previously nothing ever
+    cleared `is_unavailable` (see the pre-STR-149 StockItem docstring); this
+    is a genuinely new capability, added because the ticket's own event
+    list requires a symmetric MarkedAvailable and there was no existing
+    trigger to hang it off of."""
+    item = await session.get(StockItem, item_id)
+    if item is None or item.stock_id != stock_id:
         raise HTTPException(status_code=404, detail="Stock item not found")
-    if source_item.quantity < payload.quantity:
-        raise HTTPException(status_code=422, detail="Insufficient quantity to move")
 
-    source_item.quantity -= payload.quantity
-
-    existing = await session.execute(
-        select(StockItem).where(
-            StockItem.stock_id == payload.to_stock_id,
-            StockItem.product_id == source_item.product_id,
-        )
-    )
-    dest_item = existing.scalar_one_or_none()
-    if dest_item is not None:
-        dest_item.quantity += payload.quantity
-    else:
-        dest_item = StockItem(
-            stock_id=payload.to_stock_id,
-            product_id=source_item.product_id,
-            quantity=payload.quantity,
-        )
-        session.add(dest_item)
-
-    add_outbox_event(
-        session,
-        "ItemAdded",
-        {"stock_id": str(payload.to_stock_id), "product_id": str(source_item.product_id)},
-    )
-
-    await session.commit()
-    await session.refresh(dest_item)
-    return dest_item
+    try:
+        return await commands.mark_available(request.app.state.session_factory, stock_id, item.product_id)
+    except commands.StockItemNotFound as exc:
+        raise HTTPException(status_code=404, detail="Stock item not found") from exc
 
 
 @router.post(
@@ -307,14 +274,25 @@ async def check_availability(
 
 # STR-139: synchronous reserve/release-by-order_id, called directly by
 # checkout-workflow's `reserve_stock`/`release_stock` Temporal activities.
-# Unlike the reservation saga's Kafka path (order-events -> try_reserve, see
-# consumers/order_events.py), these are plain request/response endpoints
-# with no outbox event published — the Temporal-orchestrated checkout is
-# deliberately choreography-free: the workflow already knows the outcome of
-# every step it awaits, so there's nothing for another consumer to react to
-# here, and publishing inventory-events from this path would risk the
-# Kafka-based saga's own consumer (handle_stock_reserved et al.) also
-# reacting to an order it was never involved in.
+# Unlike the reservation saga's Kafka path (order-events -> commands.
+# build_reserve, see consumers/order_events.py), these are plain
+# request/response endpoints with no outbox event published -- the
+# Temporal-orchestrated checkout is deliberately choreography-free: the
+# workflow already knows the outcome of every step it awaits, so there's
+# nothing for another consumer to react to here, and publishing
+# inventory-events from this path would risk the Kafka-based saga's own
+# consumer (handle_stock_reserved et al.) also reacting to an order it was
+# never involved in.
+#
+# STR-149: request/response contracts here are unchanged. What changed is
+# only the internal implementation -- commands.reserve/commands.release
+# append events + update the projection synchronously (with retry on
+# ConcurrencyConflict) instead of directly mutating `reserved_quantity`.
+# This endpoint is the one genuinely concurrency-sensitive write path
+# (concurrent orders/retries for the same product can race), which is why
+# it goes through the retrying `commands.reserve`/`commands.release`
+# rather than the session-scoped `build_*` functions the Kafka consumers
+# use directly.
 @router.post(
     "/reserve",
     response_model=ReserveStockResponse,
@@ -323,31 +301,15 @@ async def check_availability(
 async def reserve_stock(
     payload: ReserveStockRequest,
     request: Request,
-    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ReserveStockResponse:
-    # Idempotent by order_id: Reservation.order_id is unique (see
-    # models.py), so a retried reserve_stock activity call for the same
-    # order_id finds the reservation it already made instead of trying
-    # (and failing, or worse, double-reserving) again.
-    existing = await session.execute(
-        select(Reservation).where(Reservation.order_id == payload.order_id)
-    )
-    if existing.scalar_one_or_none() is not None:
-        return ReserveStockResponse(order_id=payload.order_id, status="reserved")
-
     settings = request.app.state.settings
-    reservation = await try_reserve(
-        session,
+    status = await commands.reserve(
+        request.app.state.session_factory,
         payload.order_id,
         [item.model_dump() for item in payload.items],
         settings.reservation_ttl_seconds,
     )
-    if reservation is None:
-        await session.rollback()
-        return ReserveStockResponse(order_id=payload.order_id, status="insufficient_stock")
-
-    await session.commit()
-    return ReserveStockResponse(order_id=payload.order_id, status="reserved")
+    return ReserveStockResponse(order_id=payload.order_id, status=status)
 
 
 @router.post(
@@ -357,15 +319,104 @@ async def reserve_stock(
 )
 async def release_stock(
     payload: ReleaseStockRequest,
-    session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request,
 ) -> ReleaseStockResponse:
-    # Idempotent by order_id: release_reservation_by_order_id only acts on a
-    # still-RESERVED reservation and is a no-op (returns None) otherwise —
-    # safe for checkout-workflow's compensation step to retry unboundedly.
-    reservation = await release_reservation_by_order_id(session, payload.order_id)
-    if reservation is None:
-        await session.rollback()
-        return ReleaseStockResponse(order_id=payload.order_id, status="not_found")
+    status = await commands.release(request.app.state.session_factory, payload.order_id)
+    return ReleaseStockResponse(order_id=payload.order_id, status=status)
 
-    await session.commit()
-    return ReleaseStockResponse(order_id=payload.order_id, status="released")
+
+# STR-149: the audit-trail and time-travel payoff -- admin-only, read-only,
+# additive. Both reuse `projector.apply_event`/`replay` -- the same fold
+# function the live projection is built from -- so history/as-of are never
+# a second implementation of what an event means.
+@router.get(
+    "/{stock_id}/{product_id}/history",
+    response_model=StockEventHistoryPage,
+    dependencies=[Depends(require_authz("read", "stock_item_history"))],
+)
+async def get_stock_item_history(
+    stock_id: uuid.UUID,
+    product_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    cursor: int = 0,
+    limit: int = 50,
+) -> StockEventHistoryPage:
+    limit = max(1, min(limit, 200))
+    aggregate_id = ev.compute_aggregate_id(stock_id, product_id)
+
+    result = await session.execute(
+        select(StockEvent)
+        .where(StockEvent.aggregate_id == aggregate_id, StockEvent.sequence_number > cursor)
+        .order_by(StockEvent.sequence_number)
+        .limit(limit + 1)
+    )
+    rows = list(result.scalars().all())
+
+    next_cursor = rows[limit - 1].sequence_number if len(rows) > limit else None
+    return StockEventHistoryPage(
+        items=[StockEventRead.model_validate(row) for row in rows[:limit]],
+        next_cursor=next_cursor,
+    )
+
+
+@router.get(
+    "/{stock_id}/{product_id}/as-of",
+    response_model=StockItemAsOf,
+    dependencies=[Depends(require_authz("read", "stock_item_history"))],
+)
+async def get_stock_item_as_of(
+    stock_id: uuid.UUID,
+    product_id: uuid.UUID,
+    timestamp: datetime,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> StockItemAsOf:
+    aggregate_id = ev.compute_aggregate_id(stock_id, product_id)
+
+    snapshot_result = await session.execute(
+        select(StockSnapshot)
+        .where(StockSnapshot.aggregate_id == aggregate_id, StockSnapshot.created_at <= timestamp)
+        .order_by(StockSnapshot.sequence_number.desc())
+        .limit(1)
+    )
+    snapshot = snapshot_result.scalar_one_or_none()
+
+    if snapshot is not None:
+        base_state = {
+            "stock_id": uuid.UUID(snapshot.state["stock_id"]) if snapshot.state["stock_id"] else None,
+            "product_id": uuid.UUID(snapshot.state["product_id"]) if snapshot.state["product_id"] else None,
+            "quantity": snapshot.state["quantity"],
+            "reserved_quantity": snapshot.state["reserved_quantity"],
+            "is_unavailable": snapshot.state["is_unavailable"],
+            "exists": snapshot.state["exists"],
+        }
+        base_sequence = snapshot.sequence_number
+    else:
+        base_state = None
+        base_sequence = 0
+
+    events_result = await session.execute(
+        select(StockEvent)
+        .where(
+            StockEvent.aggregate_id == aggregate_id,
+            StockEvent.sequence_number > base_sequence,
+            StockEvent.created_at <= timestamp,
+        )
+        .order_by(StockEvent.sequence_number)
+    )
+    events = list(events_result.scalars().all())
+
+    if snapshot is None and not events:
+        raise HTTPException(status_code=404, detail="No stock history for this item as of the given timestamp")
+
+    state = replay(events, base_state)
+    if not state["exists"]:
+        raise HTTPException(status_code=404, detail="No stock history for this item as of the given timestamp")
+
+    return StockItemAsOf(
+        stock_id=state["stock_id"],
+        product_id=state["product_id"],
+        quantity=state["quantity"],
+        reserved_quantity=state["reserved_quantity"],
+        is_unavailable=state["is_unavailable"],
+        as_of=timestamp,
+    )

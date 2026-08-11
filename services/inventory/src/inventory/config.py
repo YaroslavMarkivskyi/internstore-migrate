@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # STR-140: OPA sidecar, same pod/network namespace on GKE (see
     # docker-compose.yml's inventory-opa for the local dev equivalent).
     opa_url: str = "http://localhost:8181"
+    # STR-149: how often the snapshot worker polls for aggregates that have
+    # crossed snapshots.SNAPSHOT_EVENT_THRESHOLD / SNAPSHOT_MAX_AGE. Not on
+    # the reservation hot path -- see snapshots.py.
+    snapshot_check_interval_seconds: float = 60
 
 
 def load_settings() -> Settings:
