@@ -14,13 +14,12 @@
 #      simulation, see services/payments/README.md's Failure simulation)
 #      -> compensation fires (release_stock, mark_order_rejected) -> order
 #      status Rejected, and Inventory's held stock is released.
-#   3. Uses the Temporal CLI (via temporalio/admin-tools, since this
-#      script runs on the host, not inside the compose network) to query
-#      workflow history and assert the expected activity sequence appears.
+#   3. Uses the `temporal` CLI already bundled in the `temporal` service
+#      container (via `docker compose exec`, since this script itself
+#      runs on the host, not inside the compose network) to query workflow
+#      history and assert the expected activity sequence appears.
 #
-# Requires: curl, jq, python3, docker compose, and network access to pull
-# temporalio/admin-tools (for step 3's history query) if not already
-# cached locally. Run after:
+# Requires: curl, jq, python3, docker compose. Run after:
 #   docker compose up -d --build \
 #     temporal temporal-db temporal-ui payments payments-db \
 #     checkout-workflow-worker orders inventory nginx keycloak kafka kafka-topic-init
@@ -29,11 +28,10 @@ set -euo pipefail
 KC_URL="http://localhost:8081"
 GATEWAY_URL="https://localhost:8443/api/orders"
 INVENTORY_URL="https://localhost:8443/api/inventory"
+CATALOG_URL="https://localhost:8443/api/catalog"
 REALM="internstore"
 CLIENT_ID="internstore-web"
 CURL="curl -sk"
-COMPOSE_NETWORK="internstore-migrate_default"
-ADMIN_TOOLS_IMAGE="temporalio/admin-tools:1.27.2-tctl-1.18.2-cli-1.1.1"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
@@ -42,6 +40,30 @@ login() {
   curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
     -d "client_id=$CLIENT_ID" -d "grant_type=password" \
     -d "username=$1" -d "password=$2" | jq -r .access_token
+}
+
+# STR-150: /checkout/v2 computes its charge amount from Catalog's real
+# price for each cart product_id (orders/routers/checkout_v2.py ->
+# CatalogClient.get_product_price -> GET /products/:id) -- unlike the
+# Kafka-choreographed v1 checkout (scripts/test-reservation-saga.sh),
+# which never looks the product up in Catalog at all. This script used to
+# generate PRODUCT_A/PRODUCT_B as bare `uuid.uuid4()`s that exist in
+# Inventory (via seed_stock) but not in Catalog -- GET /products/:id 404s,
+# uncaught, and checkout/v2 500s before a workflow is even started. Never
+# caught locally because it depends on exactly which script you happen to
+# reach for. Fixed by actually creating a real Catalog product (with a
+# controlled price) for each one, instead of assuming an ambient product
+# would exist or that the demo seed data would happen to contain a ".99"
+# price for section 2.
+create_catalog_product() {
+  # $1 = admin token, $2 = price -> product_id
+  local category_id product_id
+  category_id=$($CURL "$CATALOG_URL/categories" -H "Authorization: Bearer $1" | jq -r '.[0].id')
+  [ -n "$category_id" ] && [ "$category_id" != "null" ] || fail "create_catalog_product: no categories exist in Catalog"
+  product_id=$($CURL -X POST "$CATALOG_URL/products" -H "Authorization: Bearer $1" -H "Content-Type: application/json" \
+    -d "{\"name\": \"Temporal saga smoke product $$-$RANDOM\", \"price\": $2, \"category_id\": \"$category_id\"}" | jq -r .id)
+  [ -n "$product_id" ] && [ "$product_id" != "null" ] || fail "create_catalog_product: could not create product"
+  echo "$product_id"
 }
 
 seed_stock() {
@@ -84,16 +106,29 @@ poll_until() {
   fail "$label: timed out after ${timeout_s}s waiting for '$expected', last saw '$actual'"
 }
 
-# Queries Temporal's workflow history via a throwaway admin-tools
-# container on the compose network (this script itself runs on the host,
-# outside that network) and asserts every name in $2 (space-separated)
-# appears somewhere in the history — a cheap but real check that the
-# expected activities actually ran, not just that the workflow finished.
+# Queries Temporal's workflow history and asserts every name in $2
+# (space-separated) appears somewhere in the history — a cheap but real
+# check that the expected activities actually ran, not just that the
+# workflow finished.
+#
+# STR-150: was `docker run --rm --network ... temporalio/admin-tools:
+# 1.27.2-tctl-1.18.2-cli-1.1.1 temporal workflow show ...` -- that pinned
+# tag isn't present locally and this environment has no egress to pull it
+# ("Unable to find image ... not found"), so this always failed before
+# ever reaching a real assertion. The `temporal` service container
+# already bundles the same `temporal` CLI (it's how temporal-ui/checkout-
+# workflow-worker's own tooling works) and sits on the compose network
+# already, so `docker compose exec` into it instead of spinning up a
+# separate throwaway container -- no extra image, no pull, one less moving
+# part. Also needed --detailed: the default `workflow show` table only
+# prints generic event types (ActivityTaskScheduled, ...), never the
+# activity's own name (reserve_stock, charge_payment, ...) that this
+# check actually greps for.
 assert_workflow_history_contains() {
   local workflow_id="$1" expected_names="$2"
   local history
-  history=$(docker run --rm --network "$COMPOSE_NETWORK" "$ADMIN_TOOLS_IMAGE" \
-    temporal workflow show --address temporal:7233 --workflow-id "$workflow_id" 2>&1) \
+  history=$(docker compose exec -T temporal temporal workflow show \
+    --address temporal:7233 --workflow-id "$workflow_id" --detailed 2>&1) \
     || fail "temporal workflow show failed for $workflow_id: $history"
 
   for name in $expected_names; do
@@ -108,7 +143,9 @@ ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
 [ "$ADMIN_TOKEN" != "null" ] || fail "admin login did not return an access token"
 
 echo "=== 1. Happy path: /checkout/v2 -> reserve -> order -> charge -> paid ==="
-PRODUCT_A=$(python3 -c "import uuid; print(uuid.uuid4())")
+# price 10.00 * quantity 3 = 30.00 -- deliberately not a ".99" total, so
+# the happy path doesn't accidentally trip Payments' failure simulation.
+PRODUCT_A=$(create_catalog_product "$ADMIN_TOKEN" 10.00)
 seed_stock "$ADMIN_TOKEN" "$PRODUCT_A" 10
 
 $CURL -X POST "$GATEWAY_URL/cart" -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
@@ -137,18 +174,18 @@ poll_until 15 "order_status '$CUSTOMER_TOKEN' '$ORDER_A'" "paid" \
 assert_workflow_history_contains "$WORKFLOW_ID_A" "reserve_stock create_order charge_payment update_order_status publish_order_confirmed"
 
 echo "=== 2. Payment failure -> compensation -> stock released, order Rejected ==="
-PRODUCT_B=$(python3 -c "import uuid; print(uuid.uuid4())")
+# Payments' dev-only failure simulation fails any charge whose amount
+# formatted to 2dp ends in PAYMENT_FAIL_ON_AMOUNT_SUFFIX (default "99",
+# see payments/routers/payments.py's _simulate_outcome and
+# services/payments/README.md). price 12.99 * quantity 1 = 12.99 hits it
+# deterministically, instead of assuming the demo catalog seed happens to
+# contain a ".99"-priced product.
+PRODUCT_B=$(create_catalog_product "$ADMIN_TOKEN" 12.99)
 seed_stock "$ADMIN_TOKEN" "$PRODUCT_B" 5
 
 $CURL -X POST "$GATEWAY_URL/cart" -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"product_id\": \"$PRODUCT_B\", \"quantity\": 2}" >/dev/null
+  -d "{\"product_id\": \"$PRODUCT_B\", \"quantity\": 1}" >/dev/null
 
-# Payments' dev-only failure simulation fails any charge whose amount ends
-# in PAYMENT_FAIL_ON_AMOUNT_SUFFIX (default "99", see
-# services/payments/README.md) — Catalog seeds product prices, not this
-# script, so this assumes the demo catalog has at least one product priced
-# to land on a ".99" total for quantity 2. If your local Catalog seed data
-# doesn't produce one, adjust PRODUCT_B's price in Catalog first.
 CHECKOUT_B=$($CURL -X POST "$GATEWAY_URL/checkout/v2" -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
   -d '{"contact_name": "Temporal Customer", "contact_email": "customer@example.com", "payment_method": "card"}')
 WORKFLOW_ID_B=$(echo "$CHECKOUT_B" | jq -r .workflow_id)

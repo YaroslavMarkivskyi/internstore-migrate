@@ -67,7 +67,14 @@ poll_until() {
   local elapsed=0
   while [ "$elapsed" -lt "$timeout_s" ]; do
     local actual
-    actual=$(eval "$check_cmd")
+    # STR-145 (ported from scripts/k8s/test-reservation-saga.sh, never
+    # applied back here): was `actual=$(eval "$check_cmd")` with no
+    # `|| true` -- under `set -e`, a single transient hiccup mid-poll (a
+    # momentary non-JSON response tripping jq's own parse error inside
+    # $check_cmd) makes this assignment's nonzero exit status kill the
+    # *entire script*, not just this one poll attempt -- silently, with
+    # no FAIL line, well before the timeout is reached.
+    actual=$(eval "$check_cmd" 2>/dev/null) || actual="<poll error, retrying>"
     if [ "$actual" = "$expected" ]; then
       pass "$label (took ~${elapsed}s)"
       return 0
@@ -137,7 +144,7 @@ pass "second checkout for product B rejected synchronously (409) -- check-availa
 # for an unrelated product sharing the same customer's cart.
 $CURL -X DELETE "$GATEWAY_URL/cart/items/$PRODUCT_B" -H "Authorization: Bearer $CUSTOMER_TOKEN" >/dev/null
 
-echo "=== 3. Expired reservation -> cancelled (short dev-only TTL) ==="
+echo "=== 3. Expired reservation -> cancelled ==="
 PRODUCT_C=$(python3 -c "import uuid; print(uuid.uuid4())")
 seed_stock "$ADMIN_TOKEN" "$PRODUCT_C" 5
 
@@ -148,11 +155,37 @@ ORDER_C=$($CURL -X POST "$GATEWAY_URL/checkout" -H "Authorization: Bearer $CUSTO
 [ -n "$ORDER_C" ] && [ "$ORDER_C" != "null" ] || fail "checkout for product C did not return an order id"
 poll_until 30 "order_status '$CUSTOMER_TOKEN' '$ORDER_C'" "pending" "order C reserved -> pending"
 
-# Deliberately never paid. RESERVATION_TTL_SECONDS=30 / CHECK_INTERVAL=5 in
-# docker-compose.yml -> should expire well within this timeout.
-poll_until 60 "order_status '$CUSTOMER_TOKEN' '$ORDER_C'" "cancelled" \
-  "reservation TTL expires -> ReservationExpired -> (real Kafka) -> status=cancelled"
+# Deliberately never paid.
+#
+# STR-145 (ported from scripts/k8s/test-reservation-saga.sh, never applied
+# back here): this poll used to assume RESERVATION_TTL_SECONDS=30 with a
+# 60s timeout, but docker-compose.yml actually sets it to 300s (bumped
+# from 30s so manually clicking through checkout -> pay doesn't race the
+# expiry checker) -- the 60s poll could never succeed. Timeout bumped to
+# the real TTL (300s) plus a buffer for the 5s check interval and general
+# poll slack.
+#
+# That bump surfaced a second, compounding bug: CUSTOMER_TOKEN is minted
+# once near the top of the script and reused for the rest of the run, but
+# Keycloak's realm accessTokenLifespan is also 300s -- with the earlier
+# sections' own runtime added on top, the token expires *during* this
+# poll, and every subsequent order_status call 401s (nginx's own
+# auth_request-rejection error page, not JSON, so jq fails to parse it)
+# for the rest of the window -- indistinguishable from a hung saga without
+# checking the raw response. Fixed by re-logging in on each poll attempt
+# instead of reusing one long-lived token.
+order_status_fresh() {
+  local fresh_token
+  fresh_token=$(login "customer@example.com" "Customer123")
+  order_status "$fresh_token" "$1"
+}
+poll_until 330 "order_status_fresh '$ORDER_C'" "cancelled" \
+  "reservation TTL (300s) expires -> ReservationExpired -> (real Kafka) -> status=cancelled"
 
+# Same expiry risk as CUSTOMER_TOKEN above -- by this point the script has
+# comfortably run past ADMIN_TOKEN's own 300s lifespan too, so it's
+# refreshed here rather than reused.
+ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
 poll_until 15 "item_quantity '$ADMIN_TOKEN' '$PRODUCT_C'" "5" \
   "expiry released reserved_quantity -> quantity back to 5 (never actually decremented)"
 

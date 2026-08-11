@@ -74,7 +74,21 @@ reservations_table = sa.table(
     'reservations',
     sa.column('id', sa.Uuid()),
     sa.column('order_id', sa.Uuid()),
-    sa.column('status', sa.String()),
+    # STR-150: was sa.String() -- on real Postgres, `status` is the native
+    # `reservation_status` enum (see models.Reservation), and Postgres has
+    # no implicit VARCHAR = reservation_status comparison operator, so the
+    # WHERE status = 'reserved' filter below raised UndefinedFunctionError
+    # ("operator does not exist: reservation_status = character varying")
+    # the first time this migration ran against real Postgres. SQLite has
+    # no native enum type (status is just a plain column there), so
+    # test_migration.py -- which only exercises migration_support.
+    # build_backfill_events, never this op-based script -- could never
+    # have caught it. Matching the model's Enum type here makes the bound
+    # 'reserved' literal compare against the enum correctly.
+    sa.column(
+        'status',
+        sa.Enum('reserved', 'consumed', 'released', name='reservation_status', native_enum=True, create_type=False),
+    ),
 )
 
 stock_events_table = sa.table(

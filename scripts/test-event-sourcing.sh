@@ -8,9 +8,11 @@
 # alongside this script as a combined merge gate, see README.md).
 #
 # Covers:
-#   1. A sequence of receive -> receive -> move -> reserve (via a real
-#      checkout) -> pay (consume) against a single product, driven through
-#      the ordinary admin/customer-facing endpoints.
+#   1. A sequence of receive -> receive -> reserve (via a real checkout)
+#      -> pay (consume) -> move against a single product, driven through
+#      the ordinary admin/customer-facing endpoints. STR-150: reserve
+#      deliberately runs before move (was move -> reserve) -- see the
+#      "STR-150" comment further down for why.
 #   2. GET .../history shows the exact event sequence that sequence of
 #      operations produced, for both stock_ids the move touched.
 #   3. GET .../as-of at a timestamp captured mid-sequence reconstructs the
@@ -66,7 +68,16 @@ poll_until() {
   local elapsed=0
   while [ "$elapsed" -lt "$timeout_s" ]; do
     local actual
-    actual=$(eval "$check_cmd")
+    # STR-150: was `actual=$(eval "$check_cmd")` with no `|| true` -- one
+    # of this script's own check_cmds pipes into `grep -c` (see the
+    # StockConsumed poll below), and grep -c exits 1 (while still
+    # printing "0" to stdout) when the count is zero. Under `set -e`,
+    # that non-zero status from the very first poll attempt -- before
+    # StockConsumed has had a chance to show up -- killed the whole
+    # script silently, with no FAIL line, well before the 30s timeout.
+    # Same root cause STR-145 already found and fixed in
+    # scripts/test-reservation-saga.sh's own poll_until; ported here too.
+    actual=$(eval "$check_cmd" 2>/dev/null) || actual="<poll error, retrying>"
     if [ "$actual" = "$expected" ]; then
       pass "$label (took ~${elapsed}s)"
       return 0
@@ -113,7 +124,7 @@ ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
 [ "$CUSTOMER_TOKEN" != "null" ] || fail "customer login did not return an access token"
 [ "$ADMIN_TOKEN" != "null" ] || fail "admin login did not return an access token"
 
-echo "=== 1. Build a mixed event sequence: receive -> receive -> move -> reserve -> pay ==="
+echo "=== 1. Build a mixed event sequence: receive -> receive -> reserve -> pay -> move ==="
 PRODUCT=$(python3 -c "import uuid; print(uuid.uuid4())")
 STOCK_A=$(create_stock "$ADMIN_TOKEN" "A")
 STOCK_B=$(create_stock "$ADMIN_TOKEN" "B")
@@ -138,10 +149,20 @@ ITEM_A=$($CURL "$INVENTORY_URL/stocks/$STOCK_A/items" -H "Authorization: Bearer 
 MIDPOINT=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())")
 sleep 1
 
-$CURL -X POST "$INVENTORY_URL/stocks/$STOCK_A/items/$ITEM_A/move" -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" -d "{\"to_stock_id\": \"$STOCK_B\", \"quantity\": 12}" >/dev/null
-pass "ItemMovedOut/ItemMovedIn: moved 12 units from stock A to stock B"
-
+# STR-150: reserve deliberately happens here, BEFORE the move (was
+# move -> reserve). commands._allocate picks which StockItem row(s) to
+# reserve from by `ORDER BY StockItem.id` across every row for the
+# product -- id is a random uuid4, unrelated to which stock the row lives
+# in or when it was created, so which of stock A/B actually received the
+# StockReserved event was a coin flip, not the "stock A" this section
+# hard-asserts a few lines down (confirmed live: one real run landed the
+# whole reservation on stock B instead). Reordering so the checkout runs
+# while stock B's row for this product doesn't exist yet (the move hasn't
+# happened) makes stock A the only possible allocation target -- no
+# change to Inventory itself, this is a test-sequencing fix. Consumption
+# at pay time is keyed off the reservation's own stock_item_id (not
+# re-resolved by product_id), so it stays pinned to stock A even after
+# the later move.
 $CURL -X POST "$GATEWAY_URL/cart" -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
   -d "{\"product_id\": \"$PRODUCT\", \"quantity\": 4}" >/dev/null
 CHECKOUT=$($CURL -X POST "$GATEWAY_URL/checkout" -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
@@ -150,7 +171,7 @@ ORDER=$(echo "$CHECKOUT" | jq -r .id)
 [ -n "$ORDER" ] && [ "$ORDER" != "null" ] || fail "checkout did not return an order id: $CHECKOUT"
 
 poll_until 30 "order_status '$CUSTOMER_TOKEN' '$ORDER'" "pending" \
-  "OrderCreated -> Inventory reserves -> StockReserved -> status=pending"
+  "OrderCreated -> Inventory reserves -> StockReserved -> status=pending (guaranteed against stock A -- stock B doesn't have this product yet)"
 
 PAY=$($CURL -X POST "$GATEWAY_URL/orders/$ORDER/pay" -H "Authorization: Bearer $CUSTOMER_TOKEN")
 [ "$(echo "$PAY" | jq -r .status)" = "paid" ] || fail "expected status=paid after pay, got: $PAY"
@@ -158,9 +179,13 @@ PAY=$($CURL -X POST "$GATEWAY_URL/orders/$ORDER/pay" -H "Authorization: Bearer $
 poll_until 30 "history_event_types '$ADMIN_TOKEN' '$STOCK_A' '$PRODUCT' | grep -c StockConsumed" "1" \
   "PaymentConfirmed -> Inventory consumes -> StockConsumed appended to stock A's history"
 
+$CURL -X POST "$INVENTORY_URL/stocks/$STOCK_A/items/$ITEM_A/move" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d "{\"to_stock_id\": \"$STOCK_B\", \"quantity\": 12}" >/dev/null
+pass "ItemMovedOut/ItemMovedIn: moved 12 units from stock A to stock B"
+
 echo "=== 2. GET history shows the exact event sequence on both touched aggregates ==="
 HISTORY_A=$(history_event_types "$ADMIN_TOKEN" "$STOCK_A" "$PRODUCT")
-[ "$HISTORY_A" = "StockItemCreated,ItemReceived,ItemMovedOut,StockReserved,StockConsumed" ] \
+[ "$HISTORY_A" = "StockItemCreated,ItemReceived,StockReserved,StockConsumed,ItemMovedOut" ] \
   || fail "unexpected stock A history: $HISTORY_A"
 pass "stock A history: $HISTORY_A"
 
@@ -169,12 +194,21 @@ HISTORY_B=$(history_event_types "$ADMIN_TOKEN" "$STOCK_B" "$PRODUCT")
 pass "stock B history: $HISTORY_B"
 
 echo "=== 3. GET as-of at the mid-sequence timestamp reconstructs the correct intermediate state ==="
-AS_OF_A=$($CURL "$INVENTORY_URL/stocks/$STOCK_A/$PRODUCT/as-of?timestamp=$MIDPOINT" -H "Authorization: Bearer $ADMIN_TOKEN")
+# STR-150: MIDPOINT is an ISO-8601 timestamp with a "+00:00" UTC offset --
+# dropped straight into a query string unencoded, curl sends the literal
+# "+", and query-string parsing rules (this server's included) treat "+"
+# as an encoded space, not a literal plus. FastAPI/pydantic then saw
+# "...093160 00:00" and 422'd with a datetime parse error -- never caught
+# before because this script had never actually been run against a live
+# server (see ticket). URL-encode the one character that matters here
+# rather than pulling in a general encoder for a single query param.
+MIDPOINT_ENCODED=${MIDPOINT//+/%2B}
+AS_OF_A=$($CURL "$INVENTORY_URL/stocks/$STOCK_A/$PRODUCT/as-of?timestamp=$MIDPOINT_ENCODED" -H "Authorization: Bearer $ADMIN_TOKEN")
 [ "$(echo "$AS_OF_A" | jq -r .quantity)" = "30" ] || fail "as-of stock A at midpoint expected quantity=30, got: $AS_OF_A"
 [ "$(echo "$AS_OF_A" | jq -r .reserved_quantity)" = "0" ] || fail "as-of stock A at midpoint expected reserved_quantity=0, got: $AS_OF_A"
-pass "as-of(stock A, midpoint) = quantity 30, reserved 0 -- before the move/reserve/consume"
+pass "as-of(stock A, midpoint) = quantity 30, reserved 0 -- before the reserve/consume/move"
 
-AS_OF_B_STATUS=$($CURL -o /dev/null -w "%{http_code}" "$INVENTORY_URL/stocks/$STOCK_B/$PRODUCT/as-of?timestamp=$MIDPOINT" -H "Authorization: Bearer $ADMIN_TOKEN")
+AS_OF_B_STATUS=$($CURL -o /dev/null -w "%{http_code}" "$INVENTORY_URL/stocks/$STOCK_B/$PRODUCT/as-of?timestamp=$MIDPOINT_ENCODED" -H "Authorization: Bearer $ADMIN_TOKEN")
 [ "$AS_OF_B_STATUS" = "404" ] || fail "as-of stock B at midpoint expected 404 (aggregate didn't exist yet), got: $AS_OF_B_STATUS"
 pass "as-of(stock B, midpoint) = 404 -- stock B's aggregate didn't exist until the move"
 

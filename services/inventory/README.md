@@ -335,6 +335,118 @@ docker compose up -d --build \
 ./scripts/test-event-sourcing.sh
 ```
 
+## STR-150: live verification against real Postgres + both sagas
+
+STR-149 above was unit-tested against SQLite (`Base.metadata.create_all`,
+never Alembic) and its migration scripts were syntax-checked but never
+executed. STR-150 ran the actual migration against real Postgres with
+realistic seed data (multiple stores/products plus an in-flight,
+`status='reserved'` reservation — the trickiest backfill case), then ran
+both sagas and the new event-sourcing script repeatedly against the
+migrated, event-sourced stack. Same standard as prior live-verification
+tickets (#157, #160): no design changes, fix real bugs found while running
+it, document them here.
+
+**Migration dry-run**: `alembic upgrade head` against real Postgres with 9
+pre-existing `stock_items` rows plus 6 seeded ones (including the in-flight
+reservation: quantity=12, reserved_quantity=5) produced 16 `stock_events`
+rows (15 `StockItemCreated` + 1 `StockReserved`). Replaying every
+aggregate's events with `projector.replay` and comparing against the live
+`stock_items` rows matched exactly, including the in-flight reservation's
+reconstructed `quantity=12, reserved_quantity=5`. `stock_items` itself was
+byte-for-byte unchanged by the migration, as designed. Re-running `alembic
+upgrade head` against an already-migrated database is a clean no-op.
+
+**Real bug found — migration fails on real Postgres, never caught by
+SQLite tests**: `85cc420998d1_backfill_stock_events.py`'s `reservations_
+table.c.status` was declared `sa.String()`, but on real Postgres `status`
+is the native `reservation_status` enum (see `models.Reservation`); Postgres
+has no implicit `VARCHAR = reservation_status` comparison operator, so the
+migration's `WHERE status = 'reserved'` filter raised `UndefinedFunctionError:
+operator does not exist: reservation_status = character varying` the first
+time it ran against Postgres. SQLite has no native enum type, so
+`test_migration.py` — which only ever exercises `migration_support.
+build_backfill_events`, never this Alembic script — could never have caught
+it. This is the exact category of gap the ticket flagged going in. Fixed by
+declaring the column with the same `sa.Enum(...)` the model uses.
+
+**Real bugs found while running the two sagas and the new event-sourcing
+script** — all in the test scripts themselves, not in event-sourcing code,
+but each one blocked the ticket's own Definition of Done until fixed:
+
+- `scripts/test-reservation-saga.sh`'s expiry poll assumed a stale
+  `RESERVATION_TTL_SECONDS=30` with a 60s timeout; both `docker-compose.yml`
+  and `k8s/base/inventory/configmap.yaml` have actually set it to 300s for a
+  while. `scripts/k8s/test-reservation-saga.sh` (STR-145) already found and
+  fixed this — plus a second, compounding bug it surfaced (the reused
+  `CUSTOMER_TOKEN` expiring mid-poll, since Keycloak's `accessTokenLifespan`
+  is also 300s) — but neither fix was ever ported back to the compose
+  original. Ported here.
+- Both `test-reservation-saga.sh` and `test-event-sourcing.sh`'s
+  `poll_until` used `actual=$(eval "$check_cmd")` with no fallback; under
+  `set -e`, a `check_cmd` whose pipeline ends non-zero (a `grep -c` match
+  count of zero, in `test-event-sourcing.sh`'s case) kills the whole script
+  silently on the very first poll attempt, before it gets a chance to
+  retry. Same root cause STR-145 found in the k8s copy of the reservation
+  script; present independently in `test-event-sourcing.sh` too. Fixed both
+  with `actual=$(eval "$check_cmd" 2>/dev/null) || actual="<poll error,
+  retrying>"`.
+- `scripts/test-temporal-saga.sh` generated `PRODUCT_A`/`PRODUCT_B` as bare
+  `uuid.uuid4()`s that exist in Inventory but not in Catalog — `/checkout/v2`
+  looks up each cart product's price from Catalog (unlike the v1 checkout
+  the reservation-saga script exercises, which never calls Catalog at all),
+  so `GET /products/:id` 404s and the endpoint 500s before a workflow even
+  starts. Fixed by actually creating real Catalog products with controlled
+  prices (one deliberately not ending in ".99", one deliberately at 12.99 to
+  hit Payments' failure simulation deterministically instead of hoping the
+  demo seed data happened to contain a ".99"-priced product).
+- Same script's workflow-history assertion shelled out to `docker run
+  temporalio/admin-tools:1.27.2-tctl-1.18.2-cli-1.1.1`, a pinned tag not
+  present locally with no egress to pull it — always failed before reaching
+  a real assertion. Fixed by `docker compose exec`-ing into the `temporal`
+  service container instead, which already bundles the same CLI; also
+  needed `--detailed`, since the default `workflow show` output never prints
+  activity names (`reserve_stock`, `charge_payment`, ...), only generic
+  event types.
+- `test-event-sourcing.sh`'s as-of check built a query string from an
+  ISO-8601 timestamp containing a `+00:00` offset without URL-encoding it;
+  curl sent the literal `+`, which query-string parsing (this server's
+  included) treats as an encoded space, so the server 422'd on the mangled
+  timestamp. Fixed by encoding `+` as `%2B`.
+- Same script's section 1 hard-assumed the reservation/consumption would
+  land on "stock A" specifically, but `commands._allocate` orders candidate
+  `StockItem` rows by `ORDER BY StockItem.id` (a random uuid4, unrelated to
+  which stock a row lives in) — confirmed live: one real run landed the
+  entire reservation on stock B instead, since B's row happened to sort
+  first. Fixed by reordering the script's own sequence (reserve before move,
+  not after) so stock B's row for that product doesn't exist yet at reserve
+  time, making stock A the only possible allocation target — a test-
+  sequencing fix, no change to `_allocate` itself (unrelated to STR-149,
+  pre-existing allocation-order behavior this ticket doesn't redesign).
+
+With all of the above fixed: `test-reservation-saga.sh` and
+`test-temporal-saga.sh` (including its payment-failure/compensation path)
+each passed 3 consecutive runs against the same seeded stack, and
+`test-event-sourcing.sh` passed 2 consecutive runs against the live
+Postgres-backed stack (migrated + newly-generated events both correct via
+`history`/`as-of`).
+
+**Concurrent-reservation race condition** (Step 4, the ticket's
+highest-priority check): two concurrent `POST /stocks/reserve` requests for
+the same `(store, product)` with a stock item seeded to `quantity=1` (enough
+for exactly one to succeed), fired via `asyncio.gather` directly at
+Inventory's internal endpoint. Observed, across 5 repeated runs: exactly one
+request returns `{"status": "reserved"}`, the other returns a clean
+`{"status": "insufficient_stock"}` (HTTP 200, not a 500 or silent overcount)
+— `stock_events`' `UNIQUE(aggregate_id, sequence_number)` constraint
+rejected the loser's stale-sequence append, `run_with_retry` retried it
+against freshly-read state, and the retry correctly saw zero stock left.
+`check-availability` afterward confirmed `available=0`. Releasing the
+winner's reservation and retrying the loser's order succeeds cleanly
+(`{"status": "reserved"}`), confirming retry-when-stock-frees-up also works.
+No design change needed here — this is the mechanism working exactly as
+designed.
+
 ## Migrations
 
 New migration after changing `src/inventory/models.py`:
