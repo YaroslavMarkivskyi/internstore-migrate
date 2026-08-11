@@ -1,0 +1,15 @@
+# Local-only tweak: kafka-0 kept self-crash-looping ("unable to register
+# with the controller quorum" — its own internal KRaft self-registration
+# timeout, not a k8s probe kill) even after loosen-probe-tolerance.yaml
+# gave every container more slack. reduce-cpu-request.yaml's blanket 50m
+# floor gives kafka's JVM the same cgroup CPU *shares* as every tiny
+# Python service under real node contention, when in practice it needs
+# more to get through its own boot-time registration handshake before its
+# internal timeout fires. This raises just kafka's own request back up
+# (still well under its 1000m limit, and total requests stay far below
+# the node's ~3.15 allocatable cores after kube-system) to give it
+# proportionally more CPU under contention without re-introducing the
+# original capacity problem for everyone else.
+- op: replace
+  path: /spec/template/spec/containers/0/resources/requests/cpu
+  value: "300m"

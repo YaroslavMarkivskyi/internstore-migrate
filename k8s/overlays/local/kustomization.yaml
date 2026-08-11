@@ -19,3 +19,23 @@ patches:
 - path: patches/bump-memory-limit.yaml
   target:
     kind: StatefulSet
+- path: patches/reduce-cpu-request.yaml
+  target:
+    kind: Deployment
+- path: patches/reduce-cpu-request.yaml
+  target:
+    kind: StatefulSet
+- path: patches/loosen-probe-tolerance.yaml
+  target:
+    kind: Deployment
+    # excludes checkout-workflow-worker: it carries no readinessProbe/
+    # livenessProbe at all (see its deployment.yaml comment), so this
+    # patch's `add` ops have no parent path to attach to there.
+    name: "^(ai-assistant|auth-backend|catalog|chat|inventory|keycloak|mcp-gateway|mock-camera|nginx|notifications|orders|payments|redis|security|telemetry|temporal|temporal-ui)$"
+- path: patches/loosen-probe-tolerance.yaml
+  target:
+    kind: StatefulSet
+- path: patches/kafka-cpu-request.yaml
+  target:
+    kind: StatefulSet
+    name: "^kafka$"

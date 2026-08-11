@@ -1,0 +1,25 @@
+# Local-only tweak: found by actually running the full stack on a real kind
+# node (see k8s/README.md, "Probe tolerance on a small local node"). With
+# ~30 Deployments/StatefulSets all cold-starting at once (each doing a `uv
+# sync`/`alembic upgrade`/JVM-boot dance) on a 4-core dev box, individual
+# containers get real, bursty CPU starvation even though node-wide average
+# usage looks moderate — several services (kafka, keycloak, ai-assistant,
+# catalog, chat, inventory, mcp-gateway, orders, telemetry) got stuck in a
+# self-inflicted CrashLoopBackOff: base's default failureThreshold (3) at
+# their periodSeconds (5-15s) gives each container only ~15-45s to become
+# healthy before the kubelet kills it, which isn't enough when everything
+# is starting at once and competing for the same 4 cores. Once killed
+# mid-boot they restart and immediately re-join the contention, which can
+# loop indefinitely.
+#
+# This only loosens the *tolerance* (how many consecutive failures before
+# a restart), not the probe's own path/port logic — a genuinely broken
+# container still gets killed, just after more like 100s+ of contention
+# instead of 30s. containers/0-only, same rationale as the other patches
+# in this directory.
+- op: add
+  path: /spec/template/spec/containers/0/livenessProbe/failureThreshold
+  value: 10
+- op: add
+  path: /spec/template/spec/containers/0/readinessProbe/failureThreshold
+  value: 10

@@ -189,19 +189,245 @@ running the full stack concurrently on a tiny node.
   `k8s/build-images.sh`), which is the next step for whoever picks this up to run end-to-end
   against real images, not something validated as part of writing the manifests.
 
-## Still to run (not done as part of writing these manifests — needs real images + time)
+## STR-145: live verification — build images, run all sagas against a real kind cluster
 
-1. `./k8s/build-images.sh` then `kubectl apply -k k8s/overlays/local` — confirm all pods reach
-   `Running`/`Ready`, no `CrashLoopBackOff`.
-2. Hit a route through nginx (`curl -sk https://localhost:<nodePort>/api/catalog/categories`)
-   and confirm 200, not 502 — the concrete DNS-parity check.
-3. Run `scripts/verify-gateway.sh`, `test-reservation-saga.sh`, `test-telemetry-saga.sh`,
-   `test-security-saga.sh`, `test-chat-saga.sh`, `test-temporal-saga.sh` against the
-   port-forwarded/NodePort nginx (each may need its `docker compose`-specific steps adapted —
-   see "Known gaps" above). `test-notifications-saga.sh` needs the Mailpit workaround above.
-4. `kubectl scale deployment/chat --replicas=2`, manually confirm cross-instance chat message
-   delivery still works via Redis pub/sub (STR-128) — K8s Service round-robin is a genuinely
-   different load-balancing mechanism than nginx's resolver-based routing, so this needs an
-   actual two-tab manual test, not an assumption that it still works.
-5. `kubectl delete -k k8s/overlays/local` — confirm no orphaned PVCs remain (local dev data
-   isn't precious here, unlike compose's named volumes surviving `docker compose down`).
+Everything in "Still to run" above (the state this file was in before STR-145) has now
+actually been run end-to-end against a real `kind` cluster on a 4-core host, images built
+from this repo's own Dockerfiles, no shortcuts. This section is the record of that run: what
+passed cleanly, what real bugs were found and fixed (manifest-only, per this ticket's own
+scope — no architecture changes), and the two open questions ("does nginx's DNS parity claim
+actually hold", "does chat cross-instance delivery actually work") that STR-142's README could
+only flag as needing a live check.
+
+### Result summary
+
+- `k8s/build-images.sh` runs clean as written — all 14 `internstore/*:local` images (12 domain
+  services + nginx + mock-camera) build and `kind load docker-image` successfully. No script
+  changes needed; every image tag it builds matches exactly what the Deployment manifests
+  reference.
+- `kubectl apply -k k8s/overlays/local/` reaches **100% of pods Running/Ready** — all infra
+  plus all 12 domain services — after the fixes below.
+- All 6 in-scope saga scripts (`scripts/k8s/*.sh`, adapted copies — see below) **pass** against
+  the live cluster.
+- Chat cross-instance delivery (2 replicas): **confirmed working**, live proof below.
+- Teardown: **no orphaned PVCs** — `kubectl delete -k` removes all 11 PVCs itself (they're
+  declared as ordinary standalone resources in this kustomization, not left to a StatefulSet's
+  own reclaim policy), and kind's default `local-path` StorageClass has `reclaimPolicy: Delete`,
+  so the backing PV + on-node data directory are gone too. Every teardown is a full data wipe by
+  default — worth knowing, not a bug: nothing here relies on data surviving a `kubectl delete`.
+
+### Real bugs found and fixed (all manifest/script-scoped, per this ticket's mandate)
+
+**1. Local-overlay CPU-request floor was too high for a 4-core host** (confirmed the STR-142
+capacity finding, then fixed it). Base's per-container `resources.requests.cpu` (100m for most
+domain services, up to 250m for Kafka/Keycloak/Temporal) summed to ~3.7 cores of *requests*
+before any pod even starts using CPU — kube-system alone reserves ~0.85 core on a single-node
+kind cluster, leaving ~3.15 allocatable, so several pods sat `Pending` ("Insufficient cpu").
+Chose to **reduce requests via a new `k8s/overlays/local` patch**
+(`patches/reduce-cpu-request.yaml`, blanket `containers/0` cpu request → `50m`) rather than
+give the kind node more CPU, because kind nodes are containers sharing *this same host's* 4
+cores — there's no separate allocation to bump on a single dev machine. This only touches the
+scheduling floor (`requests`), not the actual ceiling (`limits`), so nothing loses real
+throughput under load.
+
+**2. `bump-memory-limit.yaml` was silently a *cut*, not a bump, for 3 services.** That existing
+local-overlay patch blanket-replaces every container's memory *limit* to 768Mi — but base sets
+keycloak/kafka/temporal's own limit to 1Gi, so 768Mi was actually lower than base for those
+three. Caught via a live OOMKill on keycloak. Fixed by raising the patch's value to 1536Mi
+(comfortably above every base limit, so it's now always a bump, never a cut, regardless of
+what base sets per-service).
+
+**3. Probe tolerance was too tight for ~30 services cold-starting on one 4-core node at once.**
+Base's default `failureThreshold` (3) at typical `periodSeconds` (5-15s) gives each container
+only 15-45s to become healthy — not enough when every pod is competing for the same 4 cores
+simultaneously (each doing its own `uv sync`/`alembic upgrade`/JVM-boot dance). Added
+`patches/loosen-probe-tolerance.yaml` (`failureThreshold: 10` on every readiness/liveness
+probe, `containers/0` only — excludes `checkout-workflow-worker`, which has no probes at all).
+
+**4. Kafka's `KAFKA_CONTROLLER_QUORUM_VOTERS` pointed at the Service DNS name, not `localhost`
+— a real base-manifest bug, fixed there, not just in the local overlay.** With
+`"1@kafka:9093"`, the single broker/controller registered with *itself* over the ClusterIP
+Service's hairpin path instead of a same-pod loopback, and consistently failed its own internal
+registration handshake ~60-70s after every start (`CancellationException`, "unable to register
+with the controller quorum") — a fixed protocol-level timeout, not CPU contention (node-wide
+CPU usage was ~34% at the time, confirmed via `docker stats`). Fixed by changing it to
+`"1@localhost:9093"` in `k8s/base/kafka/statefulset.yaml` — there's only one node in this
+quorum and it's always the pod talking to itself.
+
+**5. Kafka's own readiness/liveness probes hit the same hairpin problem, independently.**
+`kafka-topics.sh --bootstrap-server localhost:9092 --list` bootstraps via localhost fine, but
+the admin client then reconnects using the *advertised* listener (`kafka:9092`, the Service
+name) for the actual RPC — routing the probe back through the same broken self-Service path,
+timing out even once the broker was genuinely up and accepting real connections. Fixed in
+`k8s/base/kafka/statefulset.yaml` by replacing both probes with a plain `bash -c 'exec
+3<>/dev/tcp/localhost/9092'` TCP-open check — sufficient for a single-broker dev cluster, and
+it sidesteps the advertised-listener redirect entirely (real client pods, being genuinely
+different pods from kafka-0, don't hit this hairpin path at all — only same-pod tooling does).
+
+**6. `ai-assistant` and `mcp-gateway`'s `OPENAI_API_KEY: ""` crash-looped both pods.** The
+OpenAI SDK's own client constructor (`AsyncOpenAI(api_key=...)`) raises `OpenAIError: Missing
+credentials` for a falsy key — unlike Stripe's client, which only 401s lazily at call time
+(the pattern compose's `${OPENAI_API_KEY:-}` comment was modeled on). Compose's "still boots
+without it" claim only held in practice because local devs have a real value in their own
+`.env`; this is the first time either service ran with no `.env` fallback at all. Fixed in
+`k8s/base/ai-assistant/secret.yaml` and `k8s/base/mcp-gateway/secret.yaml` with a non-empty
+placeholder (`sk-local-dev-placeholder-not-a-real-key`) — real AI-assistant calls still 401
+without a genuine key, matching Stripe's documented behavior.
+
+**7. nginx's `resolver` directive was hardcoded to `127.0.0.11`, Docker Compose's embedded DNS
+— the STR-142 "no nginx.conf edits should be needed" claim did not hold.** Every proxied
+request 500'd with `resolver: 127.0.0.11:53` connection-refused errors — that address doesn't
+exist in Kubernetes (pods get CoreDNS's ClusterIP instead, e.g. `10.96.0.10` on this cluster,
+but it's whatever the cluster assigns, not a value safe to hardcode either). **A second,
+independent issue compounded it**: even with the right resolver IP, nginx's own DNS-resolution
+mechanism (used for the `set $x_upstream "host:port"` request-time `proxy_pass` variables)
+queries literally whatever hostname is in the variable — it does not consult
+`/etc/resolv.conf`'s `search` list the way a normal libc resolver call (`curl`, `python`,
+`getent`) does. Compose's embedded DNS resolves bare short names (`auth-backend`) natively;
+CoreDNS only resolves them via the pod's search suffix, so the exact same bare names in
+nginx.conf 500'd in-cluster even with a working resolver address. Both problems share one root
+cause (nginx.conf assuming compose-only DNS semantics) and one fix, in `nginx/
+docker-entrypoint-certs.sh`: at container start, read the container's *actual* nameserver and
+`svc.cluster.local`-style search suffix from its own `/etc/resolv.conf`, and `sed`-patch
+`nginx.conf`'s `resolver` directive and every bareword upstream hostname accordingly. Under
+compose this is a no-op (127.0.0.11, no matching search suffix) — same nginx.conf, same image,
+correct behavior in both environments without hardcoding either one. Confirmed live: `GET
+/api/catalog/categories` through nginx went from `500` to `200` after this fix, and
+`/api/orders/health` etc. correctly `401` instead of `502`/`500`.
+
+**8. Several `scripts/*.sh` had real, pre-existing bugs of their own — not translation
+mistakes, and not compose-vs-k8s differences — first surfaced because this is the first time
+they were actually run.** All fixed in the `scripts/k8s/` copies with a comment explaining
+each; flagging here that the compose originals carry the same bugs and would benefit from the
+same fixes:
+  - `verify-gateway.sh`'s probe-category name (`"gw-probe-$RANDOM-guest"`, ~20 chars) exceeds
+    Catalog's `name` schema limit (`max_length=15`), 422ing instead of 403ing.
+  - `verify-gateway.sh`'s "JWKS caching survives Keycloak down" assertion (expects `200`) is
+    stale relative to `auth-backend`'s `RevocationChecker` (AUTH-05) — that does its own live
+    Keycloak token-introspection call per token (30s cache) and deliberately fails closed
+    (`401`) on an uncached token with Keycloak unreachable. Correct secure-by-default behavior,
+    not a caching gap; the assertion needed updating, not the app.
+  - `test-reservation-saga.sh` polls for reservation expiry with a 60s timeout and a comment
+    claiming `RESERVATION_TTL_SECONDS=30`, but both compose and this manifest set actually set
+    it to 300s (confirmed against the live inventory pod's own env) — the poll could never
+    succeed as written. Bumping the timeout to match the real TTL then surfaced a *second*,
+    compounding bug: the customer/admin tokens are minted once near the top of the script and
+    reused for the whole run, but Keycloak's `accessTokenLifespan` is 300s — with a 330s+ poll
+    plus everything before it, the token expires mid-poll and every subsequent check 401s
+    (nginx's own non-JSON auth-rejection page, not the app's JSON) for the rest of the window,
+    indistinguishable from a hung saga without inspecting the raw response. Fixed by
+    re-logging-in on each poll attempt instead of reusing one long-lived token. Also hardened
+    `poll_until` itself to not let a single transient non-JSON response (`set -e` + a `jq`
+    parse error) silently kill the entire script mid-poll with no `FAIL` line.
+  - `test-temporal-saga.sh` never actually registers `PRODUCT_A`/`PRODUCT_B` in Catalog —
+    `checkout_v2.py`'s own price lookup (`catalog_client.get_product_price`, added specifically
+    so prices are "never trusted from the client") means both need a real Catalog row with a
+    known price, or checkout fails before ever reaching Payments. Fixed by seeding real
+    products with prices chosen to hit the intended happy-path/failure outcomes deterministically
+    (9.50 × 3, 12.99 × 1) instead of relying on undocumented demo seed data.
+  - `test-temporal-saga.sh`'s `docker run temporalio/admin-tools:1.27.2-tctl-1.18.2-cli-1.1.1`
+    tag no longer exists on Docker Hub (confirmed live 404). Switched to `:latest`.
+  - `test-temporal-saga.sh`'s workflow-history assertion greps the CLI's default table output
+    for activity names (`reserve_stock`, etc.) that table format never includes — only
+    `--output json` surfaces the real `activityType.name` field the check actually needs.
+  - (k8s-specific) `kubectl run ... -i --rm` silently truncated captured stdout when run
+    non-interactively (no TTY) — dropped `-i` since nothing needs stdin here, only the one-shot
+    command's own output.
+
+None of the above needed second-guessing STR-142's architecture decisions (OPA sidecar model,
+per-service Postgres, etc.) — every fix is either a probe/resource-tuning value, a genuine
+config bug (Kafka's controller-quorum address, nginx's DNS assumptions, an empty secret), or a
+pre-existing bug in a test script that had simply never been run before.
+
+### Adapted saga scripts: `scripts/k8s/*.sh`
+
+New copies, not edits to the originals (which remain the compose source of truth):
+`verify-gateway.sh`, `test-reservation-saga.sh`, `test-telemetry-saga.sh`,
+`test-security-saga.sh`, `test-chat-saga.sh`, `test-temporal-saga.sh` — all pass against the
+live cluster. Translation pattern: `docker compose exec`/`restart`/`logs` calls become
+`kubectl exec`/`scale`/`logs`; services with no NodePort (`auth-backend`) get a
+`kubectl port-forward` for the script's duration; "hit a service directly, bypassing the
+gateway" (`verify-gateway.sh`'s internal-token isolation checks) becomes a reusable
+`kubectl run curlimages/curl` probe pod instead of one-shot `docker run --network` calls (too
+slow to spin up fresh per call on a busy kind node); Temporal's workflow-history check becomes
+a one-shot `kubectl run temporalio/admin-tools` pod instead of `docker run --network`.
+`test-security-saga.sh` and `test-chat-saga.sh` needed no compose-specific translation at all
+(pure HTTP/WebSocket through the gateway) — copied over anyway so every in-scope script has one
+`scripts/k8s/` home, and so the real bugs found while running them (above) don't have to be
+rediscovered by whoever reaches for these next.
+
+`test-notifications-saga.sh` is **not** copied to `scripts/k8s/` (explicitly out of scope,
+depends on Mailpit — see "Excluded from this manifest set" above). Its actual assertion was
+verified manually instead: a real checkout → pay through the gateway, with a throwaway Mailpit
+Deployment+Service standing in for the excluded compose service (see next section), produced a
+real email — `PaymentConfirmed -> (real Kafka) -> Notifications -> (real SMTP) -> Payment
+confirmed for order <id>` visible via Mailpit's REST API, correct recipient/subject/body. Same
+flow that script would assert, confirmed working, without adding a permanent k8s script for an
+explicitly-excluded dependency.
+
+### Throwaway Mailpit
+
+Used for `test-telemetry-saga.sh`, `test-chat-saga.sh`, and the manual notifications check
+above — not part of the stack otherwise:
+
+```bash
+kubectl create deployment mailpit --image=axllent/mailpit:v1.20 --port=8025
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  labels: {app: mailpit}
+spec:
+  selector: {app: mailpit}
+  ports:
+  - {name: http, port: 8025, targetPort: 8025}
+  - {name: smtp, port: 1025, targetPort: 1025}
+EOF
+kubectl rollout restart deployment/notifications   # picks up the now-resolvable "mailpit" host
+kubectl port-forward svc/mailpit 8025:8025 &        # exposes Mailpit's REST API at localhost:8025
+```
+
+`notifications`' `SMTP_HOST`/`SMTP_PORT` ConfigMap values already point at `mailpit:1025`
+(mirroring compose) even with nothing backing that hostname by default — this throwaway
+Deployment+Service is the only thing missing, not a config change. Tear down when done:
+`kubectl delete deployment,service mailpit` (and kill the port-forward). Confirmed this does
+**not** need a Service `smtp` port name collision workaround or anything cluster-specific — a
+single Service exposing both 8025 (REST/UI) and 1025 (SMTP) works as-is.
+
+### Chat 2-replica cross-instance delivery: **confirmed working**
+
+`kubectl scale deployment/chat --replicas=2`, then a live WebSocket round-trip with the
+customer and admin connections opened independently through nginx (each gets its own
+Service-routed backend pod — kube-proxy's default round-robin isn't perfectly alternating, so
+this took 2 attempts, correlated against each pod's own access log, to land the two connections
+on different pods deterministically):
+
+```text
+pod chat-79998dd944-66v2j: WebSocket /ws/room/room_65a2769a-... [accepted]   (customer)
+pod chat-79998dd944-6cqvp: WebSocket /ws/room/room_65a2769a-... [accepted]   (admin)
+```
+
+Customer sent a message on its connection to pod `66v2j`; admin, connected to the *different*
+pod `6cqvp`, received it. This is real proof that Chat's Redis pub/sub fan-out (STR-128's
+mechanism — every pod subscribes to the same Redis channel per room, so a message published by
+one pod's WebSocket handler reaches every other pod's subscribers, not just local in-process
+delivery) works correctly across K8s's Service-based round-robin, which is a genuinely
+different load-balancing mechanism than nginx's resolver-based routing in front of a single
+compose container. STR-142 correctly flagged this as needing a live check rather than an
+assumption — this ticket answers it: **pass**.
+
+### Teardown: no orphaned PVCs
+
+`kubectl delete -k k8s/overlays/local/` removed all 11 PVCs
+(`kafka-data`, `minio-data`, 9× `postgres-*-data`) along with every other resource — they're
+declared as ordinary standalone `PersistentVolumeClaim` resources inside this kustomization
+(not StatefulSet `volumeClaimTemplates`, which `kubectl delete -k` would leave behind by
+design), so they're deleted the same as any other resource the kustomization owns. `kubectl get
+pvc,pv` after teardown: nothing left in either. kind's default `local-path` StorageClass has
+`reclaimPolicy: Delete`, so the underlying PV and its on-node data directory are also gone, not
+just the claim object. **Every `kubectl delete -k` here is a full data wipe by default** —
+intentional for local dev (nothing in this manifest set is meant to survive a teardown), but
+worth stating explicitly since compose's named volumes behave differently (they survive
+`docker compose down` unless `-v` is passed) and someone coming from that habit might expect
+the same here.

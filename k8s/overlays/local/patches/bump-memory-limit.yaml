@@ -12,6 +12,14 @@
 # images (found already-present, so never pulled) and a future GCP overlay
 # pulling from a real registry — no local-vs-GCP divergence to patch. See
 # k8s/README.md.
+#
+# Value bumped 768Mi -> 1536Mi after a real OOMKill on a live kind cluster
+# (STR-145): base sets keycloak/kafka/temporal's own memory *limit* to
+# 1Gi, so a blanket `replace` to 768Mi was silently a *cut* for those
+# three, not a bump, and keycloak got OOMKilled as a direct result. 1536Mi
+# is comfortably above every base limit (highest is 1Gi) so this patch is
+# now a bump for every container, never a cut, regardless of what base
+# sets per-service.
 - op: replace
   path: /spec/template/spec/containers/0/resources/limits/memory
-  value: "768Mi"
+  value: "1536Mi"

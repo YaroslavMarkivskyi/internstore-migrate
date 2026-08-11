@@ -1,0 +1,21 @@
+# Local-only tweak: cut every workload's main-container CPU *request* to a
+# scheduling floor that actually fits a small kind node. See k8s/README.md
+# ("Resource requests on a small local node") for the finding this responds
+# to: base's requests (100m-250m per main container, 30 Deployments/
+# StatefulSets deep) sum to ~3.7 cores of requests, but kube-system
+# (coredns x2, etcd, apiserver, controller-manager, scheduler, kindnet)
+# already reserves ~0.85 core on a single-node kind cluster, leaving only
+# ~3.15 allocatable cores for the app — not enough, so redis/temporal/
+# temporal-ui/security/telemetry sat Pending ("Insufficient cpu") on a
+# real 4-core kind node until this patch was added.
+#
+# This only touches `requests` (the scheduling floor), not `limits` (the
+# actual ceiling a container can burst to) — every container can still use
+# up to its existing `limits.cpu` under real load, it's just no longer
+# reserving that much just to get scheduled. Same containers/0-only
+# targeting rationale as bump-memory-limit.yaml in this directory (index 0
+# is always the pod's main container; a sidecar's own request, where one
+# exists, is left alone).
+- op: replace
+  path: /spec/template/spec/containers/0/resources/requests/cpu
+  value: "50m"

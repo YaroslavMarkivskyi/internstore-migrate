@@ -43,8 +43,18 @@ spec:
           value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
         - name: KAFKA_CONTROLLER_LISTENER_NAMES
           value: "CONTROLLER"
+        # STR-145: was "1@kafka:9093" (the Service DNS name) — on a real
+        # kind cluster this made the single broker/controller register
+        # with itself over the ClusterIP Service's hairpin path instead of
+        # a same-pod loopback, and consistently failed its own internal
+        # registration handshake ~60-70s after every start ("unable to
+        # register with the controller quorum" / CancellationException),
+        # regardless of CPU headroom — a fixed protocol-level timeout, not
+        # contention. There's only one node in this quorum and it's always
+        # the pod talking to itself, so localhost is both correct and
+        # avoids the Service round-trip entirely.
         - name: KAFKA_CONTROLLER_QUORUM_VOTERS
-          value: "1@kafka:9093"
+          value: "1@localhost:9093"
         - name: KAFKA_INTER_BROKER_LISTENER_NAME
           value: "PLAINTEXT"
         - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
@@ -59,15 +69,31 @@ spec:
         - name: data
           mountPath: /var/lib/kafka/data
           subPath: kafka
+        # STR-145: was `kafka-topics.sh --bootstrap-server localhost:9092
+        # --list`. That command bootstraps via localhost fine, but the
+        # admin client then reconnects using the *advertised* listener
+        # ("kafka:9092", the Service DNS name, per KAFKA_ADVERTISED_LISTENERS
+        # above) for the actual list-topics RPC — which means the probe,
+        # running inside this same pod, ends up routing back through this
+        # pod's own Service ClusterIP. That self-Service hairpin path is
+        # unreliable on this kind cluster (same class of issue as the
+        # KAFKA_CONTROLLER_QUORUM_VOTERS fix above), so the probe timed
+        # out ("Timed out waiting to send the call: listTopics") even once
+        # the broker was fully up and accepting real connections. A plain
+        # TCP check against the actual listener port sidesteps the
+        # advertised-listener redirect entirely and is a perfectly
+        # sufficient liveness/readiness signal for a single-broker dev
+        # cluster (real client pods, being genuinely remote from kafka-0,
+        # don't hit this hairpin path — only same-pod tooling does).
         readinessProbe:
           exec:
-            command: ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+            command: ["bash", "-c", "exec 3<>/dev/tcp/localhost/9092"]
           initialDelaySeconds: 15
           periodSeconds: 10
           timeoutSeconds: 10
         livenessProbe:
           exec:
-            command: ["/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+            command: ["bash", "-c", "exec 3<>/dev/tcp/localhost/9092"]
           initialDelaySeconds: 30
           periodSeconds: 15
           timeoutSeconds: 10

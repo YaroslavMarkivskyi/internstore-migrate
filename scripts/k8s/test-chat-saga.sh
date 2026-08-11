@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# K8s-adapted copy of scripts/test-chat-saga.sh (STR-145). No
+# `docker compose exec`/`logs` calls to translate. Two compose-specific
+# things are handled here instead:
+#   - auth-backend has no NodePort (ClusterIP-only) -- port-forwarded for
+#     the duration of the run, same as scripts/k8s/verify-gateway.sh.
+#   - Mailpit is excluded from k8s/base (dev-only, no K8s equivalent) --
+#     assumes the throwaway Mailpit Deployment+Service+port-forward from
+#     scripts/k8s/test-telemetry-saga.sh's header comment is already up.
+# The compose original remains the source of truth for local
+# docker-compose dev; this file is not meant to replace it.
+#
+# End-to-end verification of the Chat service (STR-128) through the real
+# gateway, real Keycloak-issued tokens, real Redis pub/sub, and a real
+# Postgres-backed outbox -> Kafka -> Notifications -> Mailpit hop — not
+# mocked anywhere.
+#
+# Covers:
+#   1. Customer connects, sends a message with no admin online.
+#   2. Admin connects, receives history + that message, replies.
+#   3. Customer receives the admin's reply (Approach 1 round-trip).
+#   4. Customer and admin both disconnect.
+#   5. Customer reconnects and sends a fresh message with no admin online
+#      again (notification_sent_at was reset when the admin joined in step
+#      2) -> verifies Mailpit received the UnreadMessageReceived email.
+#
+# Requires: curl, jq, kubectl, and services/chat's own uv-managed venv
+# (reused here for its `websockets` dependency — pulled in transitively by
+# uvicorn[standard] — rather than requiring a second, separate Python
+# environment on the host just for this script).
+#
+# Run after `kubectl apply -k k8s/overlays/local/` with every pod
+# Running/Ready, and the throwaway Mailpit setup + port-forward (see
+# scripts/k8s/test-telemetry-saga.sh).
+set -euo pipefail
+
+KC_URL="http://localhost:8081"
+AUTH_BACKEND_LOCAL_PORT=13001
+AUTH_BACKEND_URL="http://localhost:${AUTH_BACKEND_LOCAL_PORT}"
+MAILPIT_URL="http://localhost:8025"
+REALM="internstore"
+CLIENT_ID="internstore-web"
+CURL="curl -sk"
+CHAT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/services/chat"
+
+pass() { echo "PASS: $1"; }
+fail() { echo "FAIL: $1"; exit 1; }
+
+kubectl port-forward svc/auth-backend "${AUTH_BACKEND_LOCAL_PORT}:3000" >/tmp/chat-saga-pf.log 2>&1 &
+PF_PID=$!
+cleanup() { kill "$PF_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+for _ in $(seq 1 20); do
+  curl -sf -o /dev/null "$AUTH_BACKEND_URL/health" 2>/dev/null && break
+  sleep 1
+done
+
+login() {
+  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
+    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
+    -d "username=$1" -d "password=$2" | jq -r .access_token
+}
+
+sub_of() {
+  # $1 = bearer token — auth-backend's /me is the simplest way to get the
+  # Keycloak sub without decoding the JWT ourselves.
+  $CURL "$AUTH_BACKEND_URL/me" -H "Authorization: Bearer $1" | jq -r .sub
+}
+
+find_message_id() {
+  curl -sf "$MAILPIT_URL/api/v1/search?query=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote('to:' + sys.argv[1]))" "$1")" \
+    | jq -r --arg subject "$2" '.messages[] | select(.Subject | contains($subject)) | .ID' | head -n1
+}
+
+CUSTOMER_TOKEN=$(login "customer@example.com" "Customer123")
+ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
+[ "$CUSTOMER_TOKEN" != "null" ] || fail "customer login did not return an access token"
+[ "$ADMIN_TOKEN" != "null" ] || fail "admin login did not return an access token"
+
+CUSTOMER_SUB=$(sub_of "$CUSTOMER_TOKEN")
+[ -n "$CUSTOMER_SUB" ] && [ "$CUSTOMER_SUB" != "null" ] || fail "could not resolve customer sub via /me"
+ROOM_ID="room_${CUSTOMER_SUB}"
+
+echo "=== Real WebSocket round-trip: customer <-> admin, both directions ==="
+
+(
+  cd "$CHAT_DIR"
+  CUSTOMER_TOKEN="$CUSTOMER_TOKEN" ADMIN_TOKEN="$ADMIN_TOKEN" ROOM_ID="$ROOM_ID" \
+    uv run python3 - <<'PYEOF'
+import asyncio
+import json
+import os
+import ssl
+import sys
+
+import websockets
+
+CUSTOMER_TOKEN = os.environ["CUSTOMER_TOKEN"]
+ADMIN_TOKEN = os.environ["ADMIN_TOKEN"]
+ROOM_ID = os.environ["ROOM_ID"]
+
+SSL_CTX = ssl.create_default_context()
+SSL_CTX.check_hostname = False
+SSL_CTX.verify_mode = ssl.CERT_NONE
+
+
+def url(token: str) -> str:
+    return f"wss://localhost:8443/ws/room/{ROOM_ID}?token={token}"
+
+
+async def recv_json(ws, label: str) -> dict:
+    try:
+        raw = await asyncio.wait_for(ws.recv(), timeout=10)
+    except TimeoutError:
+        print(f"FAIL: timed out waiting for {label}", flush=True)
+        sys.exit(1)
+    return json.loads(raw)
+
+
+async def main() -> None:
+    async with websockets.connect(url(CUSTOMER_TOKEN), ssl=SSL_CTX) as customer_ws:
+        history = await recv_json(customer_ws, "customer history frame")
+        assert history["type"] == "history", history
+        print("PASS: customer connected, received history frame", flush=True)
+
+        await customer_ws.send(json.dumps({"type": "message", "content": "Hello, I need help"}))
+        customer_echo = await recv_json(customer_ws, "customer's own message echo")
+        assert customer_echo["content"] == "Hello, I need help", customer_echo
+        print("PASS: customer sent message, received own echo (Approach 1 confirmation)", flush=True)
+
+        async with websockets.connect(url(ADMIN_TOKEN), ssl=SSL_CTX) as admin_ws:
+            admin_history = await recv_json(admin_ws, "admin history frame")
+            assert admin_history["type"] == "history"
+            assert any(m["content"] == "Hello, I need help" for m in admin_history["messages"]), admin_history
+            print("PASS: admin connected, history replay includes the customer's message", flush=True)
+
+            await admin_ws.send(json.dumps({"type": "message", "content": "Hi, how can I help?"}))
+            admin_echo = await recv_json(admin_ws, "admin's own message echo")
+            assert admin_echo["content"] == "Hi, how can I help?", admin_echo
+            print("PASS: admin replied, received own echo", flush=True)
+
+            customer_received = await recv_json(customer_ws, "customer receiving admin's reply")
+            assert customer_received["content"] == "Hi, how can I help?", customer_received
+            assert customer_received["sender_type"] == "admin"
+            print("PASS: customer received admin's reply via Redis pub/sub round-trip", flush=True)
+
+    print("PASS: customer and admin both disconnected cleanly", flush=True)
+
+    # Second round: no admin online (the one above already disconnected) —
+    # notification_sent_at was reset to NULL when that admin connected, so
+    # this fresh message should stage a new UnreadMessageReceived event.
+    async with websockets.connect(url(CUSTOMER_TOKEN), ssl=SSL_CTX) as customer_ws:
+        await recv_json(customer_ws, "customer history frame (second connect)")
+        await customer_ws.send(json.dumps({"type": "message", "content": "Still there?"}))
+        await recv_json(customer_ws, "customer's own echo (second message)")
+        print("PASS: customer reconnected and sent a message with no admin online", flush=True)
+
+
+asyncio.run(main())
+PYEOF
+)
+
+echo
+echo "=== Offline-admin notification -> UnreadMessageReceived -> Mailpit ==="
+
+MESSAGE_ID=""
+ELAPSED=0
+while [ "$ELAPSED" -lt 30 ]; do
+  MESSAGE_ID=$(find_message_id "ops@internstore.local" "unread message")
+  [ -n "$MESSAGE_ID" ] && break
+  sleep 2
+  ELAPSED=$((ELAPSED + 2))
+done
+[ -n "$MESSAGE_ID" ] || fail "no UnreadMessageReceived email appeared in Mailpit within 30s"
+pass "UnreadMessageReceived -> (real outbox+Kafka) -> Notifications -> (real SMTP) -> email visible in Mailpit (took ~${ELAPSED}s)"
+
+MESSAGE=$(curl -sf "$MAILPIT_URL/api/v1/message/$MESSAGE_ID")
+echo "$MESSAGE" | jq -r .Text | grep -qi "$CUSTOMER_SUB" || fail "email body did not mention the sender: $(echo "$MESSAGE" | jq -r .Text)"
+pass "email content verified via Mailpit REST API: mentions the customer as sender"
+
+echo
+echo "All chat saga verification checks passed against the real gateway, Redis, and Kafka broker."
