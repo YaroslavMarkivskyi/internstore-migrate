@@ -154,6 +154,22 @@ async def build_receive_stock_item(
         )
 
     appends = [EventAppend(aggregate_id=aggregate_id, expected_next_sequence=next_seq, events=[event])]
+
+    # STR-152: the event-sourcing migration (STR-149/150) moved this whole
+    # path onto stock_events, which is Inventory's own internal audit log
+    # and is never published to Kafka (see event_store.py) -- it dropped
+    # the `add_outbox_event(session, "ItemAdded", ...)` call this route used
+    # to make directly, silently breaking Telemetry's inventory-events
+    # consumer (telemetry/consumers/inventory_events.py's handle_item_added,
+    # the only thing that creates a store_product_thresholds row for a
+    # {store, product} pair). Found live: scripts/test-telemetry-saga.sh's
+    # violation-detection step polled forever because Telemetry never
+    # learned this store carries this product. Re-staged here, unconditional
+    # on create vs. replenish exactly like the pre-migration code, into the
+    # same transaction as the stock_events append (both commit or roll back
+    # together under run_with_retry).
+    add_outbox_event(session, "ItemAdded", {"stock_id": str(stock_id), "product_id": str(product_id)})
+
     return appends, aggregate_id
 
 

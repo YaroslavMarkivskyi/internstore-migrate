@@ -109,8 +109,14 @@ ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
 [ "$ADMIN_TOKEN" != "null" ] || fail "admin login did not return an access token"
 
 echo "=== 1. Seed a product with a low max_temperature and a stock carrying it ==="
+# STR-152: was a fixed "Dairy" name -- Catalog's category name is unique,
+# so any second run against a persistent dev DB (not a fresh one per run)
+# 400s here with "Category name already exists" before anything else runs.
+# Found live (same bug as the compose original -- not k8s-specific).
+# Random-suffixed like every other probe/category name in this script
+# family so repeat runs don't collide with a previous run's leftover row.
 CATEGORY_ID=$($CURL -X POST "$CATALOG_URL/categories" -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" -d '{"name": "Dairy"}' | jq -r .id)
+  -H "Content-Type: application/json" -d "{\"name\": \"Dairy-$RANDOM\"}" | jq -r .id)
 [ -n "$CATEGORY_ID" ] && [ "$CATEGORY_ID" != "null" ] || fail "could not create category"
 
 PRODUCT_ID=$($CURL -X POST "$CATALOG_URL/products" -H "Authorization: Bearer $ADMIN_TOKEN" \
