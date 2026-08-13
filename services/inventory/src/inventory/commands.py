@@ -243,6 +243,19 @@ async def build_move_stock_item(
             ],
         ),
     ]
+
+    # STR-153: same gap as build_receive_stock_item's ItemAdded above --
+    # the pre-STR-149 move_stock_item route staged ItemAdded for the
+    # *destination* stock (source stock isn't newly carrying the product,
+    # only the destination is), which the STR-149 rewrite dropped since
+    # ItemAdded wasn't in that ticket's own event taxonomy. Telemetry's
+    # handle_item_added is what lazily creates the destination
+    # {store, product} threshold row, so without this a moved-in item at a
+    # stock that had never directly received it stays outside temperature
+    # monitoring. Re-staged here, into the same transaction as both
+    # ItemMovedOut/ItemMovedIn appends.
+    add_outbox_event(session, "ItemAdded", {"stock_id": str(to_stock_id), "product_id": str(product_id)})
+
     return appends, dest_aggregate
 
 

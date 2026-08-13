@@ -1,5 +1,8 @@
 import uuid
 
+from sqlalchemy import select
+
+from inventory.models import OutboxEvent
 from tests.conftest import create_stock
 
 
@@ -108,6 +111,28 @@ async def test_receive_stock_item_accumulates_quantity(client, admin_token):
     assert second.json()["quantity"] == 8
 
 
+async def test_receive_stock_item_publishes_item_added(client, admin_token):
+    """Regression test for STR-152/STR-153: build_receive_stock_item must
+    stage ItemAdded on inventory-events, same as the pre-STR-149 route did
+    -- Telemetry's handle_item_added is what creates the {store, product}
+    threshold row that temperature-violation detection depends on."""
+    stock_id = await create_stock(client, admin_token)
+    product_id = str(uuid.uuid4())
+    resp = await client.post(
+        f"/stocks/{stock_id}/items",
+        json={"product_id": product_id, "quantity": 5},
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 201
+
+    async with client.app.state.session_factory() as session:
+        outbox = (
+            await session.execute(select(OutboxEvent).where(OutboxEvent.event_type == "ItemAdded"))
+        ).scalars().all()
+        assert len(outbox) == 1
+        assert outbox[0].payload == {"stock_id": stock_id, "product_id": product_id}
+
+
 async def test_receive_stock_item_unknown_stock(client, admin_token):
     resp = await client.post(
         f"/stocks/{uuid.uuid4()}/items",
@@ -175,6 +200,38 @@ async def test_move_stock_item_as_admin_succeeds(client, admin_token):
 
     src_items = await client.get(f"/stocks/{src}/items")
     assert src_items.json()[0]["quantity"] == 3
+
+
+async def test_move_stock_item_publishes_item_added_for_destination(client, admin_token):
+    """Regression test for STR-153: the pre-STR-149 move_stock_item route
+    staged ItemAdded for the *destination* stock (it now carries the
+    product for the first time), but the STR-149 event-sourcing rewrite
+    dropped it -- same class of bug as receive_stock_item's ItemAdded gap
+    (STR-152), just not caught by that fix since it lives in a different
+    build_* function."""
+    headers = {"x-internal-token": admin_token}
+    src = await create_stock(client, admin_token, name="Src")
+    dst = await create_stock(client, admin_token, name="Dst")
+    product_id = str(uuid.uuid4())
+    created = await client.post(
+        f"/stocks/{src}/items", json={"product_id": product_id, "quantity": 5}, headers=headers
+    )
+    item_id = created.json()["id"]
+
+    resp = await client.post(
+        f"/stocks/{src}/items/{item_id}/move",
+        json={"to_stock_id": dst, "quantity": 2},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    async with client.app.state.session_factory() as session:
+        outbox = (
+            await session.execute(select(OutboxEvent).where(OutboxEvent.event_type == "ItemAdded"))
+        ).scalars().all()
+        # One from the initial receive into `src`, one from the move into `dst`.
+        assert len(outbox) == 2
+        assert outbox[1].payload == {"stock_id": dst, "product_id": product_id}
 
 
 async def test_move_stock_item_insufficient_quantity(client, admin_token):

@@ -21,7 +21,7 @@ topics per event type.
 | Topic | Events | Producer |
 |---|---|---|
 | `order-events` | `OrderCreated`, `PaymentConfirmed`, `OrderRejected`, `OrderCancelled` | Orders service |
-| `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired` | Inventory service |
+| `inventory-events` | `StockReserved`, `StockReservationFailed`, `StockDecremented`, `ReservationExpired`, `ItemAdded` | Inventory service |
 | `telemetry-events` | `TemperatureThresholdViolated`, `TemperatureNormalized`, `TemperatureRecorded` | Telemetry service |
 | `catalog-events` | `ProductThresholdUpdated`, `ProductUpdated`, `ProductDeleted` | Catalog service |
 | `chat-events` | `UnreadMessageReceived`, `CustomerMessageSent`, `AdminRequested`, `AIModeEnabled` | Chat service |
