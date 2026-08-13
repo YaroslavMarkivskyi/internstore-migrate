@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in before `terraform apply`.
+# terraform.tfvars itself is gitignored (it will hold real secret values) —
+# this .example file is the checked-in template.
+
+project_id = "REPLACE_WITH_YOUR_GCP_PROJECT_ID"
+region     = "us-central1"
+
+# Generate a real value per demo session — don't reuse this placeholder:
+#   openssl rand -hex 32
+internal_token_secret = "REPLACE_ME"
+
+# Required for ai-assistant/mcp-gateway to boot at all (see secrets.tf) —
+# a real key is only needed if the demo actually exercises AI features.
+openai_api_key = ""
+
+stripe_secret_key      = ""
+stripe_webhook_secret  = ""
+keycloak_client_secret = "REPLACE_ME"
+keycloak_admin_password = "REPLACE_ME"

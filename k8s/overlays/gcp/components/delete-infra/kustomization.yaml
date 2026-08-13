@@ -1,0 +1,93 @@
+# Drops base's in-cluster stateful infra now provisioned as managed GCP
+# services instead: postgres-* (-> Cloud SQL), redis (-> Memorystore),
+# minio/minio-init (-> GCS), kafka/kafka-topic-init (-> Managed Kafka,
+# topics created by terraform/gcp/modules/kafka instead of the init Job).
+# Also drops the 12 app-level plaintext secret.yaml Secrets that
+# generate-overlay.py's SecretProviderClasses replace (same Secret
+# name/keys, Secret Manager-backed) — without this delete, base's plaintext
+# Secret and the CSI driver's synced Secret fight over the same object.
+#
+# `$patch: delete` + a name regex on `target` matches every resource of
+# that kind whose name fits, in one patch each — not 30-odd individual
+# per-resource patches. metadata.name in the patch body itself is
+# ignored by Kustomize for delete patches; the `target` block is what
+# actually selects what gets deleted.
+
+# A Kustomize Component (not a Kustomization) — holds only patches, no
+# resources of its own, and gets pulled into kustomization.yaml's
+# `components:` list rather than duplicating this whole list inline there.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+- patch: |-
+    $patch: delete
+    apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: placeholder
+  target:
+    kind: StatefulSet
+    name: "^(postgres-.*|redis|minio|kafka)$"
+
+- patch: |-
+    $patch: delete
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: placeholder
+  target:
+    kind: Deployment
+    name: "^redis$"
+
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: placeholder
+  target:
+    kind: Service
+    name: "^(postgres-.*|redis|minio|kafka)$"
+
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: placeholder
+  target:
+    kind: Secret
+    name: "^postgres-.*-secret$"
+
+# The 12 app-level secrets replaced by generate-overlay.py's
+# SecretProviderClasses — see generate-overlay.py's SERVICE_SECRET_KEYS for
+# the exact list this regex needs to keep matching.
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: placeholder
+  target:
+    kind: Secret
+    name: "^(catalog|inventory|orders|telemetry|telemetry-aggregates|security|chat|payments|ai-assistant|mcp-gateway|auth-backend|checkout-workflow-worker)-secret$"
+
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: placeholder
+  target:
+    kind: PersistentVolumeClaim
+    name: "^(postgres-.*-data|minio-data|kafka-data)$"
+
+- patch: |-
+    $patch: delete
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: placeholder
+  target:
+    kind: Job
+    name: "^(kafka-topic-init|minio-init)$"

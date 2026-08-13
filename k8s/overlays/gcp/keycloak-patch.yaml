@@ -1,0 +1,64 @@
+# keycloak's DB config is inline `env: value:` in k8s/base/keycloak/deployment.yaml
+# (no secret.yaml there — see that file's own comment on why), so it
+# doesn't fit the generic generate-overlay.py pattern (envFrom: secretRef).
+# This patch: (1) runs the pod as the `keycloak` ServiceAccount (Workload
+# Identity-bound — see keycloak-serviceaccount.yaml), (2) adds the CSI
+# volume/mount that syncs Secret Manager's keycloak-db-username/password/
+# keycloak-admin-password into a `keycloak-secret` Secret (see
+# keycloak-secretproviderclass.yaml), (3) replaces the plaintext
+# KC_DB_PASSWORD/KEYCLOAK_ADMIN_PASSWORD/KC_DB_USERNAME value: entries with
+# secretKeyRef, and (4) repoints KC_DB_URL at 127.0.0.1 (the Cloud SQL Auth
+# Proxy sidecar) instead of the now-deleted postgres-keycloak Service, and
+# (5) adds that sidecar.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+spec:
+  template:
+    spec:
+      serviceAccountName: keycloak
+      containers:
+      - name: keycloak
+        env:
+        - name: KC_DB_URL
+          value: "jdbc:postgresql://127.0.0.1:5432/keycloak"
+        - name: KC_DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-secret
+              key: KC_DB_USERNAME
+        - name: KC_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-secret
+              key: KC_DB_PASSWORD
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-secret
+              key: KEYCLOAK_ADMIN_PASSWORD
+        volumeMounts:
+        - name: secrets-store
+          mountPath: /mnt/secrets-store
+          readOnly: true
+      # TF: cloudsql_connection_names["keycloak"]
+      - name: cloudsql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.0
+        args:
+          - "--port=5432"
+          - "PROJECT:REGION:internstore-demo-keycloak"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: keycloak-secrets

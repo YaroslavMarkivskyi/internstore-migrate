@@ -1,0 +1,95 @@
+{
+  "project_id": {
+    "value": "example-project-123"
+  },
+  "region": {
+    "value": "us-central1"
+  },
+  "gke_cluster_name": {
+    "value": "internstore-demo-gke"
+  },
+  "artifact_registry_repository_url": {
+    "value": "us-central1-docker.pkg.dev/example-project-123/internstore"
+  },
+  "load_balancer_ip": {
+    "value": "34.120.1.2"
+  },
+  "cloud_armor_policy_name": {
+    "value": "internstore-demo-armor-policy"
+  },
+  "kafka_bootstrap_address": {
+    "value": "bootstrap.internstore-demo-kafka.us-central1.managedkafka.example-project-123.cloud.goog:9092"
+  },
+  "redis_host": {
+    "value": "10.40.0.3"
+  },
+  "redis_port": {
+    "value": 6379
+  },
+  "gcs_bucket_name": {
+    "value": "example-project-123-internstore-demo-assets"
+  },
+  "gcs_s3_compatible_endpoint": {
+    "value": "https://storage.googleapis.com"
+  },
+  "cloudsql_connection_names": {
+    "value": {
+      "catalog": "example-project-123:us-central1:internstore-demo-catalog",
+      "inventory": "example-project-123:us-central1:internstore-demo-inventory",
+      "orders": "example-project-123:us-central1:internstore-demo-orders",
+      "telemetry": "example-project-123:us-central1:internstore-demo-telemetry",
+      "telemetry-aggregates": "example-project-123:us-central1:internstore-demo-telemetry-aggregates",
+      "security": "example-project-123:us-central1:internstore-demo-security",
+      "chat": "example-project-123:us-central1:internstore-demo-chat",
+      "payments": "example-project-123:us-central1:internstore-demo-payments",
+      "keycloak": "example-project-123:us-central1:internstore-demo-keycloak",
+      "temporal": "example-project-123:us-central1:internstore-demo-temporal",
+      "ai": "example-project-123:us-central1:internstore-demo-ai"
+    }
+  },
+  "workload_identity_gsa_emails": {
+    "value": {
+      "catalog": "internstore-demo-catalog@example-project-123.iam.gserviceaccount.com",
+      "inventory": "internstore-demo-inventory@example-project-123.iam.gserviceaccount.com",
+      "orders": "internstore-demo-orders@example-project-123.iam.gserviceaccount.com",
+      "telemetry": "internstore-demo-telemetry@example-project-123.iam.gserviceaccount.com",
+      "telemetry-aggregates": "internstore-demo-telemetry-aggregates@example-project-123.iam.gserviceaccount.com",
+      "security": "internstore-demo-security@example-project-123.iam.gserviceaccount.com",
+      "chat": "internstore-demo-chat@example-project-123.iam.gserviceaccount.com",
+      "payments": "internstore-demo-payments@example-project-123.iam.gserviceaccount.com",
+      "ai-assistant": "internstore-demo-ai-assistant@example-project-123.iam.gserviceaccount.com",
+      "mcp-gateway": "internstore-demo-mcp-gateway@example-project-123.iam.gserviceaccount.com",
+      "auth-backend": "internstore-demo-auth-backend@example-project-123.iam.gserviceaccount.com",
+      "checkout-workflow-worker": "internstore-demo-checkout-workflow-worker@example-project-123.iam.gserviceaccount.com",
+      "keycloak": "internstore-demo-keycloak@example-project-123.iam.gserviceaccount.com",
+      "temporal": "internstore-demo-temporal@example-project-123.iam.gserviceaccount.com"
+    }
+  },
+  "secret_manager_secret_ids": {
+    "value": {
+      "internal-token-secret": "internstore-demo-internal-token-secret",
+      "openai-api-key": "internstore-demo-openai-api-key",
+      "stripe-secret-key": "internstore-demo-stripe-secret-key",
+      "stripe-webhook-secret": "internstore-demo-stripe-webhook-secret",
+      "keycloak-client-secret": "internstore-demo-keycloak-client-secret",
+      "keycloak-admin-password": "internstore-demo-keycloak-admin-password",
+      "keycloak-db-username": "internstore-demo-keycloak-db-username",
+      "keycloak-db-password": "internstore-demo-keycloak-db-password",
+      "temporal-db-password": "internstore-demo-temporal-db-password",
+      "gcs-hmac-access-id": "internstore-demo-gcs-hmac-access-id",
+      "gcs-hmac-secret": "internstore-demo-gcs-hmac-secret",
+      "telemetry-readonly-password": "internstore-demo-telemetry-readonly-password",
+      "catalog-database-url": "internstore-demo-catalog-database-url",
+      "inventory-database-url": "internstore-demo-inventory-database-url",
+      "orders-database-url": "internstore-demo-orders-database-url",
+      "telemetry-database-url": "internstore-demo-telemetry-database-url",
+      "telemetry-aggregates-database-url": "internstore-demo-telemetry-aggregates-database-url",
+      "security-database-url": "internstore-demo-security-database-url",
+      "chat-database-url": "internstore-demo-chat-database-url",
+      "payments-database-url": "internstore-demo-payments-database-url",
+      "ai-assistant-database-url": "internstore-demo-ai-assistant-database-url",
+      "mcp-gateway-database-url": "internstore-demo-mcp-gateway-database-url",
+      "telemetry-aggregates-telemetry-db-url": "internstore-demo-telemetry-aggregates-telemetry-db-url"
+    }
+  }
+}

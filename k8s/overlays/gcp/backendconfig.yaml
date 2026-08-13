@@ -1,0 +1,28 @@
+# Attaches Cloud Armor to nginx's Service via GKE's BackendConfig CRD — the
+# GKE Ingress controller reads this from an annotation on the Service
+# itself (added by ingress.yaml's patch on nginx's Service), not from the
+# Ingress object.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: nginx-backendconfig
+  labels:
+    app: nginx
+spec:
+  securityPolicy:
+    # TF: networking module's cloud_armor_policy_name output
+    name: "internstore-demo-armor-policy"
+  healthCheck:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    port: 8080
+    type: HTTP
+    # nginx.conf (repo root nginx/nginx.conf) defines no health endpoint of
+    # its own — only proxied `/api/*` locations — so this borrows catalog's
+    # /health through nginx's existing route as a stand-in liveness signal
+    # for the gateway. Not a true "is nginx itself up" check; would need a
+    # dedicated `location = /healthz { return 200; }` added to nginx.conf
+    # for that, which is out of this ticket's scope (no app/gateway config
+    # changes).
+    requestPath: /api/catalog/health
+

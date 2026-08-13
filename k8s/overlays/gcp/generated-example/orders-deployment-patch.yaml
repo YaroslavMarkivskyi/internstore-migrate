@@ -1,0 +1,35 @@
+# Assumes the base Deployment's main container is named "orders"
+# (true for every service this generator covers — checked against
+# k8s/base/orders/deployment.yaml) — the CSI volumeMount patches onto it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+spec:
+  template:
+    spec:
+      serviceAccountName: orders
+      containers:
+      - name: orders
+        volumeMounts:
+        - name: secrets-store
+          mountPath: /mnt/secrets-store
+          readOnly: true
+      - name: cloudsql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.0
+        args:
+          - "example-project-123:us-central1:internstore-demo-orders?port=5432"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: orders-secrets

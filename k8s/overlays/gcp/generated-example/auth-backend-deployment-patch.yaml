@@ -1,0 +1,24 @@
+# Assumes the base Deployment's main container is named "auth-backend"
+# (true for every service this generator covers — checked against
+# k8s/base/auth-backend/deployment.yaml) — the CSI volumeMount patches onto it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-backend
+spec:
+  template:
+    spec:
+      serviceAccountName: auth-backend
+      containers:
+      - name: auth-backend
+        volumeMounts:
+        - name: secrets-store
+          mountPath: /mnt/secrets-store
+          readOnly: true
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: auth-backend-secrets

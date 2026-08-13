@@ -1,3 +1,11 @@
 node_modules/
 dist/
 .env
+
+# Terraform (terraform/gcp) — state and anything holding real secrets.
+# .terraform.lock.hcl is intentionally NOT ignored — that one is committed.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+terraform/gcp/environments/*/terraform.tfvars
+k8s/overlays/gcp/generated/

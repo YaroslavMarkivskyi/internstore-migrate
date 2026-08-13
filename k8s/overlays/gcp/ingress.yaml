@@ -1,0 +1,23 @@
+# GCLB Ingress in front of the existing nginx Service — nginx itself
+# (deployment.yaml, nginx.conf) is unchanged, only how it's reached from
+# outside the cluster changes: base's NodePort (a `kind`-specific need,
+# see its own comment) becomes a GKE-managed Ingress + static IP instead.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: internstore-gateway
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    # TF: networking module's lb_ip_name output
+    kubernetes.io/ingress.global-static-ip-name: "internstore-demo-lb-ip"
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: nginx
+            port:
+              number: 8080

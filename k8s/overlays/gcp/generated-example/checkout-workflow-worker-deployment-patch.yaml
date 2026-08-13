@@ -1,0 +1,24 @@
+# Assumes the base Deployment's main container is named "checkout-workflow-worker"
+# (true for every service this generator covers — checked against
+# k8s/base/checkout-workflow-worker/deployment.yaml) — the CSI volumeMount patches onto it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-workflow-worker
+spec:
+  template:
+    spec:
+      serviceAccountName: checkout-workflow-worker
+      containers:
+      - name: checkout-workflow-worker
+        volumeMounts:
+        - name: secrets-store
+          mountPath: /mnt/secrets-store
+          readOnly: true
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: checkout-workflow-worker-secrets

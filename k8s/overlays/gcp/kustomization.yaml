@@ -1,0 +1,133 @@
+# GCP overlay (STR-154). See README.md for the full mechanism writeup.
+#
+# `generated/*` files come from `generate-overlay.py` (run it first — see
+# README.md "How to render and apply"). This list of filenames is static
+# (it's the same 12 services regardless of which GCP project you target;
+# only the *contents* of those files are per-project), so it's spelled out
+# here rather than dynamically discovered.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: default
+
+resources:
+- ../../base
+- ingress.yaml
+- backendconfig.yaml
+- keycloak-secrets.yaml
+- temporal-secrets.yaml
+- generated/catalog-serviceaccount.yaml
+- generated/catalog-secretproviderclass.yaml
+- generated/inventory-serviceaccount.yaml
+- generated/inventory-secretproviderclass.yaml
+- generated/orders-serviceaccount.yaml
+- generated/orders-secretproviderclass.yaml
+- generated/telemetry-serviceaccount.yaml
+- generated/telemetry-secretproviderclass.yaml
+- generated/telemetry-aggregates-serviceaccount.yaml
+- generated/telemetry-aggregates-secretproviderclass.yaml
+- generated/security-serviceaccount.yaml
+- generated/security-secretproviderclass.yaml
+- generated/chat-serviceaccount.yaml
+- generated/chat-secretproviderclass.yaml
+- generated/payments-serviceaccount.yaml
+- generated/payments-secretproviderclass.yaml
+- generated/ai-assistant-serviceaccount.yaml
+- generated/ai-assistant-secretproviderclass.yaml
+- generated/mcp-gateway-serviceaccount.yaml
+- generated/mcp-gateway-secretproviderclass.yaml
+- generated/auth-backend-serviceaccount.yaml
+- generated/auth-backend-secretproviderclass.yaml
+- generated/checkout-workflow-worker-serviceaccount.yaml
+- generated/checkout-workflow-worker-secretproviderclass.yaml
+
+components:
+- components/delete-infra
+
+patches:
+- path: nginx-service-patch.yaml
+  target:
+    kind: Service
+    name: "^nginx$"
+- path: keycloak-patch.yaml
+  target:
+    kind: Deployment
+    name: "^keycloak$"
+- path: temporal-patch.yaml
+  target:
+    kind: Deployment
+    name: "^temporal$"
+- path: generated/catalog-deployment-patch.yaml
+  target: { kind: Deployment, name: "^catalog$" }
+- path: generated/inventory-deployment-patch.yaml
+  target: { kind: Deployment, name: "^inventory$" }
+- path: generated/orders-deployment-patch.yaml
+  target: { kind: Deployment, name: "^orders$" }
+- path: generated/telemetry-deployment-patch.yaml
+  target: { kind: Deployment, name: "^telemetry$" }
+- path: generated/telemetry-aggregates-deployment-patch.yaml
+  target: { kind: Deployment, name: "^telemetry-aggregates$" }
+- path: generated/security-deployment-patch.yaml
+  target: { kind: Deployment, name: "^security$" }
+- path: generated/chat-deployment-patch.yaml
+  target: { kind: Deployment, name: "^chat$" }
+- path: generated/payments-deployment-patch.yaml
+  target: { kind: Deployment, name: "^payments$" }
+- path: generated/ai-assistant-deployment-patch.yaml
+  target: { kind: Deployment, name: "^ai-assistant$" }
+- path: generated/mcp-gateway-deployment-patch.yaml
+  target: { kind: Deployment, name: "^mcp-gateway$" }
+- path: generated/auth-backend-deployment-patch.yaml
+  target: { kind: Deployment, name: "^auth-backend$" }
+- path: generated/checkout-workflow-worker-deployment-patch.yaml
+  target: { kind: Deployment, name: "^checkout-workflow-worker$" }
+
+# TF: artifact_registry_repository_url. All 15 internstore/*:local images
+# base uses, repointed at Artifact Registry with the same tag scheme
+# k8s/build-push-gcp.sh produces.
+images:
+- name: internstore/catalog
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/catalog
+  newTag: latest
+- name: internstore/inventory
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/inventory
+  newTag: latest
+- name: internstore/orders
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/orders
+  newTag: latest
+- name: internstore/telemetry
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/telemetry
+  newTag: latest
+- name: internstore/telemetry-aggregates
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/telemetry-aggregates
+  newTag: latest
+- name: internstore/security
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/security
+  newTag: latest
+- name: internstore/chat
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/chat
+  newTag: latest
+- name: internstore/payments
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/payments
+  newTag: latest
+- name: internstore/ai-assistant
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/ai-assistant
+  newTag: latest
+- name: internstore/mcp-gateway
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/mcp-gateway
+  newTag: latest
+- name: internstore/auth-backend
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/auth-backend
+  newTag: latest
+- name: internstore/checkout-workflow-worker
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/checkout-workflow-worker
+  newTag: latest
+- name: internstore/notifications
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/notifications
+  newTag: latest
+- name: internstore/mock-camera
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/mock-camera
+  newTag: latest
+- name: internstore/nginx
+  newName: us-central1-docker.pkg.dev/PROJECT/internstore/nginx
+  newTag: latest

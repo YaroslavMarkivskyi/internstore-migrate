@@ -1,0 +1,42 @@
+{
+  "resources": [
+    "catalog-serviceaccount.yaml",
+    "catalog-secretproviderclass.yaml",
+    "inventory-serviceaccount.yaml",
+    "inventory-secretproviderclass.yaml",
+    "orders-serviceaccount.yaml",
+    "orders-secretproviderclass.yaml",
+    "telemetry-serviceaccount.yaml",
+    "telemetry-secretproviderclass.yaml",
+    "telemetry-aggregates-serviceaccount.yaml",
+    "telemetry-aggregates-secretproviderclass.yaml",
+    "security-serviceaccount.yaml",
+    "security-secretproviderclass.yaml",
+    "chat-serviceaccount.yaml",
+    "chat-secretproviderclass.yaml",
+    "payments-serviceaccount.yaml",
+    "payments-secretproviderclass.yaml",
+    "ai-assistant-serviceaccount.yaml",
+    "ai-assistant-secretproviderclass.yaml",
+    "mcp-gateway-serviceaccount.yaml",
+    "mcp-gateway-secretproviderclass.yaml",
+    "auth-backend-serviceaccount.yaml",
+    "auth-backend-secretproviderclass.yaml",
+    "checkout-workflow-worker-serviceaccount.yaml",
+    "checkout-workflow-worker-secretproviderclass.yaml"
+  ],
+  "patches": [
+    "catalog-deployment-patch.yaml",
+    "inventory-deployment-patch.yaml",
+    "orders-deployment-patch.yaml",
+    "telemetry-deployment-patch.yaml",
+    "telemetry-aggregates-deployment-patch.yaml",
+    "security-deployment-patch.yaml",
+    "chat-deployment-patch.yaml",
+    "payments-deployment-patch.yaml",
+    "ai-assistant-deployment-patch.yaml",
+    "mcp-gateway-deployment-patch.yaml",
+    "auth-backend-deployment-patch.yaml",
+    "checkout-workflow-worker-deployment-patch.yaml"
+  ]
+}

@@ -1,0 +1,46 @@
+# Same shape as keycloak-patch.yaml's reasoning: temporal's DB config is
+# inline `env: value:` (no secret.yaml), so it's special-cased rather than
+# generator-produced. Only POSTGRES_PWD is a real secret here; DB/DB_PORT/
+# POSTGRES_USER stay as base's plain values.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+spec:
+  template:
+    spec:
+      serviceAccountName: temporal
+      containers:
+      - name: temporal
+        env:
+        - name: POSTGRES_SEEDS
+          value: "127.0.0.1"
+        - name: POSTGRES_PWD
+          valueFrom:
+            secretKeyRef:
+              name: temporal-secret
+              key: POSTGRES_PWD
+        volumeMounts:
+        - name: secrets-store
+          mountPath: /mnt/secrets-store
+          readOnly: true
+      # TF: cloudsql_connection_names["temporal"]
+      - name: cloudsql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.0
+        args:
+          - "--port=5432"
+          - "PROJECT:REGION:internstore-demo-temporal"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      volumes:
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: temporal-secrets
