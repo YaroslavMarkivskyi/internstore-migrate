@@ -1,0 +1,28 @@
+# ArgoCD Application for the kind/minikube overlay (k8s/overlays/local).
+#
+# Auto-sync + self-heal: this cluster has no cost implications (kind, local-only), so
+# there's no teardown to fight — matches STR-144/145/157's existing local-validation
+# role, now reconciled by ArgoCD instead of `kubectl apply -k` run by hand.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: internstore-local
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/YaroslavMarkivskyi/internstore-migrate.git
+    targetRevision: main
+    path: k8s/overlays/local
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+
+  syncPolicy:
+    automated:
+      prune: true      # remove resources deleted from k8s/overlays/local in git
+      selfHeal: true    # revert manual/out-of-band cluster changes back to git state
+    syncOptions:
+      - CreateNamespace=false   # overlay already targets the default namespace

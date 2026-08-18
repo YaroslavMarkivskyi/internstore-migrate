@@ -1,0 +1,42 @@
+# ArgoCD Application for the GCP overlay (k8s/overlays/gcp).
+#
+# Manual sync (no `syncPolicy.automated` block): this project's GCP demo environment is
+# explicitly apply -> demo -> destroy, not always-on (see terraform/gcp/environments/
+# demo/README.md). Auto-sync with self-heal would fight a deliberate `terraform
+# destroy` teardown — ArgoCD could try to recreate resources Terraform is tearing down,
+# or vice versa. Someone runs `argocd app sync internstore-gcp` (or clicks Sync in the
+# UI) only when they want the demo environment live.
+#
+# KNOWN BLOCKER, not resolved by this ticket: k8s/overlays/gcp/kustomization.yaml
+# references files under k8s/overlays/gcp/generated/, which is gitignored
+# (.gitignore:11) — it's produced by running generate-overlay.py against a live
+# `terraform output -json`, never committed, because its contents (Secret Manager
+# secret names, Cloud SQL connection names) are only meaningful against the Terraform
+# state that produced them. ArgoCD's repo-server only ever sees committed git content,
+# so syncing this Application as-is will fail `kustomize build` (missing resources)
+# until that's addressed. See gitops/README.md for the options considered
+# (render-and-commit / a Config Management Plugin / keep deferring) and why none was
+# picked yet. This Application is scaffolded now so the shape exists, and to make the
+# gap visible rather than silently missing — do not expect it to sync successfully
+# until the blocker above is resolved and STR-154's GCP infra actually exists.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: internstore-gcp
+  namespace: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/YaroslavMarkivskyi/internstore-migrate.git
+    targetRevision: main
+    path: k8s/overlays/gcp
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+
+  # No syncPolicy.automated block => manual sync only, by design (see above).
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=false

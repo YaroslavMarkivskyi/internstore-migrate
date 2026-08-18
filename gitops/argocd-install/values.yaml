@@ -1,0 +1,29 @@
+# Helm values for the official `argo-cd` chart (argoproj/argo-helm).
+#
+# This is the one deliberate exception to STR-144's Kustomize-only convention: it
+# installs the GitOps tool itself, not one of InternStore's own services, and ArgoCD's
+# own install is conventionally Helm even in Kustomize-first repos. See gitops/README.md.
+#
+# Install:
+#   helm repo add argo https://argoproj.github.io/argo-helm
+#   helm repo update
+#   kubectl create namespace argocd
+#   helm upgrade --install argocd argo/argo-cd -n argocd -f gitops/argocd-install/values.yaml
+
+# No SSO/RBAC config — default admin access. ArgoCD access control integration with
+# Firebase Auth (STR-155) is explicitly out of scope for this ticket; this is a
+# solo-demo environment, not a shared team one. Revisit if that changes.
+configs:
+  params:
+    # Serve plain HTTP inside the cluster (still fronted by whatever TLS you put in
+    # front of it, e.g. `kubectl port-forward` over your own machine). Avoids needing
+    # a cert for a kind cluster with no ingress of its own; simplest path to the
+    # demo-visible sync-status UI this ticket's design explicitly wants.
+    server.insecure: true
+
+server:
+  # Simplest reliable path to the UI on kind: no extra NodePort mapping needed in
+  # k8s/kind-config.yaml. Documented in gitops/README.md.
+  #   kubectl port-forward svc/argocd-server -n argocd 8080:443
+  service:
+    type: ClusterIP
