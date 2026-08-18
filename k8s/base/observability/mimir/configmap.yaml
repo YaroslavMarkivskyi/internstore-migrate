@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mimir-config
+  labels:
+    app: mimir
+data:
+  mimir.yaml: |
+    multitenancy_enabled: false
+
+    server:
+      http_listen_port: 9009
+      log_level: info
+
+    common:
+      storage:
+        backend: filesystem
+        filesystem:
+          dir: /data/common
+
+    blocks_storage:
+      backend: filesystem
+      filesystem:
+        dir: /data/blocks
+      bucket_store:
+        sync_dir: /data/tsdb-sync
+      tsdb:
+        dir: /data/tsdb
+
+    # Single-instance demo cluster — Mimir's ring defaults assume a 3+
+    # instance HA setup (replication_factor: 3), which a lone pod can never
+    # satisfy ("too many unhealthy instances in the ring" on every query).
+    # RF=1 across ingester/store-gateway/ruler matches the single replica
+    # every component in this stack actually runs at.
+    ingester:
+      ring:
+        replication_factor: 1
+    store_gateway:
+      sharding_ring:
+        replication_factor: 1
+
+    compactor:
+      data_dir: /data/compactor
+      # Demo-scale retention — matches Loki/Tempo's 7-day window.
+      compaction_interval: 1h
+
+    ruler_storage:
+      backend: filesystem
+      filesystem:
+        dir: /data/ruler
+
+    alertmanager_storage:
+      backend: filesystem
+      filesystem:
+        dir: /data/alertmanager
+
+    limits:
+      compactor_blocks_retention_period: 168h
+      # Single-instance demo cluster — no per-tenant series cap needed.
+      max_global_series_per_user: 0

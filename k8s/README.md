@@ -433,3 +433,26 @@ intentional for local dev (nothing in this manifest set is meant to survive a te
 worth stating explicitly since compose's named volumes behave differently (they survive
 `docker compose down` unless `-v` is passed) and someone coming from that habit might expect
 the same here.
+
+## STR-183: LGTM observability stack (Loki, Grafana, Tempo, Mimir) + Grafana Alloy
+
+`k8s/base/observability/` — see `k8s/base/observability/README.md` for the full writeup
+(storage-backend decision, Grafana trace↔log↔metric correlation config, a real Mimir
+single-tenant-ring bug found and fixed via live verification, and the measured resource
+footprint against STR-180's cost model). Summary:
+
+- All four LGTM components + Alloy verified running and correctly correlating signals
+  end-to-end on a scratch `kind` cluster — a synthetic OTLP trace and log pushed through Alloy
+  were confirmed queryable back out through Grafana's own datasource-proxy endpoints for all
+  three of Loki, Tempo, and Mimir (the last via Tempo's `metrics_generator` span-metrics).
+- Storage stays filesystem/PVC-backed (not GCS) at this project's demo scale — confirmed with
+  the ticket owner before building — so this directory needs **no** special `gcp` overlay
+  handling; it flows through via `resources: [../../base]` same as everything else.
+- Measured footprint: **250m CPU / 704Mi memory** of scheduling `requests` added to the
+  cluster, **~20m CPU / 237Mi memory** actually used at idle/smoke-test load (`kubectl top`,
+  no real service traffic yet — that's Phase 2's job).
+- **Phase 2 (OTel SDK instrumentation across all 12+ services, incl. structured-logging
+  migration — current logging is plain `logging.basicConfig()`, not JSON) is out of scope for
+  this ticket** and tracked as its own follow-up: different risk profile (real application-code
+  diffs vs. this ticket's purely-additive infra), confirmed with the ticket owner rather than
+  force-fit in alongside Phase 1.

@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  labels:
+    app: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki:3100
+      jsonData:
+        # Lets a log line containing trace_id=<hex> jump straight to that
+        # trace in Tempo — the log->trace half of the correlation loop.
+        derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: 'trace_id=(\w+)'
+          name: TraceID
+          url: "$${__value.raw}"
+
+    - name: Tempo
+      type: tempo
+      uid: tempo
+      access: proxy
+      url: http://tempo:3200
+      jsonData:
+        # trace->logs: click a span, jump to its Loki logs filtered by
+        # service.name and the span's time range.
+        tracesToLogsV2:
+          datasourceUid: loki
+          spanStartTimeShift: "-5m"
+          spanEndTimeShift: "5m"
+          filterByTraceID: true
+          filterBySpanID: false
+          tags:
+          - key: service.name
+            value: service_name
+        # trace->metrics: click a span, jump to Tempo's own span-metrics
+        # (RED rate/error/duration) for that service in Mimir.
+        tracesToMetrics:
+          datasourceUid: mimir
+          spanStartTimeShift: "-5m"
+          spanEndTimeShift: "5m"
+          tags:
+          - key: service.name
+            value: service_name
+        serviceMap:
+          datasourceUid: mimir
+        nodeGraph:
+          enabled: true
+
+    - name: Mimir
+      type: prometheus
+      uid: mimir
+      access: proxy
+      url: http://mimir:9009/prometheus
+      jsonData:
+        httpMethod: POST
+        # Must match the X-Scope-OrgID every writer (Alloy's
+        # prometheus.remote_write, Tempo's metrics-generator) pushes under —
+        # see alloy/configmap.yaml's comment on why this exists even with
+        # multitenancy_enabled: false.
+        httpHeaderName1: "X-Scope-OrgID"
+      secureJsonData:
+        httpHeaderValue1: "single-tenant"
