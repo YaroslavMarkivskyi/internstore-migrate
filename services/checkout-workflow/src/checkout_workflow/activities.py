@@ -2,6 +2,7 @@ import dataclasses
 import logging
 
 import httpx
+from opentelemetry import metrics
 from temporalio import activity
 
 from checkout_workflow.auth import mint_internal_token
@@ -10,6 +11,21 @@ from checkout_workflow.kafka import KafkaEventProducer
 from checkout_workflow.types import CheckoutWorkflowInput
 
 logger = logging.getLogger(__name__)
+
+# STR-158b/STR-142: workflow-level, not activity-level — recorded from the
+# two activities that are each workflows.py's sole path to a terminal
+# outcome (publish_order_confirmed only runs on the happy path,
+# mark_order_rejected only on the compensation path), not from every
+# individual activity. get_meter() here is safe to call before
+# configure_metrics() runs (worker.py's setup_observability, called after
+# this module is imported) — OTel's metrics API returns a proxy that binds
+# to the real MeterProvider once one is set, same as trace.get_tracer()
+# already relies on elsewhere in this codebase (see mcp_gateway/router.py).
+_meter = metrics.get_meter(__name__)
+_workflow_outcomes = _meter.create_counter(
+    "checkout_workflow_outcomes_total",
+    description="CheckoutWorkflow terminal outcomes: confirmed (happy path) vs compensation_triggered.",
+)
 
 
 class ActivityError(Exception):
@@ -124,7 +140,9 @@ async def update_order_status(args: dict) -> dict:
 async def mark_order_rejected(input: CheckoutWorkflowInput) -> dict:
     """Compensation step — same endpoint/idempotency as update_order_status,
     just a fixed target status."""
-    return await update_order_status({"order_id": input.order_id, "status": "rejected"})
+    result = await update_order_status({"order_id": input.order_id, "status": "rejected"})
+    _workflow_outcomes.add(1, {"outcome": "compensation_triggered"})
+    return result
 
 
 @activity.defn
@@ -181,6 +199,7 @@ async def publish_order_confirmed(input: CheckoutWorkflowInput) -> None:
         )
     finally:
         await producer.stop()
+    _workflow_outcomes.add(1, {"outcome": "confirmed"})
 
 
 async def _escalate(settings: Settings, input: CheckoutWorkflowInput, reason: str) -> None:

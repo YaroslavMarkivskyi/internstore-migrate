@@ -2,7 +2,9 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 
-from aiokafka import AIOKafkaConsumer
+from aiokafka import AIOKafkaConsumer, TopicPartition
+
+from notifications.observability import record_kafka_lag
 
 logger = logging.getLogger(__name__)
 
@@ -75,5 +77,16 @@ async def run_consumer_loop(bootstrap_servers: str, topic: str, group_id: str, d
                 )
                 raise
             await consumer.commit()
+            # STR-158b/STR-134: lag = how far this partition's high-water
+            # mark has moved past what we've now committed — one extra
+            # Kafka round-trip per message is fine at this project's demo
+            # scale; the ObservableGauge callback in observability.py just
+            # reports whatever was last recorded here on Mimir's next scrape.
+            try:
+                tp = TopicPartition(topic, message.partition)
+                end_offsets = await consumer.end_offsets([tp])
+                record_kafka_lag(topic, group_id, max(0, end_offsets[tp] - (message.offset + 1)))
+            except Exception:
+                logger.debug("Failed to compute consumer lag for %s/%s", topic, group_id, exc_info=True)
     finally:
         await consumer.stop()
