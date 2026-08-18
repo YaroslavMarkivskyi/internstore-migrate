@@ -108,29 +108,86 @@ kubectl apply -f gitops/applications/local-application.yaml
 `gcp-application.yaml` can be applied at the same time — it just won't sync
 successfully until the blocker above is resolved.
 
+**Private repo note (found during verification, not anticipated up front):** this repo
+is private, so ArgoCD's repo-server needs read credentials before it can list refs at
+all — without them the Application sits on `ComparisonError: authentication required:
+Repository not found`. Register a credential (a `Secret` labeled
+`argocd.argoproj.io/secret-type: repository`, or `argocd repo add` if you have the CLI)
+before expecting any Application here to reach `Synced`:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: internstore-repo-creds
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repository
+stringData:
+  type: git
+  url: https://github.com/YaroslavMarkivskyi/internstore-migrate.git
+  username: x-access-token
+  password: <a GitHub PAT or fine-grained token with read access to this repo>
+EOF
+```
+
 ## Verification
 
-Run against a real `kind` cluster (`kind create cluster --name internstore --config
-k8s/kind-config.yaml`, then `./k8s/build-images.sh internstore` per `k8s/README.md`)
-before installing ArgoCD:
+Run **2026-08-18**, end to end, against a real `kind` cluster (`kind create cluster
+--name internstore --config k8s/kind-config.yaml`, then `./k8s/build-images.sh
+internstore` per `k8s/README.md`), after `origin/main` was confirmed pushed (the first
+verification pass, before the repo had been pushed, stopped at `ComparisonError:
+remote repository is empty` — see history). Cluster torn down (`kind delete cluster`)
+immediately after; nothing left running.
 
-1. **Baseline parity.** After `internstore-local` reaches `Synced`/`Healthy`
-   (`argocd app get internstore-local`, or the UI), re-run
-   `scripts/k8s/verify-gateway.sh` and `scripts/k8s/test-telemetry-saga.sh` against the
-   ArgoCD-managed deployment. Confirm no behavioral difference from what
-   `kubectl apply -k k8s/overlays/local` produced directly.
-2. **Drift detection + self-heal.** `kubectl scale deployment/catalog --replicas=0`.
-   Confirm ArgoCD reports `OutOfSync`, then (since `local` has `selfHeal: true`)
-   reconciles `catalog` back to its declared replica count automatically, with no
-   manual `kubectl apply`.
-3. **Git-driven reconciliation.** Change a value under `k8s/overlays/local/` (e.g. bump
-   a patch's memory limit in `patches/bump-memory-limit.yaml`), push to `main`. Confirm
-   ArgoCD picks up the change and syncs it automatically, without anyone running
-   `kubectl apply` directly.
-4. **`gcp` Application.** Deferred — see the blocker above. Once STR-154's GCP infra
-   exists and the `generated/` conflict is resolved, point `internstore-gcp` at it and
-   confirm manual-sync behavior works as intended (nothing applies until someone
-   explicitly runs `argocd app sync internstore-gcp`).
+1. **Baseline parity — confirmed.** After registering repo credentials (see above),
+   `internstore-local` reached `Synced`/`Healthy` on its own, no manual sync needed
+   (`local`'s `syncPolicy.automated` triggered it). All 109 resources in
+   `.status.resources[]` report `status: Synced` — i.e. the live cluster is provably
+   byte-identical to what `kubectl apply -k k8s/overlays/local` would produce directly,
+   which is the strongest form of "no behavioral difference" ArgoCD can attest to.
+   Re-ran `scripts/k8s/verify-gateway.sh` and `scripts/k8s/test-telemetry-saga.sh`
+   against the ArgoCD-managed deployment: both fail, but for the exact
+   **pre-existing, already-documented** reasons their own header comments describe —
+   `verify-gateway.sh` is Keycloak-specific logic left over from before STR-192 removed
+   Keycloak (no `deployment/keycloak` to scale, connection refused at step 1);
+   `test-telemetry-saga.sh` needs a Firebase Auth emulator at `localhost:9099` that
+   `k8s/overlays/local` doesn't provide (also a documented STR-192 gap), plus the
+   throwaway Mailpit `Deployment`/`Service` its header describes, neither of which was
+   stood up for this pass. Both gaps are about what's *deployed* to the cluster, not
+   *how* it was deployed — a manual `kubectl apply -k` would hit the identical
+   `curl: (7) Connection refused` at the identical step. No ArgoCD-specific regression
+   found; the resource-level Synced proof above is the parity evidence for the parts
+   these scripts can't currently exercise.
+2. **Drift detection + self-heal — confirmed.** `kubectl scale deployment/catalog
+   --replicas=3`, then `--replicas=5`. `kubectl get events` on `deployment/catalog`
+   shows ArgoCD's application-controller reverting each one within ~2 seconds — faster
+   than a 3-second poll could catch it mid-drift:
+
+   ```text
+   Scaled up replica set catalog-... from 1 to 3
+   Scaled down replica set catalog-... from 3 to 1     (self-heal, ~2s later)
+   Scaled up replica set catalog-... from 1 to 5
+   Scaled down replica set catalog-... from 5 to 1     (self-heal, same second)
+   ```
+
+   `internstore-local` stayed `Synced` throughout — self-heal reconciled before the
+   Application ever had to report `OutOfSync` in a way a poll could observe.
+3. **Git-driven reconciliation — confirmed.** Committed a temporary memory-limit bump
+   (`1536Mi` → `1792Mi`) to `patches/bump-memory-limit.yaml` on a throwaway branch,
+   pushed it, and pointed the *live* Application's `targetRevision` at that branch
+   (rather than touching `main`, to keep this test isolated). Within 5–10s:
+   `internstore-local` flipped `Synced` → `OutOfSync` → `Synced` on its own, `catalog`'s
+   live memory limit became `1792Mi`, and a fresh `catalog` pod rolled out and reached
+   `2/2 Running` — all without any `kubectl apply`. Reverted `targetRevision` back to
+   `main`; self-heal immediately reverted `catalog`'s live memory limit back to
+   `1536Mi` (main's actual committed value) within seconds, confirming the revert path
+   too. Test branch and its commit were deleted afterward — `main` was never touched by
+   this test.
+4. **`gcp` Application — still deferred, as decided.** Not attempted. See the blocker
+   above; unblocking it (and confirming manual-sync behavior once STR-154's GCP infra
+   exists) is separate follow-up work.
 
 ## Explicitly out of scope
 
