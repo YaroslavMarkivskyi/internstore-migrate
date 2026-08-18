@@ -10,6 +10,7 @@ from inventory import commands, events as ev
 from inventory.auth import get_internal_claims, require_authz
 from inventory.catalog_client import CatalogClient, get_catalog_client
 from inventory.db import get_session
+from inventory.event_store import ConcurrencyConflict
 from inventory.models import Stock, StockEvent, StockItem, StockSnapshot
 from inventory.projector import replay
 from inventory.schemas import (
@@ -303,12 +304,27 @@ async def reserve_stock(
     request: Request,
 ) -> ReserveStockResponse:
     settings = request.app.state.settings
-    status = await commands.reserve(
-        request.app.state.session_factory,
-        payload.order_id,
-        [item.model_dump() for item in payload.items],
-        settings.reservation_ttl_seconds,
-    )
+    try:
+        status = await commands.reserve(
+            request.app.state.session_factory,
+            payload.order_id,
+            [item.model_dump() for item in payload.items],
+            settings.reservation_ttl_seconds,
+        )
+    except ConcurrencyConflict as exc:
+        # STR-160b: run_with_retry (commands.py) already retried
+        # MAX_ATTEMPTS times against real concurrent writers for the same
+        # product before giving up -- this is a genuine "someone else won
+        # the race" outcome, not a server fault, so it's surfaced as a
+        # handled 409 instead of an uncaught 500 (STR-159b found the
+        # latter via live load testing). The detail string is what a
+        # caller actually needs: this is retry-able, and order_id, so the
+        # Temporal activity's own logs/retries can be correlated to it.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Reservation for order {payload.order_id} conflicted with a concurrent writer "
+            "after exhausting retries -- please retry",
+        ) from exc
     return ReserveStockResponse(order_id=payload.order_id, status=status)
 
 
@@ -321,7 +337,17 @@ async def release_stock(
     payload: ReleaseStockRequest,
     request: Request,
 ) -> ReleaseStockResponse:
-    status = await commands.release(request.app.state.session_factory, payload.order_id)
+    try:
+        status = await commands.release(request.app.state.session_factory, payload.order_id)
+    except ConcurrencyConflict as exc:
+        # Same reasoning as reserve_stock above -- release_stock goes
+        # through the same retrying run_with_retry mechanism and can
+        # exhaust retries under the same kind of contention.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Release for order {payload.order_id} conflicted with a concurrent writer "
+            "after exhausting retries -- please retry",
+        ) from exc
     return ReleaseStockResponse(order_id=payload.order_id, status=status)
 
 
