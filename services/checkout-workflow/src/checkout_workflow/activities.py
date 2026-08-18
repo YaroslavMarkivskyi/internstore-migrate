@@ -54,7 +54,19 @@ async def reserve_stock(input: CheckoutWorkflowInput) -> dict:
     services/inventory/src/inventory/routers/stocks.py). A retried call
     for the same order_id (this activity's forward-path RetryPolicy in
     workflows.py) finds the reservation already made instead of trying —
-    and failing, or worse double-reserving — again."""
+    and failing, or worse double-reserving — again.
+
+    STR-160b: Inventory's exhausted-retry response for this endpoint
+    changed from an uncaught 500 to a handled 409 (real optimistic-
+    concurrency contention, not a server fault). Checked, not assumed:
+    `resp.raise_for_status()` below raises httpx.HTTPStatusError for
+    either status, and this activity's own RetryPolicy(maximum_attempts=3,
+    workflows.py) has no `non_retryable_error_types` — Temporal already
+    retries this activity the same way regardless of which 4xx/5xx it
+    was. No behavior change needed here; the 409 is still a strictly
+    better signal for anyone reading activity failure logs (httpx's
+    exception message reads "Client error '409'..." instead of "Server
+    error '500'...", correctly pointing at contention instead of a bug)."""
     settings = load_settings()
     async with httpx.AsyncClient(timeout=settings.inventory_timeout_seconds) as client:
         resp = await client.post(

@@ -177,3 +177,70 @@ checkout-saga chain, cross-service overview) provisioned the same way as this Ph
 LGTM Pipeline Health dashboard. Both priority trace chains were live-verified end-to-end against
 a real docker-compose stack + a scratch Tempo container — not assumed from code alone — which is
 what caught this Phase's `derivedFields` regex bug (see above).
+
+## STR-159b: live verification of the three domain metrics against real Mimir
+
+STR-158b's three domain metrics were built against documented OTel→Prometheus naming
+conventions but never confirmed against a real running Mimir (the implementing agent flagged
+this explicitly as the most likely first failure point). This ticket closes that gap: the merged
+Phase 2 stack was deployed to a scratch `kind` cluster (`k8s/build-images.sh` + `kubectl apply -k
+k8s/overlays/local`, all 33 pods reaching Running/Ready), all three metric-producing conditions
+were triggered for real, and each metric was queried directly out of Mimir via PromQL — not just
+asserted from the exporter code.
+
+**No naming mismatch found for any of the three metrics** — every name and label set Mimir
+actually stores matches what the dashboards' panel queries (`grafana/configmap-dashboards.yaml`)
+expect, exactly:
+
+- `kafka_consumer_lag{topic, consumer_group}` — induced a real backlog by scaling
+  `telemetry` to 0 replicas, producing ~8,000 real-shaped `ItemAdded` envelopes directly onto
+  `inventory-events` (`kafka-console-producer` inside `kafka-0`, sized so draining would outlast
+  the OTel SDK's 60s default metric-export interval — a smaller first attempt at 60/3000 messages
+  fully drained before the next export tick and produced a false "still zero" read), then scaling
+  `telemetry` back to 1. Confirmed both the real broker-side lag (`kafka-consumer-groups.sh
+  --describe`) and Mimir's exported gauge moving together, e.g. broker lag 5226 next to
+  `kafka_consumer_lag{topic="inventory-events",consumer_group="telemetry-inventory-events"} =
+  6672` moments later (gauge is last-value-wins per commit, not a live tick, so the two don't
+  match to the message — same behavior documented in `observability.py`).
+- `checkout_workflow_outcomes_total{outcome}` — ran `scripts/k8s/test-temporal-saga.sh` (already
+  adapted for this cluster by STR-145) against a throwaway in-cluster Firebase Auth emulator (this
+  overlay has none of its own — same documented gap as `k8s/README.md`'s Mailpit workaround;
+  stood up via `andreysenov/firebase-tools`, wired to `auth-backend` via a `FIREBASE_AUTH_EMULATOR_HOST`
+  patch, torn down after). Both the happy path (`outcome="confirmed"`) and the payment-failure
+  compensation path (`outcome="compensation_triggered"`) landed in Mimir under those exact label
+  values, matching the dashboards' `sum(rate(checkout_workflow_outcomes_total[5m])) by (outcome)`.
+- `inventory_concurrency_conflicts_total` — mirrored STR-150's manual 5-run concurrent-reservation
+  test, but needed real concurrency, not 5 sequential-ish requests: 5 truly parallel
+  `POST /stocks/reserve` calls against the same product (via `asyncio.gather`, minting the same
+  internal HMAC token every service already trusts) didn't overlap enough to race; ~30 concurrent
+  calls reliably did. Confirmed the counter increasing (58 → 101 across two bursts) and matching
+  real `ConcurrencyConflict` retries in `inventory`'s own logs one-for-one.
+
+**Dashboard panels confirmed rendering real data, not empty/no-data**: queried all three panel
+expressions through Grafana's own datasource-proxy endpoint (`/api/datasources/proxy/uid/mimir/...`
+— the same path a rendered panel hits, not a shortcut around it) immediately after each trigger.
+All three returned non-empty vectors with the real values above once fresh events were within the
+`rate()` queries' 5m windows.
+
+**A real bug found, but out of this ticket's scope to fix**: `inventory`'s optimistic-concurrency
+retry loop (`commands.run_with_retry`, `MAX_ATTEMPTS = 3`) correctly increments
+`inventory_concurrency_conflicts_total` on every retry — including the ones that exhaust all 3
+attempts — but the final `raise ConcurrencyConflict("exhausted retries")` on exhaustion has no
+FastAPI exception handler, so it surfaces as an uncaught `500` instead of a handled `409`/`503`.
+Confirmed live: heavier concurrency bursts (25-30 parallel reserves against one product) reliably
+produced a mix of `200`s and `500`s, with the metric incrementing correctly on every one of them
+regardless of the eventual HTTP status. This is an app-level error-handling gap in already-shipped
+STR-150 code, not a metrics-naming or dashboard-query defect — flagged here rather than fixed,
+per this ticket's explicit scope (verify the three metrics, don't redo STR-158b's or STR-150's
+work).
+
+**Also observed, not a defect**: under this verification's synthetic load (the ~8,000-message
+Kafka burst and the 25-30-way concurrent-reservation bursts, run back to back on a single 4-core
+kind node already hosting all 33 pods), Alloy's `prometheus.remote_write` queue to Mimir backed
+up by several minutes at least once (`mimir-0` returned `500 context deadline exceeded` under the
+combined load; Alloy retried per its own backoff policy). Every sample eventually landed intact
+and under the correct name/labels — nothing was lost — but a burst this synthetically concentrated
+produced longer end-to-end delivery latency than the stack sees under normal demo traffic. Worth
+knowing if someone reproduces this verification and sees a metric appear to "stick" for a few
+minutes before jumping to its real value — that's ingest backpressure on a small shared node, not
+a broken exporter.
