@@ -1,41 +1,42 @@
-# InternStore — Identity migration to Keycloak
+# InternStore — Identity migration to Firebase Authentication
 
-See [docs/adr/0001-replace-custom-identity-with-keycloak.md](docs/adr/0001-replace-custom-identity-with-keycloak.md)
-for the decision and architecture. Acceptance criteria: [docs/requirements/AUTH.md](docs/requirements/AUTH.md).
+See [docs/adr/0004-replace-keycloak-with-firebase.md](docs/adr/0004-replace-keycloak-with-firebase.md)
+for the current decision and architecture ([docs/adr/0001](docs/adr/0001-replace-custom-identity-with-keycloak.md),
+the original Keycloak decision it supersedes, is kept for history).
+Acceptance criteria: [docs/requirements/AUTH.md](docs/requirements/AUTH.md).
 
 ## Local setup
 
 ```bash
 docker compose up -d
+uv run scripts/seed-firebase-users.py
 ```
 
-This starts Keycloak (`:8081`, admin console at `/admin`, login `admin`/`admin`),
-its Postgres DB, Redis (`:6379`), auth-backend (`:3000`, also reachable
-through nginx), the domain services (Catalog, Inventory, Orders, Telemetry,
-Security, Chat — each reachable only through nginx, e.g. Catalog at
-`/api/catalog/*`) and their own Postgres DBs, and nginx
-(`:8082` plain → redirects to `:8443` TLS; `:8082` because `:8080` is a
-common local conflict — remap in [docker-compose.yml](docker-compose.yml) if
-`:8443`/`:8082` are also taken on your machine). Keycloak imports the
-`internstore` realm from
-[keycloak/realm-export.json](keycloak/realm-export.json) on first boot,
-including two seed users:
+This starts the Firebase Auth emulator (`:9099`, local-dev-only — see
+[firebase/README.md](firebase/README.md)), Redis (`:6379`), auth-backend
+(`:3000`, also reachable through nginx), the domain services (Catalog,
+Inventory, Orders, Telemetry, Security, Chat — each reachable only through
+nginx, e.g. Catalog at `/api/catalog/*`) and their own Postgres DBs, and
+nginx (`:8082` plain → redirects to `:8443` TLS; `:8082` because `:8080` is
+a common local conflict — remap in [docker-compose.yml](docker-compose.yml)
+if `:8443`/`:8082` are also taken on your machine).
+`scripts/seed-firebase-users.py` creates the two seed users
+(`keycloak/realm-export.json`'s old job, before Keycloak was removed):
 
 | Email | Password | Role |
 |---|---|---|
 | customer@example.com | Customer123 | customer |
 | admin@example.com | Admin123456 | admin |
 
-Wait for Keycloak to report healthy, then run the end-to-end auth check:
+Wait for the emulator to report healthy, then run the end-to-end auth check:
 
 ```bash
 ./scripts/test-auth-flows.sh
 ```
 
 To exercise the full gateway path (nginx → auth-backend → a domain service,
-e.g. Catalog), including negative cases, internal-token isolation/TTL,
-JWKS-cache resilience, and the WebSocket proxy (~90s, briefly
-stops/restarts Keycloak):
+e.g. Catalog), including negative cases, internal-token isolation/TTL, and
+the WebSocket proxy (~15-20s, briefly stops/restarts the Firebase emulator):
 
 ```bash
 ./scripts/verify-gateway.sh
@@ -50,11 +51,10 @@ together:
   `auth_request` to auth-backend, and routing to the domain services
   (Catalog, Inventory, Orders, Telemetry, Security, Chat).
 - [services/auth-backend](services/auth-backend) — Python/FastAPI service
-  (same stack as every domain service) that validates Keycloak-issued JWTs
-  against the realm's JWKS endpoint and mints short-lived internal tokens
-  for downstream services. nginx deliberately does *not* validate JWTs
-  itself: that logic lives here so it's portable, unchanged, to an AWS ALB
-  topology later (see
+  (same stack as every domain service) that validates Firebase-issued ID
+  tokens via the Firebase Admin SDK and mints short-lived internal tokens
+  for downstream services. nginx deliberately does *not* validate tokens
+  itself: that logic lives here (see
   [services/auth-backend/README.md](services/auth-backend/README.md)).
 
 Local dev without Docker (auth-backend only; nginx needs the other services

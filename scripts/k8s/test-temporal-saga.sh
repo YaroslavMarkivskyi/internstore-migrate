@@ -9,7 +9,7 @@
 # fixes made in one copy that were never ported to the other.
 #
 # End-to-end verification of the Temporal-orchestrated checkout
-# (STR-139) through the real gateway, real Keycloak-issued tokens, a real
+# (STR-139) through the real gateway, real Firebase-issued tokens, a real
 # Temporal server, and a real Kafka broker (for the escalation/fan-out
 # side) — no mocks anywhere in this script. Parallel to, and does not
 # replace, scripts/k8s/test-reservation-saga.sh (the existing Kafka-
@@ -44,15 +44,17 @@
 # Requires: curl, jq, python3, kubectl. Run after
 # `kubectl apply -k k8s/overlays/local/` with every pod Running/Ready
 # (needs temporal, temporal-db, temporal-ui, payments, checkout-workflow-worker,
-# orders, inventory, catalog, nginx, keycloak, kafka all healthy).
+# orders, inventory, catalog, nginx, kafka all healthy -- keycloak removed by STR-192, see login() comment above).
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+# STR-192: k8s/overlays/local has no Firebase Auth emulator of its own
+# (that's docker-compose.yml-only, see firebase/README.md) -- assumes one
+# is separately reachable at localhost:9099.
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 CATALOG_URL="https://localhost:8443/api/catalog"
 GATEWAY_URL="https://localhost:8443/api/orders"
 INVENTORY_URL="https://localhost:8443/api/inventory"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 # STR-145: the compose original's tag
 # ("1.27.2-tctl-1.18.2-cli-1.1.1") no longer exists on Docker Hub
@@ -68,9 +70,9 @@ pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 # $1 = admin token, $2 = category id, $3 = price -> prints product id

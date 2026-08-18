@@ -1,6 +1,7 @@
 # Every credential the ticket names (INTERNAL_TOKEN_SECRET, DB passwords,
-# OPENAI_API_KEY, Stripe keys) plus the GCS HMAC keys and Keycloak's own
-# creds, as Secret Manager secrets. The k8s overlay's generated
+# OPENAI_API_KEY, Stripe keys) plus the GCS HMAC keys, as Secret Manager
+# secrets. (Keycloak's own creds used to live here too — removed by
+# STR-192 along with Keycloak itself.) The k8s overlay's generated
 # SecretProviderClasses reference these by name via Workload Identity — see
 # k8s/overlays/gcp/generate-overlay.py. Cloud SQL Auth Proxy sidecars listen
 # on 127.0.0.1, so every DATABASE_URL below points at localhost, not the
@@ -10,17 +11,13 @@ locals {
   # service-facing secret id -> value. One Secret Manager secret per entry.
   secrets = merge(
     {
-      "internal-token-secret"   = var.internal_token_secret
-      "openai-api-key"          = var.openai_api_key
-      "stripe-secret-key"       = var.stripe_secret_key
-      "stripe-webhook-secret"   = var.stripe_webhook_secret
-      "keycloak-client-secret"  = var.keycloak_client_secret
-      "keycloak-admin-password" = var.keycloak_admin_password
-      "keycloak-db-username"    = local.databases["keycloak"].user
-      "keycloak-db-password"    = random_password.db["keycloak"].result
-      "temporal-db-password"    = random_password.db["temporal"].result
-      "gcs-hmac-access-id"      = module.storage.hmac_access_id
-      "gcs-hmac-secret"         = module.storage.hmac_secret
+      "internal-token-secret" = var.internal_token_secret
+      "openai-api-key"        = var.openai_api_key
+      "stripe-secret-key"     = var.stripe_secret_key
+      "stripe-webhook-secret" = var.stripe_webhook_secret
+      "temporal-db-password"  = random_password.db["temporal"].result
+      "gcs-hmac-access-id"    = module.storage.hmac_access_id
+      "gcs-hmac-secret"       = module.storage.hmac_secret
       # See databases.tf's comment: matches the value telemetry's own
       # Alembic migration (69ff8539f688) already creates the
       # telemetry_readonly role with, unchanged from base's local value —

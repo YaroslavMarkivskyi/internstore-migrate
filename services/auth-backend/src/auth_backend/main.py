@@ -2,14 +2,15 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import firebase_admin
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from firebase_admin import credentials
 from redis.asyncio import Redis
 
 from auth_backend.auth.external_token import ExternalTokenVerifier
 from auth_backend.auth.guest_session import GUEST_SESSION_TTL_SECONDS, GuestSessionStore
 from auth_backend.auth.internal_token import MintableClaims, mint_internal_token, verify_internal_token_for_refresh
-from auth_backend.auth.revocation import RevocationChecker
 from auth_backend.config import Settings, load_settings
 
 # Catalog browsing, cart/checkout, chat, and chat attachment uploads are
@@ -60,8 +61,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.redis = redis
     app.state.guest_session_store = GuestSessionStore(redis)
-    app.state.revocation_checker = RevocationChecker(settings)
-    app.state.external_token_verifier = ExternalTokenVerifier(settings.keycloak_issuer, settings.keycloak_jwks_uri)
+
+    # STR-155: firebase_admin keeps one process-wide default App; guard
+    # against re-initializing it (get_app() raises ValueError if none
+    # exists yet — that's the SDK's own recommended check-first pattern).
+    # Credentials come from Application Default Credentials (Workload
+    # Identity in GCP), never a committed service-account key file.
+    try:
+        firebase_admin.get_app()
+    except ValueError:
+        firebase_admin.initialize_app(
+            credentials.ApplicationDefault(), {"projectId": settings.firebase_project_id}
+        )
+    app.state.external_token_verifier = ExternalTokenVerifier()
 
     try:
         yield
@@ -79,10 +91,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    # Demonstrates AUTH-03: validate the Keycloak-issued external token via
-    # JWKS (no per-request call to Keycloak), then mint a short-lived internal
-    # token that downstream services trust without contacting Keycloak or the
-    # Gateway.
+    # Demonstrates AUTH-03: validate the Firebase-issued external token (see
+    # STR-155), then mint a short-lived internal token that downstream
+    # services trust without contacting Firebase or the Gateway.
     @app.get("/me")
     async def me(request: Request) -> Response:
         auth_header = request.headers.get("authorization")
@@ -198,12 +209,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         external_token = auth_header.removeprefix("Bearer ")
         verifier: ExternalTokenVerifier = request.app.state.external_token_verifier
-        revocation_checker: RevocationChecker = request.app.state.revocation_checker
 
         try:
+            # STR-155: revocation is checked inside verifier.verify() itself
+            # (check_revoked=True), not as a separate step — see
+            # external_token.py. The old Keycloak introspection call
+            # (auth/revocation.py, retired) lived here as a second step
+            # because Keycloak had no equivalent built into JWKS
+            # verification; Firebase does.
             claims = verifier.verify(external_token)
-            if await revocation_checker.is_revoked(external_token):
-                return Response(status_code=401)
             internal_token = mint_internal_token(
                 MintableClaims(sub=claims.sub, role=claims.role),
                 settings.internal_token_secret,

@@ -53,10 +53,12 @@ live GCP project.
   in-cluster `postgres-*`, `redis`, `minio`/`minio-init`,
   `kafka`/`kafka-topic-init` (replaced by Cloud SQL, Memorystore, GCS,
   Managed Kafka respectively)
-- `keycloak-patch.yaml`, `temporal-patch.yaml` — special-cased: both read
-  their DB config from inline `env: value:` entries in `k8s/base`, not an
-  `envFrom: secretRef`, so they need their own strategic-merge patches
-  rather than the generic generator (see each file's header comment)
+- `temporal-patch.yaml` — special-cased: reads its DB config from inline
+  `env: value:` entries in `k8s/base`, not an `envFrom: secretRef`, so it
+  needs its own strategic-merge patch rather than the generic generator
+  (see its header comment). `keycloak-patch.yaml`/`keycloak-secrets.yaml`
+  used to be temporal's companion special case here — removed by STR-192
+  along with Keycloak itself.
 - `ingress.yaml`, `nginx-service-patch.yaml`, `backendconfig.yaml` — GCLB
   Ingress in front of the existing `nginx` Service, with Cloud Armor
   attached via `BackendConfig`

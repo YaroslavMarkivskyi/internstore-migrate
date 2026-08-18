@@ -13,7 +13,7 @@
 # were never ported to the other.
 #
 # End-to-end verification of the reservation saga (Orders outbox + Inventory
-# idempotent consumer) through the real gateway, real Keycloak-issued
+# idempotent consumer) through the real gateway, real Firebase-issued
 # tokens, and a real Kafka broker — no mocks anywhere in this script.
 #
 # Covers:
@@ -31,24 +31,28 @@
 #
 # Requires: curl, jq, python3, kubectl. Run after
 # `kubectl apply -k k8s/overlays/local/` with every pod Running/Ready.
-# Assumes nginx's NodePort (30843->8443) and keycloak's (30081->8081) are
-# reachable at localhost via k8s/kind-config.yaml.
+# Assumes nginx's NodePort (30843->8443) is reachable at localhost via
+# k8s/kind-config.yaml. STR-192: Keycloak's own NodePort is gone along
+# with the Deployment -- k8s/overlays/local has no Firebase Auth emulator
+# of its own (that's docker-compose.yml-only, see firebase/README.md), so
+# login() below assumes one is separately reachable at localhost:9099
+# (e.g. `docker compose up -d firebase-emulator` run alongside this kind
+# cluster) rather than anything k8s/ itself provides.
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 GATEWAY_URL="https://localhost:8443/api/orders"
 INVENTORY_URL="https://localhost:8443/api/inventory"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 seed_stock() {
@@ -186,18 +190,18 @@ poll_until 30 "order_status '$CUSTOMER_TOKEN' '$ORDER_C'" "pending" "order C res
 # plus a buffer for the 5s check interval and general poll slack.
 #
 # STR-145: bumping that timeout to 330s surfaced a second, compounding
-# real bug: CUSTOMER_TOKEN is minted once near the top of the script and
-# reused for the rest of the run, but Keycloak's realm accessTokenLifespan
-# is 300s (confirmed live: `GET /admin/realms/internstore` ->
-# accessTokenLifespan: 300) -- with the earlier sections' own runtime
-# added on top, the token expires *during* this poll, and every
-# subsequent order_status call 401s (nginx's own auth_request-rejection
-# error page, not JSON, so jq fails to parse it) for the rest of the
-# window -- indistinguishable from a hung saga without checking the raw
-# response. Not k8s-specific either; the original's fast 60s poll (paired
-# with its incorrect 30s-TTL assumption) never ran long enough to hit
-# this. Fixed by re-logging in on each poll attempt here instead of
-# reusing one long-lived token.
+# real bug under Keycloak (confirmed live: `GET /admin/realms/internstore`
+# -> accessTokenLifespan: 300): CUSTOMER_TOKEN minted once near the top of
+# the script and reused for the rest of the run could expire *during* this
+# poll, with every subsequent order_status call 401ing (nginx's own
+# auth_request-rejection error page, not JSON, so jq fails to parse it) for
+# the rest of the window -- indistinguishable from a hung saga without
+# checking the raw response. Not k8s-specific either; the original's fast
+# 60s poll (paired with its incorrect 30s-TTL assumption) never ran long
+# enough to hit this. STR-192: Firebase ID tokens default to a 1h
+# lifespan, well clear of this poll's ~300s window, but the
+# re-login-per-poll fix is kept anyway -- still correct, and it's one less
+# assumption about token lifetime for this poll to depend on.
 order_status_fresh() {
   local fresh_token
   fresh_token=$(login "customer@example.com" "Customer123")

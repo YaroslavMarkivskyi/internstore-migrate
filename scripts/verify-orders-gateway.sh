@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end verification of the Orders service through the real gateway
 # (nginx + auth-backend), against the real Inventory service (not mocked),
-# with real Keycloak-issued tokens for the registered-customer flow and the
+# with real Firebase-issued tokens for the registered-customer flow and the
 # guest-cookie fallback minted by auth-backend for the unauthenticated flow.
 # Covers:
 #
@@ -11,27 +11,26 @@
 #   3. Guest flow: no Authorization header, guest cookie issued and reused,
 #      cart -> checkout happy path, insufficient-stock checkout
 #   4. Guest-allowlist boundary: guests can check out but cannot list order
-#      history (/api/orders/orders requires a real Keycloak login)
+#      history (/api/orders/orders requires a real Firebase login)
 #   5. /api/orders/orders with neither Bearer token nor guest cookie -> 401
 #
 # Requires: curl, jq, python3, docker compose. Run after
 # `docker compose up -d --build inventory-db inventory orders-db orders nginx`.
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 GATEWAY_URL="https://localhost:8443/api/orders"
 INVENTORY_URL="https://localhost:8443/api/inventory"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 seed_stock() {

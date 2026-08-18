@@ -1,44 +1,32 @@
 services:
-  keycloak-db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: keycloak
+  # STR-155/STR-181/STR-192: local-dev-only stand-in for a real Firebase
+  # project, same category as MinIO (GCS stand-in) / Mailpit (SMTP
+  # stand-in) elsewhere in this stack. auth-backend talks to this via
+  # FIREBASE_AUTH_EMULATOR_HOST — firebase_admin redirects every call there
+  # automatically once that's set, no code branching. See
+  # firebase/README.md for why this image specifically (measured against
+  # node:20-alpine + npx on every boot) and the `host: 0.0.0.0` requirement
+  # (the emulator's default 127.0.0.1 bind is unreachable through Docker's
+  # port mapping — a real gotcha hit while building this, not a
+  # theoretical one).
+  firebase-emulator:
+    image: andreysenov/firebase-tools:latest
+    command: firebase emulators:start --only auth --project internstore-dev
+    working_dir: /home/node
     volumes:
-      - keycloak_db_data:/var/lib/postgresql/data
+      - ./firebase:/home/node
+    ports:
+      - "9099:9099" # Auth emulator API
+      # No Emulator UI (:4000) -- it needs its own zip download on every
+      # cold start (no image-side cache for it) and that download flaked
+      # in practice, taking down the one thing (the Auth emulator API)
+      # auth-backend actually depends on. Not worth a debug UI being a
+      # single point of failure for local dev bootstrap.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:9099/emulator/v1/projects/internstore-dev/config',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 5s
       timeout: 5s
-      retries: 10
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:25.0
-    command: start-dev --import-realm
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: keycloak
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-      KC_HEALTH_ENABLED: "true"
-      # Pins the `iss` claim on issued tokens to the externally-reachable
-      # URL, regardless of which Host header a client used to reach us.
-      KC_HOSTNAME: http://localhost:8081
-    ports:
-      - "8081:8080"
-    volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-    depends_on:
-      keycloak-db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
+      retries: 20
 
   redis:
     image: redis:7-alpine
@@ -49,17 +37,14 @@ services:
     build: ./services/auth-backend
     environment:
       PORT: "3000"
-      # Must match Keycloak's KC_HOSTNAME-pinned `iss` claim exactly.
-      KEYCLOAK_ISSUER: http://localhost:8081/realms/internstore
-      # Internal Docker network path — faster, and JWKS content doesn't
-      # depend on which hostname you fetch it from.
-      KEYCLOAK_JWKS_URI: http://keycloak:8080/realms/internstore/protocol/openid-connect/certs
-      # Used for AUTH-05 token introspection (see auth/revocation.py) —
-      # matches the confidential client in keycloak/realm-export.json
-      # (internstore-web is public and has no secret, so it can't
-      # authenticate an introspection call).
-      KEYCLOAK_CLIENT_ID: internstore-backend
-      KEYCLOAK_CLIENT_SECRET: dev-only-keycloak-client-secret-change-me
+      # STR-192: must match firebase-emulator's --project flag above and
+      # scripts/seed-firebase-users.py's default.
+      FIREBASE_PROJECT_ID: internstore-dev
+      # Redirects every firebase_admin call to the local emulator instead
+      # of real Firebase — this line is the only local/GCP difference in
+      # auth-backend's config; it must never appear in k8s/overlays/gcp
+      # (real Firebase there).
+      FIREBASE_AUTH_EMULATOR_HOST: firebase-emulator:9099
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       INTERNAL_TOKEN_TTL_SECONDS: "60"
       REDIS_URL: redis://redis:6379
@@ -74,8 +59,10 @@ services:
       # .venv/dependencies aren't shadowed by whatever's on the host.
       - ./services/auth-backend/src:/app/src
     depends_on:
-      - keycloak
-      - redis
+      firebase-emulator:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   catalog-db:
     image: postgres:16-alpine
@@ -98,7 +85,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://catalog:catalog@catalog-db:5432/catalog
       # Must match auth-backend's INTERNAL_TOKEN_SECRET — this is the
       # shared secret every internal service validates the Gateway-minted
-      # token against, without calling back to auth-backend or Keycloak.
+      # token against, without calling back to auth-backend or Firebase.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # Product image storage — same MinIO instance as Chat's attachments,
@@ -405,7 +392,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://payments:payments@payments-db:5432/payments
       # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
       # other domain service — validated locally against checkout-workflow's
-      # minted token, no callback to auth-backend/Keycloak.
+      # minted token, no callback to auth-backend/Firebase.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       # See payments/config.py — an amount ending in this suffix simulates
       # a declined charge, for saga testing (no real payment gateway here).
@@ -919,6 +906,12 @@ services:
       # container names) — the browser runs on the host, not inside the
       # compose network.
       VITE_SERVER_URL: https://localhost:8443/api/
+      # STR-192: dead since Keycloak was removed — auth-backend no longer
+      # verifies Keycloak-issued tokens (STR-181) and there's no Keycloak
+      # container left to log into (this ticket). Frontend's migration to
+      # the Firebase JS SDK is a separate, not-yet-built piece (see
+      # firebase/README.md) — left here rather than deleted so the
+      # frontend build doesn't break on a missing env var in the meantime.
       VITE_KEYCLOAK_URL: http://localhost:8081
       VITE_KEYCLOAK_REALM: internstore
       VITE_KEYCLOAK_CLIENT_ID: internstore-web
@@ -939,11 +932,11 @@ services:
     ports:
       # :5173/:3000 (the frontend's conventional dev port / Next.js
       # default) were already taken by other things on this host, so this
-      # container publishes on :5180 instead — registered as an extra
-      # redirectUri/webOrigin on Keycloak's internstore-web client (see
-      # keycloak/realm-export.json) and nginx's CORS allowlist (see
-      # nginx/nginx.conf's $cors_origin map). Pick a free port and update
-      # both places if :5180 also collides on your machine.
+      # container publishes on :5180 instead — was also registered as an
+      # extra redirectUri/webOrigin on Keycloak's internstore-web client
+      # (realm-export.json, removed by STR-192) and still is on nginx's
+      # CORS allowlist (see nginx/nginx.conf's $cors_origin map). Pick a
+      # free port and update that if :5180 also collides on your machine.
       - "5180:5180"
     depends_on:
       - nginx
@@ -1020,7 +1013,6 @@ services:
         done
 
 volumes:
-  keycloak_db_data:
   catalog_db_data:
   inventory_db_data:
   orders_db_data:

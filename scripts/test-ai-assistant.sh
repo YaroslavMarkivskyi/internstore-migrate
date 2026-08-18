@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end verification of the AI Assistant service (STR-136) against the
-# real stack: real Keycloak tokens, real gateway, real Kafka broker, a real
+# real stack: real Firebase tokens, real gateway, real Kafka broker, a real
 # OpenAI API call (requires a working OPENAI_API_KEY on the ai-assistant
 # container — see services/ai-assistant/README.md's dev-gaps note), and a
 # real Mailpit hop for the human-handoff notification.
@@ -16,16 +16,15 @@
 # uv-managed venv (reused for its `websockets` dependency, same as
 # scripts/test-chat-saga.sh). Run after `docker compose up -d --build`
 # (needs chat, ai-assistant, ai-db, orders, inventory, kafka,
-# kafka-topic-init, redis, mailpit, notifications, nginx, keycloak,
+# kafka-topic-init, redis, mailpit, notifications, nginx, firebase-emulator,
 # auth-backend all healthy, and a real OPENAI_API_KEY set for ai-assistant).
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 AUTH_BACKEND_URL="http://localhost:3000"
 GATEWAY_URL="https://localhost:8443/api"
 MAILPIT_URL="http://localhost:8025"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 CHAT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/services/chat"
 
@@ -33,9 +32,9 @@ pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 sub_of() {

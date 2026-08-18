@@ -11,11 +11,20 @@ This is frontend part of the InternStore India Application.
 ## Backend (internstore-migrate)
 
 This directory lives inside [internstore-migrate](../), which provides the
-Keycloak/gateway/domain-services stack this app talks to. `.env` points at
-it: `VITE_SERVER_URL=https://localhost:8443/api/` (nginx gateway),
-`VITE_KEYCLOAK_URL=http://localhost:8081`, realm/client
-`internstore`/`internstore-web` — see [../keycloak](../keycloak) and
+gateway/domain-services stack this app talks to. `.env` points at it:
+`VITE_SERVER_URL=https://localhost:8443/api/` (nginx gateway) — see
 [../nginx](../nginx).
+
+**Login is currently broken against this backend.** `.env`'s
+`VITE_KEYCLOAK_URL=http://localhost:8081`/realm/client
+`internstore`/`internstore-web` target Keycloak, which the backend removed
+(STR-192, see
+[../docs/adr/0004-replace-keycloak-with-firebase.md](../docs/adr/0004-replace-keycloak-with-firebase.md))
+in favor of Firebase Authentication. Migrating this app's login flow to the
+Firebase JS SDK is flagged there as a real dependency, not built yet —
+`VITE_KEYCLOAK_*` is left in `docker-compose.yml` for now only so the build
+doesn't fail on a missing env var, not because it still works. Catalog
+browsing and guest checkout don't need login and are unaffected.
 
 Either run locally (`npm run dev`, default port `5173`) or as part of the
 compose stack:
@@ -31,12 +40,11 @@ collides:
 
 - `docker-compose.yml`'s `frontend` service `ports:` and `--port` in this
   project's `Dockerfile`
-- Keycloak's `internstore-web` client `redirectUris`
-  ([keycloak/realm-export.json](../keycloak/realm-export.json) for future
-  fresh imports; an already-running Keycloak needs the same change applied
-  via its Admin REST API, since realm import only runs once)
 - nginx's CORS allowlist (`$cors_origin` map in
   [nginx/nginx.conf](../nginx/nginx.conf))
+
+(Keycloak's `internstore-web` client `redirectUris` used to be a third
+place to update here — moot since Keycloak was removed, see above.)
 
 ### "CORS request did not succeed" / "Status code: (null)"
 

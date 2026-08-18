@@ -27,12 +27,15 @@ locals {
       "internal-token-secret", "chat-database-url",
       "gcs-hmac-access-id", "gcs-hmac-secret",
     ]
-    payments                   = ["internal-token-secret", "payments-database-url"]
-    "ai-assistant"             = ["internal-token-secret", "ai-assistant-database-url", "openai-api-key"]
-    "mcp-gateway"              = ["internal-token-secret", "mcp-gateway-database-url", "openai-api-key"]
-    "auth-backend"             = ["internal-token-secret", "keycloak-client-secret"]
+    payments       = ["internal-token-secret", "payments-database-url"]
+    "ai-assistant" = ["internal-token-secret", "ai-assistant-database-url", "openai-api-key"]
+    "mcp-gateway"  = ["internal-token-secret", "mcp-gateway-database-url", "openai-api-key"]
+    # STR-192: no keycloak-client-secret entry anymore (Keycloak removed).
+    # FIREBASE_PROJECT_ID isn't a Secret Manager secret (not sensitive) and
+    # wiring the real GCP Firebase project id into auth-backend's config is
+    # a separate follow-up — see generate-overlay.py's matching comment.
+    "auth-backend"             = ["internal-token-secret"]
     "checkout-workflow-worker" = ["internal-token-secret"]
-    keycloak                   = ["keycloak-admin-password", "keycloak-db-username", "keycloak-db-password"]
     temporal                   = ["temporal-db-password"]
     # notifications has no secret.yaml in base — no GSA/WI binding needed.
   }
@@ -80,7 +83,6 @@ locals {
     payments               = ["payments"]
     "ai-assistant"         = ["ai"]
     "mcp-gateway"          = ["ai"]
-    keycloak               = ["keycloak"]
     temporal               = ["temporal"]
   }
 }

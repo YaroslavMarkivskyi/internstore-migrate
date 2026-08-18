@@ -9,9 +9,8 @@
 from tests.conftest import mint_external_token
 
 
-async def test_verify_accepts_bearer_token_sourced_from_ws_query_param_mapping(client, rsa_keypair):
-    private_pem, _ = rsa_keypair
-    token = mint_external_token(private_pem)
+async def test_verify_accepts_bearer_token_sourced_from_ws_query_param_mapping(client):
+    token = mint_external_token()
 
     # This is exactly what nginx sends for /internal/auth-verify-ws: a
     # normal Authorization header, just built from $arg_token rather than

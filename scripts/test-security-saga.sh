@@ -5,7 +5,7 @@
 # the other.
 #
 # End-to-end verification of the Security service (STR-127) through the
-# real gateway and real Keycloak-issued tokens — not the in-process JWTs
+# real gateway and real Firebase-issued tokens — not the in-process JWTs
 # the pytest suite mints. Security has no Kafka dependency (access control
 # is synchronous by nature), so this script only needs the gateway, auth
 # stack, and security/security-db/mock-camera up.
@@ -20,22 +20,21 @@
 #
 # Requires: curl, jq, docker compose. Run after
 # `docker compose up -d --build` (needs security-db, security, mock-camera,
-# nginx, keycloak, auth-backend all healthy).
+# nginx, firebase-emulator, auth-backend all healthy).
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 SECURITY_URL="https://localhost:8443/api/security"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")

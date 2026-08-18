@@ -1,9 +1,10 @@
 # One Cloud SQL instance per k8s/base/postgres-* directory (mirrors that
-# topology 1:1, including postgres-ai's pgvector requirement). This is 11
-# instances, not the "10" figure floated in the ticket — k8s/base actually
-# has 11 postgres-* dirs (9 uniform domain DBs + postgres-keycloak +
-# postgres-temporal + postgres-ai; the ticket's "10 including Temporal's"
-# undercounted by one). See README.md for the cost math this count is based on.
+# topology 1:1, including postgres-ai's pgvector requirement). This is 10
+# instances, matching the ticket's "10, including Temporal's" estimate.
+# (It was briefly 11 — k8s/base used to also have postgres-keycloak, one
+# more than the ticket's original estimate — until STR-192 removed
+# Keycloak entirely in favor of Firebase, STR-181/STR-192.) See README.md
+# for the cost math this count is based on.
 
 locals {
   databases = {
@@ -15,7 +16,6 @@ locals {
     security               = { db = "security", user = "security" }
     chat                   = { db = "chat", user = "chat" }
     payments               = { db = "payments", user = "payments" }
-    keycloak               = { db = "keycloak", user = "keycloak" }
     temporal               = { db = "temporal", user = "temporal" }
     ai                     = { db = "ai", user = "ai" } # pgvector — see module cloudsql's database_version comment
   }

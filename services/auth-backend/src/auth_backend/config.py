@@ -5,11 +5,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     port: int = 3000
-    keycloak_issuer: str
-    keycloak_jwks_uri: str
-    # Used for token introspection (see auth/revocation.py, AUTH-05).
-    keycloak_client_id: str
-    keycloak_client_secret: str
+    # STR-155: Firebase project the external ID token must have been issued
+    # for. Credentials themselves come from Application Default Credentials
+    # (Workload Identity in GCP) — no service-account JSON key is loaded
+    # from settings, see auth/external_token.py.
+    firebase_project_id: str
     internal_token_secret: str
     internal_token_ttl_seconds: int = 60
     # Used by the guest cart session store (see auth/guest_session.py) —

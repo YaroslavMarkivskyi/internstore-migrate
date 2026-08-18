@@ -1,35 +1,31 @@
 #!/usr/bin/env bash
 # Exercises AUTH-02, AUTH-03, AUTH-04, AUTH-05 against a running docker-compose
-# stack (Keycloak on :8080, Gateway on :3000), for both the customer and
-# admin seed users from keycloak/realm-export.json.
+# stack (Firebase Auth emulator on :9099, Gateway on :3000), for both the
+# customer and admin seed users from scripts/seed-firebase-users.py.
 #
-# AUTH-01 (self-registration) is a browser form flow in Keycloak, not a JSON
-# API, so it isn't scripted here — verify manually via
-# http://localhost:8080/realms/internstore/account or the frontend's login
-# page with "Register" enabled.
+# AUTH-01 (self-registration) is a browser form flow, not scripted here --
+# same as before STR-192 (it was Keycloak's Account Console page; there's no
+# Firebase-hosted equivalent either, self-registration would be the
+# frontend's own Firebase JS SDK sign-up call, out of scope for this repo
+# per STR-181/STR-192).
 #
-# Requires: curl, jq. Run after `docker compose up -d`.
+# Requires: curl, jq, uv (for scripts/firebase-admin-cli.py -- AUTH-04/05
+# below use Admin SDK operations with no REST equivalent reachable from
+# curl/jq alone, unlike login which uses the Identity Toolkit REST API
+# directly). Run after `docker compose up -d` and
+# `uv run scripts/seed-firebase-users.py`.
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 GATEWAY_URL="http://localhost:3000"
-REALM="internstore"
-CLIENT_ID="internstore-web"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
-get_admin_token() {
-  curl -sf -X POST "$KC_URL/realms/master/protocol/openid-connect/token" \
-    -d "client_id=admin-cli" -d "username=admin" -d "password=admin" \
-    -d "grant_type=password" | jq -r .access_token
-}
-
 login() {
-  local email="$1" password="$2"
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$email" -d "password=$password"
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}"
 }
 
 for user in "customer@example.com:Customer123:customer" "admin@example.com:Admin123456:admin"; do
@@ -38,31 +34,33 @@ for user in "customer@example.com:Customer123:customer" "admin@example.com:Admin
 
   # AUTH-02: login
   TOKENS=$(login "$EMAIL" "$PASSWORD") || fail "$EMAIL login"
-  ACCESS_TOKEN=$(echo "$TOKENS" | jq -r .access_token)
-  REFRESH_TOKEN=$(echo "$TOKENS" | jq -r .refresh_token)
-  [ "$ACCESS_TOKEN" != "null" ] || fail "$EMAIL did not receive access_token"
-  ROLE_IN_TOKEN=$(echo "$ACCESS_TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.realm_access.roles[]' | grep -E '^(customer|admin)$' || true)
+  ID_TOKEN=$(echo "$TOKENS" | jq -r .idToken)
+  UID_VAL=$(echo "$TOKENS" | jq -r .localId)
+  [ "$ID_TOKEN" != "null" ] || fail "$EMAIL did not receive an ID token"
+  ROLE_IN_TOKEN=$(echo "$ID_TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.role' || true)
   [ "$ROLE_IN_TOKEN" = "$EXPECTED_ROLE" ] || fail "$EMAIL token role mismatch (got '$ROLE_IN_TOKEN')"
   pass "$EMAIL login (AUTH-02)"
 
-  # AUTH-03: gateway validates external token via JWKS and mints internal token
-  ME=$(curl -sf "$GATEWAY_URL/me" -H "Authorization: Bearer $ACCESS_TOKEN") || fail "$EMAIL gateway /me"
+  # AUTH-03: gateway validates external Firebase token and mints an
+  # internal token (STR-181: firebase_admin.auth.verify_id_token(),
+  # replacing Keycloak JWKS validation)
+  ME=$(curl -sf "$GATEWAY_URL/me" -H "Authorization: Bearer $ID_TOKEN") || fail "$EMAIL gateway /me"
   GW_ROLE=$(echo "$ME" | jq -r .role)
   INTERNAL_TOKEN=$(echo "$ME" | jq -r .internalToken)
   [ "$GW_ROLE" = "$EXPECTED_ROLE" ] || fail "$EMAIL gateway role mismatch"
   [ "$INTERNAL_TOKEN" != "null" ] || fail "$EMAIL did not receive internal token"
-  pass "$EMAIL gateway JWKS validation + internal token mint (AUTH-03)"
+  pass "$EMAIL gateway Firebase token validation + internal token mint (AUTH-03)"
 
-  # AUTH-04: change password via Admin API (self-service is the Account
-  # Console UI; this simulates the outcome for automated testing)
-  ADMIN_TOKEN=$(get_admin_token)
-  USER_ID=$(curl -sf "$KC_URL/admin/realms/$REALM/users?email=$EMAIL" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.[0].id')
+  # AUTH-04: change password. Uses the Identity Toolkit REST API's own
+  # accounts:update (idToken + new password) -- genuinely self-service,
+  # unlike the Keycloak version of this test which had to simulate
+  # self-service via the admin API since Keycloak's equivalent is a
+  # browser-only Account Console form.
   NEW_PASSWORD="${PASSWORD}New1"
-  curl -sf -X PUT "$KC_URL/admin/realms/$REALM/users/$USER_ID/reset-password" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"type\":\"password\",\"value\":\"$NEW_PASSWORD\",\"temporary\":false}" \
-    || fail "$EMAIL password reset"
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:update?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"idToken\":\"$ID_TOKEN\",\"password\":\"$NEW_PASSWORD\",\"returnSecureToken\":false}" >/dev/null \
+    || fail "$EMAIL password change"
 
   login "$EMAIL" "$NEW_PASSWORD" >/dev/null || fail "$EMAIL login with new password"
   pass "$EMAIL new password works (AUTH-04)"
@@ -71,21 +69,43 @@ for user in "customer@example.com:Customer123:customer" "admin@example.com:Admin
   fi
   pass "$EMAIL old password rejected (AUTH-04)"
 
-  # AUTH-05: logout revokes the refresh token
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/logout" \
-    -d "client_id=$CLIENT_ID" -d "refresh_token=$REFRESH_TOKEN" \
-    || fail "$EMAIL logout"
-  REFRESH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-    "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=refresh_token" -d "refresh_token=$REFRESH_TOKEN")
-  [ "$REFRESH_RESPONSE" = "400" ] || fail "$EMAIL refresh token still usable after logout (got $REFRESH_RESPONSE)"
-  pass "$EMAIL refresh token revoked on logout (AUTH-05)"
+  # AUTH-05: revocation. Firebase's client REST API has no logout-revokes
+  # endpoint (unlike Keycloak's /protocol/openid-connect/logout) --
+  # revoke_refresh_tokens is Admin SDK-only, see
+  # scripts/firebase-admin-cli.py. This is the direct, real-HTTP-path
+  # version of what STR-181 verified manually: revoke a user's tokens,
+  # confirm /auth/verify's check_revoked=True rejects their still
+  # unexpired ID token.
+  FRESH_TOKENS=$(login "$EMAIL" "$NEW_PASSWORD")
+  FRESH_ID_TOKEN=$(echo "$FRESH_TOKENS" | jq -r .idToken)
+  STATUS_BEFORE=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/auth/verify" -H "Authorization: Bearer $FRESH_ID_TOKEN")
+  [ "$STATUS_BEFORE" = "200" ] || fail "$EMAIL fresh token rejected before revocation (got $STATUS_BEFORE)"
 
-  # Restore original password so the script is re-runnable
-  curl -sf -X PUT "$KC_URL/admin/realms/$REALM/users/$USER_ID/reset-password" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-    -d "{\"type\":\"password\",\"value\":\"$PASSWORD\",\"temporary\":false}" \
+  # check_revoked's comparison (external_token.py) is `iat*1000 <
+  # tokens_valid_after_timestamp` -- iat is second-granularity, so
+  # revoking within the same wall-clock second as login doesn't reliably
+  # register as "after" the token. Verified directly: without this sleep,
+  # the revoked-token check below flakes ~200 instead of 401. A short gap
+  # avoids the race; this isn't emulator-specific, the same granularity
+  # applies against real Firebase too.
+  sleep 2
+  uv run "$(dirname "${BASH_SOURCE[0]}")/firebase-admin-cli.py" revoke-refresh-tokens "$UID_VAL" >/dev/null \
+    || fail "$EMAIL revoke-refresh-tokens"
+
+  STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" "$GATEWAY_URL/auth/verify" -H "Authorization: Bearer $FRESH_ID_TOKEN")
+  [ "$STATUS_AFTER" = "401" ] || fail "$EMAIL revoked token still accepted (got $STATUS_AFTER, expected 401)"
+  pass "$EMAIL revoked token rejected by /auth/verify (AUTH-05, check_revoked=True)"
+
+  # Restore original password so the script is re-runnable.
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$EMAIL\",\"password\":\"$NEW_PASSWORD\",\"returnSecureToken\":true}" \
+    | jq -r .idToken > /tmp/_auth_flows_restore_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:update?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"idToken\":\"$(cat /tmp/_auth_flows_restore_token)\",\"password\":\"$PASSWORD\",\"returnSecureToken\":false}" >/dev/null \
     || fail "$EMAIL password restore"
+  rm -f /tmp/_auth_flows_restore_token
 done
 
 echo "--- Testing guest session fallback (/auth/verify) ---"

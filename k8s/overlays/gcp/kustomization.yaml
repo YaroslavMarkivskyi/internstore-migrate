@@ -14,7 +14,6 @@ resources:
 - ../../base
 - ingress.yaml
 - backendconfig.yaml
-- keycloak-secrets.yaml
 - temporal-secrets.yaml
 - generated/catalog-serviceaccount.yaml
 - generated/catalog-secretproviderclass.yaml
@@ -49,10 +48,6 @@ patches:
   target:
     kind: Service
     name: "^nginx$"
-- path: keycloak-patch.yaml
-  target:
-    kind: Deployment
-    name: "^keycloak$"
 - path: temporal-patch.yaml
   target:
     kind: Deployment

@@ -1,6 +1,10 @@
 # ADR 0001: Replace custom Identity service with Keycloak
 
-- Status: Accepted
+- Status: **Superseded** by [0004-replace-keycloak-with-firebase.md](0004-replace-keycloak-with-firebase.md)
+  (2026-08-13) — Keycloak was replaced with Firebase Authentication
+  (STR-155/STR-181/STR-192) and later removed entirely from this repo.
+  Kept as-is below for history; don't read it as describing the current
+  system.
 - Supersedes: draft ADR for a custom-built Identity service (never merged)
 - Date: 2026-08-01
 

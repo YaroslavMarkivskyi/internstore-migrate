@@ -1,29 +1,28 @@
 #!/usr/bin/env bash
 # End-to-end verification that a real checkout -> pay through Orders
 # produces a real email in Mailpit via Notifications' Kafka consumer — not
-# mocked anywhere: real Keycloak tokens, real gateway, real Kafka broker,
+# mocked anywhere: real Firebase tokens, real gateway, real Kafka broker,
 # real SMTP hop into Mailpit.
 #
 # Requires: curl, jq, python3, docker compose. Run after
 # `docker compose up -d --build` (needs kafka, kafka-topic-init, mailpit,
-# notifications, orders, inventory, nginx, keycloak all healthy).
+# notifications, orders, inventory, nginx, firebase-emulator all healthy).
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 GATEWAY_URL="https://localhost:8443/api/orders"
 INVENTORY_URL="https://localhost:8443/api/inventory"
 MAILPIT_URL="http://localhost:8025"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 seed_stock() {

@@ -1,8 +1,12 @@
 # Optional: `kind create cluster --config k8s/kind-config.yaml --name internstore`
 # maps the NodePorts this manifest set uses straight onto the host, so
-# nginx/keycloak/minio/temporal-ui are reachable at localhost without a
+# nginx/minio/temporal-ui are reachable at localhost without a
 # separate `kubectl port-forward`. Without this file, `kind create cluster`
 # still works fine — just use port-forward instead (see k8s/README.md).
+#
+# STR-192: no keycloak entry anymore (Keycloak removed, along with its
+# NodePort 30081). k8s/overlays/local has no Firebase Auth emulator of its
+# own to map a port for either -- see k8s/base/auth-backend/configmap.yaml.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -12,8 +16,6 @@ nodes:
     hostPort: 8443
   - containerPort: 30082   # nginx http
     hostPort: 8082
-  - containerPort: 30081   # keycloak
-    hostPort: 8081
   - containerPort: 30900   # minio api
     hostPort: 9000
   - containerPort: 30901   # minio console

@@ -3,9 +3,8 @@ import jwt
 from tests.conftest import mint_external_token
 
 
-async def test_valid_jwt_returns_200_with_internal_token(client, rsa_keypair):
-    private_pem, _ = rsa_keypair
-    token = mint_external_token(private_pem)
+async def test_valid_token_returns_200_with_internal_token(client):
+    token = mint_external_token()
 
     resp = await client.get("/auth/verify", headers={"Authorization": f"Bearer {token}"})
 
@@ -18,26 +17,34 @@ async def test_valid_jwt_returns_200_with_internal_token(client, rsa_keypair):
     assert header["alg"] == "HS256"
 
 
-async def test_expired_jwt_returns_401(client, rsa_keypair):
-    private_pem, _ = rsa_keypair
-    token = mint_external_token(private_pem, expires_in=-10)
+async def test_expired_token_returns_401(client):
+    token = mint_external_token(expires_in=-10)
 
     resp = await client.get("/auth/verify", headers={"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 401
 
 
-async def test_invalid_signature_returns_401(client, other_private_key):
-    token = mint_external_token(other_private_key)
+async def test_malformed_token_returns_401(client):
+    resp = await client.get("/auth/verify", headers={"Authorization": "Bearer not-a-real-token"})
+
+    assert resp.status_code == 401
+
+
+# STR-155: check_revoked=True is folded into ExternalTokenVerifier.verify()
+# itself now (no separate introspection step like the retired
+# auth/revocation.py) — this is the fail-closed revocation check the ticket
+# calls out explicitly.
+async def test_revoked_token_returns_401(client):
+    token = mint_external_token(revoked=True)
 
     resp = await client.get("/auth/verify", headers={"Authorization": f"Bearer {token}"})
 
     assert resp.status_code == 401
 
 
-async def test_wrong_issuer_returns_401(client, rsa_keypair):
-    private_pem, _ = rsa_keypair
-    token = mint_external_token(private_pem, issuer="http://keycloak.invalid/realms/other-realm")
+async def test_disabled_user_token_returns_401(client):
+    token = mint_external_token(disabled=True)
 
     resp = await client.get("/auth/verify", headers={"Authorization": f"Bearer {token}"})
 

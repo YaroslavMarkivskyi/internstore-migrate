@@ -63,8 +63,8 @@ changes** were needed (every service already reads `OPA_URL=http://localhost:818
 directory's `kustomization.yaml` comment and `sync-policies.sh` for why this is a copy, not a
 live reference (kubectl's built-in kustomize refuses to read `configMapGenerator` files from
 outside a kustomization's own directory tree, with no flag to relax that). The same pattern
-applies to Keycloak's `realm-export.json` mirror in `k8s/base/keycloak/config/` —
-`sync-realm-export.sh` re-mirrors it.
+used to apply to Keycloak's `realm-export.json` mirror in `k8s/base/keycloak/config/` — removed
+along with Keycloak itself (STR-192, see `docs/adr/0004-replace-keycloak-with-firebase.md`).
 
 **Postgres**: one StatefulSet + PVC per service database (10 total, including Temporal's own),
 mirroring compose's existing 9 single-tenant containers 1:1, rather than consolidating onto a
@@ -95,13 +95,15 @@ by default, **this Deployment has no readiness/liveness probes at all** — a kn
 every other service, documented rather than papered over. A crash here shows up only as
 `CrashLoopBackOff` from the container exiting, not from a failed probe.
 
-**Keycloak has no PVC of its own.** Verified against compose: the `keycloak` service's only
-mount is the read-only `realm-export.json` import file — there is no volume for
-`/opt/keycloak/data`. All of Keycloak's real state (realms, users, sessions) lives in
-`keycloak-db` via `KC_DB=postgres`. So `postgres-keycloak`'s own PVC is the only persistence
-that matters, and `start-dev --import-realm` re-importing on every pod restart (idempotent,
-skip-if-exists per entity, same as compose) reproduces compose's behavior exactly — no
-separate import Job/initContainer needed.
+**(Historical, STR-192 removed Keycloak/postgres-keycloak entirely — see
+`docs/adr/0004-replace-keycloak-with-firebase.md`.) Keycloak had no PVC of its own.** Verified
+against compose at the time: the `keycloak` service's only mount was the read-only
+`realm-export.json` import file — there was no volume for `/opt/keycloak/data`. All of
+Keycloak's real state (realms, users, sessions) lived in `keycloak-db` via `KC_DB=postgres`. So
+`postgres-keycloak`'s own PVC was the only persistence that mattered, and `start-dev
+--import-realm` re-importing on every pod restart (idempotent, skip-if-exists per entity, same
+as compose) reproduced compose's behavior exactly — no separate import Job/initContainer was
+needed.
 
 **nginx.conf is unchanged** — mounted-in-image (via `internstore/nginx:local`'s own
 Dockerfile, `COPY nginx.conf /etc/nginx/nginx.conf`, same as compose's `build: ./nginx`), not

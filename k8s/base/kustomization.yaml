@@ -6,7 +6,6 @@ resources:
 - opa-policies
 
 # Stateful infra
-- postgres-keycloak
 - postgres-catalog
 - postgres-inventory
 - postgres-orders
@@ -20,7 +19,6 @@ resources:
 - kafka
 - kafka-topic-init
 - redis
-- keycloak
 - temporal
 - temporal-ui
 - minio

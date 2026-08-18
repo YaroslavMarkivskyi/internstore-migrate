@@ -5,7 +5,7 @@
 # the other.
 #
 # End-to-end verification of the Temporal-orchestrated checkout
-# (STR-139) through the real gateway, real Keycloak-issued tokens, a real
+# (STR-139) through the real gateway, real Firebase-issued tokens, a real
 # Temporal server, and a real Kafka broker (for the escalation/fan-out
 # side) — no mocks anywhere in this script. Parallel to, and does not
 # replace, scripts/test-reservation-saga.sh (the existing Kafka-
@@ -27,24 +27,23 @@
 # Requires: curl, jq, python3, docker compose. Run after:
 #   docker compose up -d --build \
 #     temporal temporal-db temporal-ui payments payments-db \
-#     checkout-workflow-worker orders inventory nginx keycloak kafka kafka-topic-init
+#     checkout-workflow-worker orders inventory nginx firebase-emulator kafka kafka-topic-init
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 GATEWAY_URL="https://localhost:8443/api/orders"
 INVENTORY_URL="https://localhost:8443/api/inventory"
 CATALOG_URL="https://localhost:8443/api/catalog"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 # STR-150: /checkout/v2 computes its charge amount from Catalog's real

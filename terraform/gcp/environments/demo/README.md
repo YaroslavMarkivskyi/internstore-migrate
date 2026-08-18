@@ -19,12 +19,16 @@ and `k8s/overlays/gcp/generate-overlay.py`.
 
 ## Cost math (resolves STR-154's "confirm before assuming" ask)
 
-### Cloud SQL: 11 instances, not consolidated
+### Cloud SQL: 10 instances, not consolidated
 
-k8s/base actually has **11** `postgres-*` directories (9 uniform domain DBs +
-`postgres-keycloak` + `postgres-temporal` + `postgres-ai`), one more than the
-ticket's "10, including Temporal's" estimate — corrected here, not silently
-kept wrong.
+k8s/base originally had **11** `postgres-*` directories (9 uniform domain
+DBs + `postgres-keycloak` + `postgres-temporal` + `postgres-ai`), one more
+than the ticket's "10, including Temporal's" estimate at the time —
+corrected here, not silently kept wrong. STR-192 then removed
+`postgres-keycloak` along with Keycloak itself (Firebase replaced it as
+the external identity provider, STR-181/STR-192), bringing the real count
+back down to the ticket's original **10** (9 uniform domain DBs +
+`postgres-temporal` + `postgres-ai`).
 
 Real Cloud SQL for PostgreSQL pricing (`us-central1`, checked against
 `cloud.google.com/sql/pricing` and Google's own docs, not the ticket's
@@ -36,14 +40,14 @@ earlier estimate):
 | Minimum SSD storage (10 GB) | ≈ $0.17/GB-mo ≈ $0.0023/hr |
 | Single-zone, no HA, no automated backups | no extra multiplier |
 
-11 instances × (~$0.0105 + ~$0.0023)/hr ≈ **$0.14/hr for all 11 Cloud SQL
+10 instances × (~$0.0105 + ~$0.0023)/hr ≈ **$0.13/hr for all 10 Cloud SQL
 instances combined** — under $1 for a multi-hour demo session, negligible
 against the rest of the stack.
 
-**Decision: keep 11 separate instances**, one per service, matching
+**Decision: keep 10 separate instances**, one per service, matching
 `k8s/base`'s existing StatefulSet-per-service topology. The "per-instance
 minimum cost" concern the ticket raised only bites at *always-on* pricing
-(~$85-95/mo for 11 `db-f1-micro` instances run continuously) — this
+(~$77-86/mo for 10 `db-f1-micro` instances run continuously) — this
 environment is never left running that way. Consolidating onto fewer
 instances would save cents per demo session at the cost of real
 architectural complexity (shared instances can't isolate `postgres-ai`'s
@@ -92,7 +96,7 @@ session — per the ticket's verification requirement, not the estimate above._
 `terraform destroy` should remove everything below. Confirm via `gcloud`/Console
 after every destroy, not just a clean `terraform destroy` exit code:
 
-- [ ] All 11 Cloud SQL instances gone (`gcloud sql instances list`)
+- [ ] All 10 Cloud SQL instances gone (`gcloud sql instances list`)
 - [ ] GKE Autopilot cluster gone (`gcloud container clusters list`)
 - [ ] Memorystore instance gone (`gcloud redis instances list`)
 - [ ] Managed Kafka cluster + topics gone (`gcloud managed-kafka clusters list`)

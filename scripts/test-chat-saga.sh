@@ -5,7 +5,7 @@
 # the other.
 #
 # End-to-end verification of the Chat service (STR-128) through the real
-# gateway, real Keycloak-issued tokens, real Redis pub/sub, and a real
+# gateway, real Firebase-issued tokens, real Redis pub/sub, and a real
 # Postgres-backed outbox -> Kafka -> Notifications -> Mailpit hop — not
 # mocked anywhere.
 #
@@ -24,15 +24,14 @@
 # separate Python environment on the host just for this script).
 #
 # Run after `docker compose up -d --build` (needs chat-db, chat, redis,
-# kafka, kafka-topic-init, mailpit, notifications, nginx, keycloak,
+# kafka, kafka-topic-init, mailpit, notifications, nginx, firebase-emulator,
 # auth-backend all healthy).
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 AUTH_BACKEND_URL="http://localhost:3000"
 MAILPIT_URL="http://localhost:8025"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 CHAT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/services/chat"
 
@@ -40,14 +39,14 @@ pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 sub_of() {
   # $1 = bearer token — auth-backend's /me is the simplest way to get the
-  # Keycloak sub without decoding the JWT ourselves.
+  # Firebase uid without decoding the JWT ourselves.
   $CURL "$AUTH_BACKEND_URL/me" -H "Authorization: Bearer $1" | jq -r .sub
 }
 

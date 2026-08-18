@@ -10,7 +10,7 @@
 # copy that were never ported to the other.
 #
 # End-to-end verification of the Security service (STR-127) through the
-# real gateway and real Keycloak-issued tokens — not the in-process JWTs
+# real gateway and real Firebase-issued tokens — not the in-process JWTs
 # the pytest suite mints. Security has no Kafka dependency (access control
 # is synchronous by nature), so this script only needs the gateway, auth
 # stack, and security/security-db/mock-camera up.
@@ -27,19 +27,21 @@
 # `kubectl apply -k k8s/overlays/local/` with every pod Running/Ready.
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+# STR-192: k8s/overlays/local has no Firebase Auth emulator of its own
+# (that's docker-compose.yml-only, see firebase/README.md) -- assumes one
+# is separately reachable at localhost:9099.
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 SECURITY_URL="https://localhost:8443/api/security"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")

@@ -42,7 +42,6 @@
       "security": "example-project-123:us-central1:internstore-demo-security",
       "chat": "example-project-123:us-central1:internstore-demo-chat",
       "payments": "example-project-123:us-central1:internstore-demo-payments",
-      "keycloak": "example-project-123:us-central1:internstore-demo-keycloak",
       "temporal": "example-project-123:us-central1:internstore-demo-temporal",
       "ai": "example-project-123:us-central1:internstore-demo-ai"
     }
@@ -61,7 +60,6 @@
       "mcp-gateway": "internstore-demo-mcp-gateway@example-project-123.iam.gserviceaccount.com",
       "auth-backend": "internstore-demo-auth-backend@example-project-123.iam.gserviceaccount.com",
       "checkout-workflow-worker": "internstore-demo-checkout-workflow-worker@example-project-123.iam.gserviceaccount.com",
-      "keycloak": "internstore-demo-keycloak@example-project-123.iam.gserviceaccount.com",
       "temporal": "internstore-demo-temporal@example-project-123.iam.gserviceaccount.com"
     }
   },
@@ -71,10 +69,6 @@
       "openai-api-key": "internstore-demo-openai-api-key",
       "stripe-secret-key": "internstore-demo-stripe-secret-key",
       "stripe-webhook-secret": "internstore-demo-stripe-webhook-secret",
-      "keycloak-client-secret": "internstore-demo-keycloak-client-secret",
-      "keycloak-admin-password": "internstore-demo-keycloak-admin-password",
-      "keycloak-db-username": "internstore-demo-keycloak-db-username",
-      "keycloak-db-password": "internstore-demo-keycloak-db-password",
       "temporal-db-password": "internstore-demo-temporal-db-password",
       "gcs-hmac-access-id": "internstore-demo-gcs-hmac-access-id",
       "gcs-hmac-secret": "internstore-demo-gcs-hmac-secret",

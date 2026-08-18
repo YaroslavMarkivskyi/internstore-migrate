@@ -13,7 +13,5 @@ internal_token_secret = "REPLACE_ME"
 # a real key is only needed if the demo actually exercises AI features.
 openai_api_key = ""
 
-stripe_secret_key      = ""
-stripe_webhook_secret  = ""
-keycloak_client_secret = "REPLACE_ME"
-keycloak_admin_password = "REPLACE_ME"
+stripe_secret_key     = ""
+stripe_webhook_secret = ""

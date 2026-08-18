@@ -1,10 +1,12 @@
 # auth-backend
 
-Validates Keycloak-issued JWTs and mints short-lived internal tokens for
-downstream services. See
-[docs/adr/0001-replace-custom-identity-with-keycloak.md](../../docs/adr/0001-replace-custom-identity-with-keycloak.md)
-for the full design and [docs/requirements/AUTH.md](../../docs/requirements/AUTH.md)
-for acceptance criteria.
+Validates Firebase-issued ID tokens and mints short-lived internal tokens
+for downstream services. See
+[docs/adr/0004-replace-keycloak-with-firebase.md](../../docs/adr/0004-replace-keycloak-with-firebase.md)
+for the full design ([docs/adr/0001](../../docs/adr/0001-replace-custom-identity-with-keycloak.md),
+the original Keycloak decision, is kept for history) and
+[docs/requirements/AUTH.md](../../docs/requirements/AUTH.md) for acceptance
+criteria.
 
 Python/FastAPI, same stack and conventions as every other service in this
 repo (see [services/catalog](../catalog)) — originally TypeScript/Fastify,
@@ -76,8 +78,8 @@ copy of the matching verifier (e.g.
 ## Guest sessions
 
 [services/orders](../orders)'s cart (ORDC-01) and checkout (ORDC-02) need to
-work for unauthenticated shoppers, not just Keycloak-registered customers —
-there was no pre-existing session mechanism for this in the repo, so
+work for unauthenticated shoppers, not just registered customers — there
+was no pre-existing session mechanism for this in the repo, so
 `/auth/verify` gained one fallback branch (see
 [src/auth_backend/auth/guest_session.py](src/auth_backend/auth/guest_session.py)
 and the guest branch in
@@ -117,24 +119,26 @@ and the guest branch in
 
 ## Revocation (AUTH-05)
 
-[src/auth_backend/auth/revocation.py](src/auth_backend/auth/revocation.py)
-checks every Keycloak access token against Keycloak's RFC 7662 token
-introspection endpoint on `/auth/verify`, so a revoked token (logout, admin
-disable, compromised session) is rejected instead of staying valid until its
-own `exp`. This is a deliberate reversal of the original "no synchronous
-call per request" AUTH-03/AUTH-05 constraint (see
-[docs/requirements/AUTH.md](../../docs/requirements/AUTH.md)) — introspection
-results are cached in-memory for up to 30s (keyed by `sha256(token)`, never
-the raw token) so the added Keycloak round trip is amortized across repeated
-`/auth/verify` calls for the same token rather than paid on every request.
-Introspection failures (non-200, unreachable Keycloak) fail closed — treated
-as revoked rather than silently trusting the token.
+[src/auth_backend/auth/external_token.py](src/auth_backend/auth/external_token.py)
+calls Firebase Admin SDK's `verify_id_token(token, check_revoked=True)`, so
+a revoked token (logout, admin disable, compromised session) is rejected
+instead of staying valid until its own `exp`. This is a deliberate
+reversal of the original "no synchronous call per request" AUTH-03/AUTH-05
+constraint (see [docs/requirements/AUTH.md](../../docs/requirements/AUTH.md))
+— same as it was under Keycloak, just one call instead of two: `verify_id_token`
+does its own lookup per call (via `get_user`), there's no separate
+introspection cache layer here anymore (STR-181/STR-192 retired
+`auth/revocation.py`, the old Keycloak-specific RFC 7662 introspection
+client, along with Keycloak itself). Firebase Admin SDK's own lookup fails
+closed by construction — a network error there propagates as an exception
+rather than being swallowed, so an unreachable Firebase rejects the token
+the same way an unreachable Keycloak used to.
 
-`KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET` authenticate the introspection
-request and must match a confidential client in the Keycloak realm
-(`internstore-backend` in `keycloak/realm-export.json` — the browser-facing
-`internstore-web` client is public and has no secret, so it can't be used
-here).
+Credentials come from Application Default Credentials (Workload Identity
+in GCP, `FIREBASE_AUTH_EMULATOR_HOST` locally — see
+[firebase/README.md](../../firebase/README.md)) — no service-account JSON
+key file, no `KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET`-style credential
+pair to manage.
 
 ## Local dev without Docker
 

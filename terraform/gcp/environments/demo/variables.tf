@@ -37,14 +37,3 @@ variable "stripe_webhook_secret" {
   default   = ""
 }
 
-variable "keycloak_client_secret" {
-  type      = string
-  sensitive = true
-  default   = "dev-only-keycloak-client-secret-change-me"
-}
-
-variable "keycloak_admin_password" {
-  type      = string
-  sensitive = true
-  default   = "admin"
-}

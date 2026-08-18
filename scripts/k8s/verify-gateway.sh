@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# BROKEN as of STR-192, not fixed: this script's login()/admin_token()
+# and its "JWKS caching survives Keycloak down" scenario (#4, kubectl
+# scale deployment/keycloak) are entirely Keycloak-specific. STR-192
+# removed k8s/base/keycloak -- there's no `deployment/keycloak` left to
+# scale, and k8s/overlays/local has no Firebase Auth emulator of its own
+# to log into either (that's docker-compose.yml-only, see
+# firebase/README.md) -- wiring one into k8s was explicitly out of scope
+# for STR-192. The compose original (scripts/verify-gateway.sh) was fully
+# rewritten for Firebase and is verified working; this k8s copy needs the
+# same rewrite plus a real k8s-reachable Firebase emulator before it will
+# run at all. Left as a known gap rather than silently deleted or
+# half-patched into something that looks runnable but isn't.
+#
 # K8s-adapted copy of scripts/verify-gateway.sh (STR-145) — same checks,
 # same assertions, only the compose-specific plumbing (container
 # restarts, direct-network probes) is translated to kubectl/K8s

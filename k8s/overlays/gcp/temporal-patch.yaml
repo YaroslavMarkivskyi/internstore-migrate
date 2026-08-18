@@ -1,7 +1,8 @@
-# Same shape as keycloak-patch.yaml's reasoning: temporal's DB config is
-# inline `env: value:` (no secret.yaml), so it's special-cased rather than
-# generator-produced. Only POSTGRES_PWD is a real secret here; DB/DB_PORT/
-# POSTGRES_USER stay as base's plain values.
+# temporal's DB config is inline `env: value:` (no secret.yaml), so it's
+# special-cased rather than generator-produced (keycloak-patch.yaml used to
+# be this file's companion special case, for the same reason — removed by
+# STR-192 along with Keycloak itself). Only POSTGRES_PWD is a real secret
+# here; DB/DB_PORT/POSTGRES_USER stay as base's plain values.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

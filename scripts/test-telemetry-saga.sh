@@ -6,7 +6,7 @@
 #
 # End-to-end verification of the telemetry saga (Telemetry violation
 # detection + outbox -> Inventory idempotent consumer -> Notifications
-# email) through the real gateway, real Keycloak-issued tokens, and a real
+# email) through the real gateway, real Firebase-issued tokens, and a real
 # Kafka broker — no mocks anywhere in this script.
 #
 # Covers the full chain:
@@ -28,26 +28,25 @@
 #
 # Requires: curl, jq, python3, docker compose. Run after
 # `docker compose up -d --build` (needs kafka, kafka-topic-init, catalog,
-# inventory, telemetry, notifications, mailpit, nginx, keycloak all
+# inventory, telemetry, notifications, mailpit, nginx, firebase-emulator all
 # healthy).
 set -euo pipefail
 
-KC_URL="http://localhost:8081"
+FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 CATALOG_URL="https://localhost:8443/api/catalog"
 INVENTORY_URL="https://localhost:8443/api/inventory"
 TELEMETRY_URL="https://localhost:8443/api/telemetry"
 MAILPIT_URL="http://localhost:8025"
-REALM="internstore"
-CLIENT_ID="internstore-web"
+FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 login() {
-  curl -sf -X POST "$KC_URL/realms/$REALM/protocol/openid-connect/token" \
-    -d "client_id=$CLIENT_ID" -d "grant_type=password" \
-    -d "username=$1" -d "password=$2" | jq -r .access_token
+  curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$1\",\"password\":\"$2\",\"returnSecureToken\":true}" | jq -r .idToken
 }
 
 # Searches Mailpit for a message whose subject contains $1, prints its

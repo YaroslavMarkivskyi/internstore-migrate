@@ -6,8 +6,13 @@ metadata:
     app: auth-backend
 data:
   PORT: "3000"
-  KEYCLOAK_ISSUER: "http://localhost:8081/realms/internstore"
-  KEYCLOAK_JWKS_URI: "http://keycloak:8080/realms/internstore/protocol/openid-connect/certs"
-  KEYCLOAK_CLIENT_ID: "internstore-backend"
+  # STR-192: placeholder -- k8s/overlays/local has no Firebase Auth
+  # emulator of its own (that's docker-compose.yml-only, see
+  # firebase/README.md); the GCP overlay's real Firebase project id isn't
+  # wired here either (out of scope, same as STR-181/STR-192's own
+  # boundary) so this value only keeps the pod bootable, not functional
+  # for a real login. Guest checkout/catalog browsing are unaffected --
+  # they never present an external token.
+  FIREBASE_PROJECT_ID: "internstore-dev-placeholder"
   INTERNAL_TOKEN_TTL_SECONDS: "60"
   REDIS_URL: "redis://redis:6379"

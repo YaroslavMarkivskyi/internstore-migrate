@@ -1,18 +1,17 @@
+import json
 import time
 
 import fakeredis
 import jwt
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from firebase_admin import auth as firebase_auth
 from httpx import ASGITransport, AsyncClient
 
-from auth_backend.auth.revocation import RevocationChecker
 from auth_backend.config import Settings
 from auth_backend.main import create_app
 
 INTERNAL_TOKEN_SECRET = "test-secret"
-KEYCLOAK_ISSUER = "http://keycloak.invalid/realms/internstore"
+FIREBASE_PROJECT_ID = "internstore-test"
 ISSUER = "internstore-gateway"
 
 
@@ -24,52 +23,61 @@ def mint_internal_token(sub: str, role: str) -> str:
     )
 
 
-@pytest.fixture(scope="session")
-def rsa_keypair() -> tuple[bytes, bytes]:
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    public_pem = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return private_pem, public_pem
-
-
-@pytest.fixture(scope="session")
-def other_private_key() -> bytes:
-    """An unrelated private key — used to sign tokens with the "wrong" key
-    so tests can assert an invalid-signature token is rejected."""
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    return private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-
+# STR-155: there's no real Firebase project in unit tests, and a genuine
+# Firebase ID token can only be produced by Google's own signing keys — so
+# rather than hand-rolling a fake JWT and monkeypatching cert fetch (the old
+# Keycloak approach via PyJWKClient), tests mock
+# firebase_admin.auth.verify_id_token itself, the exact boundary
+# ExternalTokenVerifier calls. The "token" minted here is a small JSON
+# envelope _fake_verify_id_token below decodes — it is never a real JWT and
+# is never parsed by anything else.
 def mint_external_token(
-    private_pem: bytes,
     *,
     sub: str = "11111111-1111-1111-1111-111111111111",
-    email: str = "customer@example.com",
-    role: str = "customer",
-    issuer: str = KEYCLOAK_ISSUER,
+    email: str | None = "customer@example.com",
+    role: str | None = "customer",
     expires_in: int = 300,
+    revoked: bool = False,
+    disabled: bool = False,
 ) -> str:
     now = int(time.time())
-    payload = {
-        "sub": sub,
-        "email": email,
-        "iss": issuer,
-        "iat": now,
-        "exp": now + expires_in,
-        "realm_access": {"roles": [role]},
+    return json.dumps(
+        {
+            "sub": sub,
+            "email": email,
+            "role": role,
+            "iat": now,
+            "exp": now + expires_in,
+            "revoked": revoked,
+            "disabled": disabled,
+        }
+    )
+
+
+def _fake_verify_id_token(token: str, app=None, check_revoked: bool = False, clock_skew_seconds: int = 0):
+    del app, clock_skew_seconds
+    try:
+        claims = json.loads(token)
+    except (TypeError, ValueError) as exc:
+        raise firebase_auth.InvalidIdTokenError("Malformed token") from exc
+
+    now = int(time.time())
+    if claims.get("exp", 0) < now:
+        raise firebase_auth.ExpiredIdTokenError("Token expired", cause=None)
+    if claims.get("disabled"):
+        raise firebase_auth.UserDisabledError("User disabled")
+    # Mirrors Firebase Admin SDK's own _check_jwt_revoked_or_disabled: only
+    # consulted when check_revoked=True is passed in, same as the real SDK.
+    if check_revoked and claims.get("revoked"):
+        raise firebase_auth.RevokedIdTokenError("Token revoked")
+
+    return {
+        "uid": claims.get("sub"),
+        "email": claims.get("email"),
+        "role": claims.get("role"),
+        "iat": claims.get("iat"),
+        "exp": claims.get("exp"),
     }
-    return jwt.encode(payload, private_pem, algorithm="RS256", headers={"kid": "test-key"})
 
 
 @pytest.fixture
@@ -82,41 +90,11 @@ def redis() -> fakeredis.aioredis.FakeRedis:
 
 
 @pytest.fixture
-async def client(monkeypatch, redis, rsa_keypair):
-    _private_pem, public_pem = rsa_keypair
-
-    # There's no real Keycloak/JWKS endpoint in unit tests. Monkeypatching
-    # PyJWKClient.get_signing_key_from_jwt (rather than mocking the HTTP
-    # fetch or hand-building a JWKS document) exercises our own verifier
-    # logic — issuer/role/sub checks, expiry, signature — without also
-    # having to re-implement JWKS key selection; that part is PyJWT's own
-    # responsibility and already covered by its test suite.
-    class _FakeSigningKey:
-        def __init__(self, key: bytes) -> None:
-            self.key = key
-
-    monkeypatch.setattr(
-        jwt.PyJWKClient,
-        "get_signing_key_from_jwt",
-        lambda self, token: _FakeSigningKey(public_pem),
-    )
-
-    # No real Keycloak introspection endpoint in unit tests either — default
-    # every token to "active" so tests unrelated to revocation don't depend
-    # on Keycloak reachability. test_revocation.py overrides this per test
-    # (via the same `monkeypatch` fixture) to exercise the revoked /
-    # unreachable / cached paths.
-    async def _default_introspect(self: RevocationChecker, token: str) -> bool:
-        del self, token
-        return False
-
-    monkeypatch.setattr(RevocationChecker, "_introspect", _default_introspect)
+async def client(monkeypatch, redis):
+    monkeypatch.setattr(firebase_auth, "verify_id_token", _fake_verify_id_token)
 
     settings = Settings(
-        keycloak_issuer=KEYCLOAK_ISSUER,
-        keycloak_jwks_uri="http://keycloak.invalid/realms/internstore/protocol/openid-connect/certs",
-        keycloak_client_id="test-client",
-        keycloak_client_secret="test-client-secret",
+        firebase_project_id=FIREBASE_PROJECT_ID,
         internal_token_secret=INTERNAL_TOKEN_SECRET,
         internal_token_ttl_seconds=60,
         redis_url="redis://redis.invalid:6379",
@@ -124,16 +102,17 @@ async def client(monkeypatch, redis, rsa_keypair):
 
     # Deliberately not letting the app's real lifespan run (it would build
     # its own Redis client against settings.redis_url, a host that doesn't
-    # exist) — same as every other service's tests, app.state is populated
-    # by hand instead.
+    # exist, and call firebase_admin.initialize_app() against Application
+    # Default Credentials that don't exist in this environment either) —
+    # same as every other service's tests, app.state is populated by hand
+    # instead.
     app = create_app(settings=settings)
     app.state.redis = redis
     from auth_backend.auth.external_token import ExternalTokenVerifier
     from auth_backend.auth.guest_session import GuestSessionStore
 
     app.state.guest_session_store = GuestSessionStore(redis)
-    app.state.revocation_checker = RevocationChecker(settings)
-    app.state.external_token_verifier = ExternalTokenVerifier(settings.keycloak_issuer, settings.keycloak_jwks_uri)
+    app.state.external_token_verifier = ExternalTokenVerifier()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
