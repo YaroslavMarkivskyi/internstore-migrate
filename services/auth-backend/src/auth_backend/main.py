@@ -6,12 +6,14 @@ import firebase_admin
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from firebase_admin import credentials
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from redis.asyncio import Redis
 
 from auth_backend.auth.external_token import ExternalTokenVerifier
 from auth_backend.auth.guest_session import GUEST_SESSION_TTL_SECONDS, GuestSessionStore
 from auth_backend.auth.internal_token import MintableClaims, mint_internal_token, verify_internal_token_for_refresh
 from auth_backend.config import Settings, load_settings
+from auth_backend.observability import setup_observability
 
 # Catalog browsing, cart/checkout, chat, and chat attachment uploads are
 # reachable without a Keycloak login — these are the only paths
@@ -83,8 +85,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("auth-backend")
 
     app = FastAPI(title="auth-backend", lifespan=lifespan)
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
 
     @app.get("/health")

@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from telemetry_aggregates.backfill import run_backfill_loop
 from telemetry_aggregates.config import Settings, load_settings
@@ -13,6 +14,7 @@ from telemetry_aggregates.consumers.telemetry_events import (
 )
 from telemetry_aggregates.db import make_session_factory
 from telemetry_aggregates.kafka import run_consumer_loop
+from telemetry_aggregates.observability import setup_observability
 from telemetry_aggregates.routers import aggregates
 
 
@@ -47,8 +49,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("telemetry-aggregates")
 
     app = FastAPI(title="telemetry-aggregates", lifespan=lifespan)
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
     # Connects as the telemetry_readonly Postgres role in real deployments

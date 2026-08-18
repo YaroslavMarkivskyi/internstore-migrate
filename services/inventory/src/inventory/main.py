@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from inventory.authz import AuthzClient
 from inventory.catalog_client import CatalogClient
@@ -15,6 +16,7 @@ from inventory.consumers.telemetry_events import (
 )
 from inventory.db import make_session_factory
 from inventory.kafka import KafkaEventProducer, run_consumer_loop
+from inventory.observability import setup_observability
 from inventory.outbox_worker import run_outbox_worker
 from inventory.reservation_expiry import run_reservation_expiry_checker
 from inventory.routers import items, stocks
@@ -68,8 +70,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("inventory")
 
     app = FastAPI(title="inventory", lifespan=lifespan)
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
     app.state.catalog_client = CatalogClient(

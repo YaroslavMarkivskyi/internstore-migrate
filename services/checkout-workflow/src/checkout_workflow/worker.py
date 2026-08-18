@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from temporalio.client import Client
+from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.worker import Worker
 
 from checkout_workflow.activities import (
@@ -15,16 +16,23 @@ from checkout_workflow.activities import (
     update_order_status,
 )
 from checkout_workflow.config import load_settings
+from checkout_workflow.observability import setup_observability
 from checkout_workflow.workflows import CheckoutWorkflow
 
-logging.basicConfig(level=logging.INFO)
+setup_observability("checkout-workflow-worker")
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
     settings = load_settings()
     logger.info("Connecting to Temporal at %s", settings.temporal_host)
-    client = await Client.connect(settings.temporal_host)
+    # STR-158b: TracingInterceptor here creates the workflow/activity spans
+    # this worker executes — including release_stock/mark_order_rejected on
+    # the compensation path, each its own distinct span, not just the
+    # happy path. Orders' own Client.connect (temporal_client.py) carries
+    # the matching interceptor for the client-side start_workflow span that
+    # roots the trace.
+    client = await Client.connect(settings.temporal_host, interceptors=[TracingInterceptor()])
 
     # Runs as its own container/deployment (services/checkout-workflow's
     # Dockerfile), independently killable/restartable from any API-serving

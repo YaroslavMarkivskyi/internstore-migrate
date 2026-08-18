@@ -5,11 +5,13 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 
 from mcp_gateway.auth import InternalClaims, get_internal_claims, get_raw_internal_token
 from mcp_gateway.config import Settings, load_settings
 from mcp_gateway.db import make_session_factory
+from mcp_gateway.observability import setup_observability
 from mcp_gateway.router import GatewayClients, ToolNotFoundError, build_tool_registry, call_tool
 from mcp_gateway.schema import TOOL_SPECS
 from mcp_gateway.tools.catalog import CatalogToolsClient, ProductSearchClient
@@ -46,8 +48,10 @@ def build_clients(settings: Settings) -> GatewayClients:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("mcp-gateway")
 
     app = FastAPI(title="mcp-gateway")
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     clients = build_clients(settings)
     app.state.tool_registry = build_tool_registry(clients)

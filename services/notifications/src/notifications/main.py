@@ -3,12 +3,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from notifications.config import Settings, load_settings
 from notifications.consumers.handlers import make_dispatch
 from notifications.dedup import DedupCache
 from notifications.kafka import run_consumer_loop
 from notifications.mailer import Mailer
+from notifications.observability import setup_observability
 
 # One topic per bounded context (see docs/EVENT_BROKER.md) — dispatch keys
 # off event_type, not topic, so a topic with no producer yet
@@ -46,8 +48,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("notifications")
 
     app = FastAPI(title="notifications", lifespan=lifespan)
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
 
     @app.get("/health")

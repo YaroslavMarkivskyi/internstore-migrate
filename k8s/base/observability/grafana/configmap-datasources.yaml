@@ -14,11 +14,16 @@ data:
       access: proxy
       url: http://loki:3100
       jsonData:
-        # Lets a log line containing trace_id=<hex> jump straight to that
-        # trace in Tempo — the log->trace half of the correlation loop.
+        # Lets a log line's trace_id field jump straight to that trace in
+        # Tempo — the log->trace half of the correlation loop. Matches the
+        # JSON-lines format every service's observability.py module emits
+        # (STR-158b) — `"trace_id": "<hex>"`, not a bare `trace_id=<hex>`
+        # (a wrong assumption Phase 1 made before any service actually
+        # produced real log output to check the regex against; found and
+        # fixed via this ticket's live verification).
         derivedFields:
         - datasourceUid: tempo
-          matcherRegex: 'trace_id=(\w+)'
+          matcherRegex: '"trace_id":\s*"(\w+)"'
           name: TraceID
           url: "$${__value.raw}"
 

@@ -113,29 +113,35 @@ StatefulSet in this repo cuts main-container CPU requests to 50m so the stack sc
 small kind node; see `k8s/README.md`'s "Resource requests on a small local node" for why that
 patch exists at all.)
 
-**Actual usage, idle-to-light-load** (`kubectl top`, ~90s after startup with only the smoke-test
-traffic used for pipeline verification above — no real service load yet, that's Phase 2):
+**Actual usage** — two measurement points, both on a scratch single-node `kind` cluster with
+`kubectl top`:
 
-| Component | CPU (observed) | Memory (observed) |
+| Component | Idle/smoke-test (Phase 1) | Under instrumented load (STR-158b) |
 |---|---|---|
-| Loki      | 4m | 45Mi |
-| Tempo     | 5m | 61Mi |
-| Mimir     | 3m | 35Mi |
-| Grafana   | 3m | 53Mi |
-| Alloy     | 5m | 43Mi |
-| **Total** | **20m** | **237Mi** |
+| Loki      | 4m / 45Mi | 5m / 45Mi |
+| Tempo     | 5m / 61Mi | 5m / 56Mi |
+| Mimir     | 3m / 35Mi | 4m / 51Mi |
+| Grafana   | 3m / 53Mi | 1m / 54Mi |
+| Alloy     | 5m / 43Mi | 7m / 62Mi |
+| **Total** | **20m / 237Mi** | **22m / 268Mi** |
 
-Node-level: `kubectl top node` on the single-node scratch cluster read **144m CPU / 1097Mi
-memory** total (this stack + kube-system) at that same idle point.
+The "under load" column (STR-158b) replays ~2 minutes of steady OTLP traffic through Alloy —
+600 traces (5 spans each, matching the real checkout-saga trace's shape), 1,800 JSON log lines,
+and a metrics batch across all 13 instrumented services every 2s — roughly what 12+ services
+each handling a few requests/second would generate at this project's demo scale. Node-level:
+`kubectl top node` read **137m CPU / 1006Mi memory** total (stack + kube-system) at the end of
+that run, essentially unchanged from Phase 1's 144m/1097Mi idle reading.
 
 **Reading these numbers against STR-180's cost model**: the *scheduling* floor this stack adds
-is 250m CPU / 704Mi memory of `requests` — small next to the ~3.7 cores of requests
-STR-145/README already found the rest of this manifest set needs, but not free. *Actual* usage
-sits far below that floor at idle/smoke-test load (20m CPU / 237Mi memory observed) — expect it
-to grow once Phase 2 wires 12+ services' real OTel traffic through Alloy, but there's no
-service load driving it yet in this ticket's scope. Disk: negligible at this point (under 200KB
-per component's data directory from the smoke test) — the 5Gi/5Gi/5Gi/1Gi PVC sizing is set for
-7 days of real demo traffic, not what's actually been written so far.
+is still 250m CPU / 704Mi memory of `requests` — unchanged by instrumentation, since that floor
+was always sized for the collector infra itself, not the traffic through it. *Actual* usage
+under a realistic demo-scale instrumented load (22m CPU / 268Mi memory) is barely above the
+idle/smoke-test baseline (20m CPU / 237Mi memory) — the LGTM stack's per-signal ingest cost at
+this project's traffic volume is small enough that it doesn't meaningfully move the needle
+against the 250m/704Mi `requests` floor already budgeted. Disk grows with retention (7 days
+configured, see Storage backend section above) rather than with this snapshot's few minutes of
+traffic, so it isn't re-measured here — the 5Gi/5Gi/5Gi/1Gi PVC sizing already accounts for
+sustained demo-session volume, not a 2-minute burst.
 
 ## Ports
 
@@ -147,15 +153,27 @@ per component's data directory from the smoke test) — the 5Gi/5Gi/5Gi/1Gi PVC 
 | `mimir`   | 9009 (http) | metrics storage/query, `/prometheus` sub-path for PromQL |
 | `grafana` | 3000 (http), NodePort 30030 → host 3000 via `k8s/kind-config.yaml` | dashboards |
 
-## Phase 2 scope (not in this ticket)
+## Phase 2 (STR-158b): service instrumentation — delivered as its own ticket
 
-Checked before scoping: current logging across services is plain stdlib
-`logging.basicConfig()` (e.g. `checkout-workflow/src/checkout_workflow/worker.py:20`), not
-structured JSON — no `structlog` or JSON formatter anywhere in `services/`. That means Phase 2
-isn't "add a Loki shipper on top of existing structured logs" — it's a structured-logging
-migration across 12+ services *plus* OTel SDK traces/metrics instrumentation *plus* the two
-named cross-service trace chains (shopping agent: Chat→ai-assistant→MCP Gateway→Orders;
-checkout saga incl. compensation). That's a different risk profile from this ticket's
-purely-additive infra deployment (touches real application code in every service vs. zero
-application-code changes here) and was confirmed with the ticket owner to warrant its own
-follow-up ticket rather than being force-fit into this one.
+Checked before scoping Phase 1: current logging across services was plain stdlib
+`logging.basicConfig()`, not structured JSON — no `structlog` or JSON formatter anywhere in
+`services/`. That meant Phase 2 wasn't "add a Loki shipper on top of existing structured logs" —
+it was a structured-logging migration across 12+ services *plus* OTel SDK traces/metrics
+instrumentation *plus* the two named cross-service trace chains. That's a different risk
+profile from Phase 1's purely-additive infra deployment (touches real application code in every
+service), which is why it shipped as its own ticket (STR-158b) rather than being force-fit into
+this one — confirmed with the ticket owner at the time.
+
+STR-158b delivered: a hand-rolled JSON logging + OTel SDK setup module (`observability.py`,
+duplicated per-service — this repo has no shared internal Python package) across all 12 domain
+services + checkout-workflow-worker; FastAPI + httpx auto-instrumentation everywhere; manual
+spans for the shopping-agent chain (`chat.notify_shopping_agent` as the trace root, since a
+WebSocket message has no ASGI span of its own; `mcp.tool.<name>` in MCP Gateway's tool
+dispatcher) and the checkout-saga chain (`temporalio.contrib.opentelemetry.TracingInterceptor`,
+confirmed to capture the compensation path's `release_stock`/`mark_order_rejected` as distinct
+spans); the three named domain metrics (Kafka consumer lag, Temporal workflow outcomes,
+Inventory concurrency-conflict rate); and three Grafana dashboards (shopping-agent chain,
+checkout-saga chain, cross-service overview) provisioned the same way as this Phase's own
+LGTM Pipeline Health dashboard. Both priority trace chains were live-verified end-to-end against
+a real docker-compose stack + a scratch Tempo container — not assumed from code alone — which is
+what caught this Phase's `derivedFields` regex bug (see above).

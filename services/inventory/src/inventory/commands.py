@@ -24,12 +24,23 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 
+from opentelemetry import metrics
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from inventory import events as ev
 from inventory.event_store import ConcurrencyConflict, EventAppend, append_events, load_last_sequence
 from inventory.models import Reservation, ReservationItem, ReservationStatus, StockItem
+
+# STR-158b/STR-150: every retry through run_with_retry's loop below is a
+# real optimistic-concurrency conflict — this is the metric that would
+# have made STR-150's manually-tested 5/5-runs-one-winner behavior visible
+# on a dashboard instead of requiring a dedicated manual test pass.
+_meter = metrics.get_meter(__name__)
+_concurrency_conflicts = _meter.create_counter(
+    "inventory_concurrency_conflicts_total",
+    description="Optimistic-concurrency conflicts on aggregate append (retried, not necessarily fatal).",
+)
 from inventory.outbox import add_outbox_event
 from inventory.projector import project_and_upsert
 
@@ -100,6 +111,7 @@ async def run_with_retry(
             except ConcurrencyConflict as exc:
                 await session.rollback()
                 last_error = exc
+                _concurrency_conflicts.add(1)
                 continue
 
             await session.commit()

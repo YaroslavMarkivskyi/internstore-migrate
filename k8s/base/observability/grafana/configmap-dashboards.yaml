@@ -70,3 +70,215 @@ data:
         }
       ]
     }
+
+  # STR-158b: the real, working version of this project's animated
+  # Chat -> ai-assistant -> MCP Gateway -> Orders flow diagrams — a live
+  # TraceQL search over real spans instead of a static picture.
+  shopping-agent-chain.json: |
+    {
+      "title": "Shopping Agent Chain (STR-158)",
+      "uid": "shopping-agent-chain",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Recent shopping-agent requests",
+          "type": "traces",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "targets": [
+            {
+              "queryType": "traceql",
+              "query": "{resource.service.name=\"ai-assistant\" && name=\"POST /agent/shopping\"}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "POST /agent/shopping — latency distribution",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(traces_spanmetrics_latency_bucket{service=\"ai-assistant\", span_name=\"POST /agent/shopping\"}[5m])) by (le)",
+              "format": "heatmap",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "mcp.tool.* calls / s, by tool",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"mcp-gateway\", span_name=~\"mcp[.]tool[.].+\"}[5m])) by (span_name)",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }
+
+  # STR-158b: the real, working version of the checkout-saga (STR-142)
+  # animated flow diagram — including its compensation branch
+  # (release_stock -> mark_order_rejected), now visible as distinct spans
+  # on a real trace instead of a static picture of the intended design.
+  checkout-saga-chain.json: |
+    {
+      "title": "Checkout Saga Chain (STR-142)",
+      "uid": "checkout-saga-chain",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Recent checkout-saga requests",
+          "type": "traces",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "targets": [
+            {
+              "queryType": "traceql",
+              "query": "{resource.service.name=\"orders\" && name=\"POST /checkout/v2\"}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Compensation-path traces (release_stock ran)",
+          "type": "traces",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "targets": [
+            {
+              "queryType": "traceql",
+              "query": "{resource.service.name=\"checkout-workflow-worker\" && name=\"RunActivity:release_stock\"}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "POST /checkout/v2 — latency distribution",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(traces_spanmetrics_latency_bucket{service=\"orders\", span_name=\"POST /checkout/v2\"}[5m])) by (le)",
+              "format": "heatmap",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Workflow outcomes / s (confirmed vs compensation_triggered)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(checkout_workflow_outcomes_total[5m])) by (outcome)",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }
+
+  # STR-158b's cross-service overview: request/error rate for every
+  # instrumented service (via Tempo's span-metrics — the same
+  # traces_spanmetrics_* series the LGTM Pipeline Health dashboard already
+  # proved reach Mimir in Phase 1, so this reuses a metrics path already
+  # confirmed live rather than a fresh, unverified one) plus the three
+  # domain-specific metrics the ticket calls out by name: Kafka consumer
+  # lag (STR-134), Temporal workflow outcomes (STR-142), and Inventory's
+  # optimistic-concurrency conflict rate (STR-150).
+  cross-service-overview.json: |
+    {
+      "title": "Cross-Service Overview",
+      "uid": "cross-service-overview",
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Request rate / s, by service",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(traces_spanmetrics_calls_total{span_kind=\"SPAN_KIND_SERVER\"}[5m])) by (service)",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Error rate / s, by service (5xx)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(traces_spanmetrics_calls_total{span_kind=\"SPAN_KIND_SERVER\", status_code=\"STATUS_CODE_ERROR\"}[5m])) by (service)",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Kafka consumer lag, by topic + consumer group (STR-134)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "max(kafka_consumer_lag) by (topic, consumer_group)",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "CheckoutWorkflow outcomes / s (STR-142)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(checkout_workflow_outcomes_total[5m])) by (outcome)",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Inventory concurrency conflicts / s (STR-150)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            {
+              "expr": "sum(rate(inventory_concurrency_conflicts_total[5m]))",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }

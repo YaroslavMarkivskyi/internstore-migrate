@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from telemetry.config import Settings, load_settings
 from telemetry.consumers.catalog_events import (
@@ -18,6 +19,7 @@ from telemetry.consumers.inventory_events import (
 )
 from telemetry.db import make_session_factory
 from telemetry.kafka import KafkaEventProducer, run_consumer_loop
+from telemetry.observability import setup_observability
 from telemetry.outbox_worker import run_outbox_worker
 from telemetry.routers import measurements, stores
 from telemetry.violations import run_violation_checker
@@ -69,8 +71,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("telemetry")
 
     app = FastAPI(title="telemetry", lifespan=lifespan)
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
 

@@ -2,6 +2,7 @@ import logging
 
 from fastapi import Request
 from temporalio.client import Client
+from temporalio.contrib.opentelemetry import TracingInterceptor
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +16,15 @@ async def connect_temporal_client(temporal_host: str) -> Client | None:
     call, so a startup failure here is caught and turned into `None` —
     routers/checkout_v2.py 503s on a None client instead of the whole app
     failing to start.
+
+    STR-158b: TracingInterceptor here covers this client's own
+    start_workflow span (the checkout-saga trace's root hop into Temporal).
+    checkout-workflow-worker needs the same interceptor registered
+    separately on its own Client.connect (see its worker.py) — that's a
+    different process with its own client, not this one.
     """
     try:
-        return await Client.connect(temporal_host)
+        return await Client.connect(temporal_host, interceptors=[TracingInterceptor()])
     except Exception:
         logger.exception("Failed to connect to Temporal at %s — /checkout/v2 will 503 until it's reachable", temporal_host)
         return None
