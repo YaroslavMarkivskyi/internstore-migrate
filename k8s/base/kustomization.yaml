@@ -24,6 +24,7 @@ resources:
 - minio
 - minio-init
 - mock-camera
+- observability
 
 # Stateless domain services
 - auth-backend

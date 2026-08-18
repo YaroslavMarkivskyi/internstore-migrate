@@ -22,3 +22,5 @@ nodes:
     hostPort: 9001
   - containerPort: 30088   # temporal-ui
     hostPort: 8088
+  - containerPort: 30030   # grafana (STR-183)
+    hostPort: 3000

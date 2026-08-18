@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mimir
+  labels:
+    app: mimir
+spec:
+  serviceName: mimir
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mimir
+  template:
+    metadata:
+      labels:
+        app: mimir
+    spec:
+      enableServiceLinks: false
+      containers:
+      - name: mimir
+        image: grafana/mimir:2.14.1
+        imagePullPolicy: IfNotPresent
+        # Single-binary/monolithic mode — every Mimir component in one
+        # process, the demo-scale equivalent of Loki/Tempo's single-binary
+        # deployment. Not microservices-split; that's a production concern.
+        args: ["-target=all", "-config.file=/etc/mimir/mimir.yaml"]
+        ports:
+        - containerPort: 9009
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/mimir
+        - name: data
+          mountPath: /data
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9009
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 9009
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "150m"
+            memory: "256Mi"
+          limits:
+            cpu: "750m"
+            memory: "512Mi"
+      volumes:
+      - name: config
+        configMap:
+          name: mimir-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: mimir-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mimir-data
+  labels:
+    app: mimir
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
