@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 from openai import AsyncOpenAI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 
 from ai_assistant.agent import RATE_LIMIT_MESSAGE, check_and_increment_rate_limit, get_mode
@@ -17,6 +18,7 @@ from ai_assistant.consumers import catalog_events, chat_events
 from ai_assistant.db import make_session_factory
 from ai_assistant.kafka import run_consumer_loop
 from ai_assistant.mcp_client import MCPGatewayClient
+from ai_assistant.observability import setup_observability
 from ai_assistant.orders_client import OrdersClient
 from ai_assistant.react_loop import run_shopping_agent
 from ai_assistant.redis_client import make_redis_client
@@ -73,8 +75,10 @@ class ShoppingAgentRequest(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("ai-assistant")
 
     app = FastAPI(title="ai-assistant", lifespan=lifespan)
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
     app.state.redis = make_redis_client(settings.redis_url)

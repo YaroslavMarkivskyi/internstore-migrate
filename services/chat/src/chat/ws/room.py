@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
+from opentelemetry import trace
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -13,6 +14,19 @@ from chat.models import Message, Room, RoomMember, SenderType
 from chat.outbox import add_outbox_event
 
 router = APIRouter()
+_tracer = trace.get_tracer(__name__)
+
+
+async def _notify_shopping_agent_traced(client, **kwargs) -> None:
+    """STR-158b: roots the shopping-agent trace (STR-158) here — a
+    WebSocket message isn't itself an ASGI HTTP request, so
+    FastAPIInstrumentor never creates a span for it, and this call runs in
+    a fire-and-forget asyncio.create_task with no other active span to
+    attach to. This span becomes that root; HTTPXClientInstrumentor
+    propagates it into the POST to ai-assistant, and from there into
+    ai-assistant's own outbound calls to MCP Gateway and Orders."""
+    with _tracer.start_as_current_span("chat.notify_shopping_agent"):
+        await client.notify_shopping_agent(**kwargs)
 
 
 def _room_owner_matches(role: str, room_id: str, sub: str) -> bool:
@@ -198,8 +212,12 @@ async def room_websocket(
             if claims.role == "customer" and content:
                 raw_token = websocket.headers.get("x-internal-token", "")
                 asyncio.create_task(
-                    app.state.ai_assistant_client.notify_shopping_agent(
-                        room_id=room_id, sender_id=claims.sub, message=content, token=raw_token
+                    _notify_shopping_agent_traced(
+                        app.state.ai_assistant_client,
+                        room_id=room_id,
+                        sender_id=claims.sub,
+                        message=content,
+                        token=raw_token,
                     )
                 )
 

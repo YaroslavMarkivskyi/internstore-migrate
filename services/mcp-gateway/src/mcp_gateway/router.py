@@ -2,6 +2,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from opentelemetry import trace
+
 from mcp_gateway.tools.catalog import CatalogToolsClient, ProductSearchClient
 from mcp_gateway.tools.chat import ChatToolsClient
 from mcp_gateway.tools.inventory import InventoryToolsClient
@@ -10,6 +12,8 @@ from mcp_gateway.tools.security import SecurityToolsClient
 from mcp_gateway.tools.telemetry import TelemetryToolsClient
 
 ToolFunc = Callable[..., Awaitable[Any]]
+
+_tracer = trace.get_tracer(__name__)
 
 
 class ToolNotFoundError(Exception):
@@ -66,6 +70,14 @@ def build_tool_registry(clients: GatewayClients) -> dict[str, ToolFunc]:
 
 
 async def call_tool(registry: dict[str, ToolFunc], name: str, arguments: dict[str, Any], token: str) -> Any:
+    # STR-158b: named span per tool call (mcp.tool.<name>), not just the
+    # inbound POST /mcp/call_tool span FastAPIInstrumentor already gives —
+    # this is the piece of the shopping-agent chain (STR-158) that doesn't
+    # otherwise show up distinctly: which specific tool (add_to_cart,
+    # search_products, ...) ran inside that request, each its own span
+    # parenting whatever downstream HTTP call that tool makes.
     if name not in registry:
         raise ToolNotFoundError(name)
-    return await registry[name](token=token, **arguments)
+    with _tracer.start_as_current_span(f"mcp.tool.{name}") as span:
+        span.set_attribute("mcp.tool.name", name)
+        return await registry[name](token=token, **arguments)

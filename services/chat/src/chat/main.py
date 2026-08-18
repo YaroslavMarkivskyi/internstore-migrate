@@ -4,12 +4,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from chat.ai_assistant_client import AIAssistantClient
 from chat.config import Settings, load_settings
 from chat.db import make_session_factory
 from chat.kafka import KafkaEventProducer
 from chat.minio_client import MinioClient
+from chat.observability import setup_observability
 from chat.outbox_worker import run_outbox_worker
 from chat.pubsub import PubSubRouter
 from chat.redis_client import make_redis_client
@@ -42,8 +44,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    setup_observability("chat")
 
     app = FastAPI(title="chat", lifespan=lifespan)
+    FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
     app.state.redis = make_redis_client(settings.redis_url)
