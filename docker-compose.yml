@@ -234,8 +234,9 @@ services:
       OUTBOX_POLL_INTERVAL_SECONDS: "1.0"
       # Test-mode keys (sk_test_.../whsec_...) from your Stripe dashboard —
       # same ${VAR:-} passthrough-from-root-.env pattern as ai-assistant's
-      # OPENAI_API_KEY below. Empty by default so the service still boots
-      # without them (Stripe just 401s at call time, not at startup).
+      # GCP_PROJECT below (STR-161b — was OPENAI_API_KEY before the Gemini
+      # migration). Empty by default so the service still boots without
+      # them (Stripe just 401s at call time, not at startup).
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # STR-139: parallel Temporal-orchestrated /checkout/v2 — see
@@ -824,7 +825,17 @@ services:
       # calls, same as Orders -> Inventory.
       CHAT_SERVICE_URL: http://chat:8000
       ORDERS_SERVICE_URL: http://orders:8000
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # STR-161b: replaces OPENAI_API_KEY — Gemini via the Gemini Enterprise
+      # Agent Platform authenticates with IAM/Workload Identity, not an API
+      # key, so there's no ${VAR:-} secret passthrough here anymore. Local
+      # (non-GKE) dev has no Workload Identity though: this container needs
+      # real Application Default Credentials to actually reach Gemini — run
+      # `gcloud auth application-default login` on the host and mount
+      # ~/.config/gcloud into the container, or set
+      # GOOGLE_APPLICATION_CREDENTIALS to a service-account key file. See
+      # README's "Dev gaps" (same class of trade-off as the old
+      # OPENAI_API_KEY requirement — no local LLM fallback either way).
+      GCP_PROJECT: ${GCP_PROJECT:-internstore-dev}
       AI_MODE_DEFAULT: ai
       AI_RATE_LIMIT: "10"
       # STR-146: the shopping ReAct loop's tool calls all go through here
@@ -875,7 +886,10 @@ services:
       # (see src/mcp_gateway/models.py) rather than adding a public HTTP
       # endpoint to ai-assistant just for this.
       AI_DB_URL: postgresql+asyncpg://ai:ai@ai-db:5432/ai
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # STR-161b: see ai-assistant's own comment above — same IAM/Workload
+      # Identity auth, same local-dev ADC requirement, must match
+      # ai-assistant's GCP_PROJECT (both embed into the same pgvector index).
+      GCP_PROJECT: ${GCP_PROJECT:-internstore-dev}
     volumes:
       # Live bind mount, see auth-backend's for why only this subpath.
       - ./services/mcp-gateway/src:/app/src

@@ -7,6 +7,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_assistant.db import Base
 
+# STR-161b: originally OpenAI text-embedding-3-small's native size; kept at
+# 1536 after the Gemini migration as a deliberate choice, not a leftover
+# default — gemini-embedding-001 natively outputs 3072 dims, truncated to
+# 1536 via Matryoshka Representation Learning (see config.py's
+# embedding_dimensions and embeddings.py's embed_text). Column width is
+# unchanged, but every row still had to be re-embedded: OpenAI's and
+# Gemini's embedding spaces aren't numerically compatible even at matching
+# dimensionality (see README's "Gemini migration" section).
 EMBEDDING_DIMENSIONS = 1536
 
 

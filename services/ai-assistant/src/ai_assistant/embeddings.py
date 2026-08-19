@@ -1,6 +1,7 @@
 import uuid
 
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,15 +24,21 @@ def build_embedding_text(payload: dict) -> str:
     return "\n".join(parts)
 
 
-async def embed_text(client: AsyncOpenAI, model: str, text: str) -> list[float]:
-    response = await client.embeddings.create(model=model, input=text)
-    return response.data[0].embedding
+async def embed_text(client: genai.Client, model: str, text: str, dimensions: int) -> list[float]:
+    # STR-161b: gemini-embedding-001 natively returns 3072-dim vectors;
+    # output_dimensionality truncates via Matryoshka Representation
+    # Learning — see config.py's embedding_dimensions for why this stays at
+    # 1536 rather than switching to the native size.
+    response = await client.aio.models.embed_content(
+        model=model, contents=text, config=types.EmbedContentConfig(output_dimensionality=dimensions)
+    )
+    return response.embeddings[0].values
 
 
 async def upsert_product_embedding(
-    session: AsyncSession, client: AsyncOpenAI, model: str, payload: dict
+    session: AsyncSession, client: genai.Client, model: str, payload: dict, dimensions: int
 ) -> None:
-    vector = await embed_text(client, model, build_embedding_text(payload))
+    vector = await embed_text(client, model, build_embedding_text(payload), dimensions)
     product_id = uuid.UUID(payload["product_id"])
 
     existing = await session.get(ProductEmbedding, product_id)
@@ -67,9 +74,9 @@ async def delete_product_embedding(session: AsyncSession, payload: dict) -> None
 
 
 async def search_similar_products(
-    session: AsyncSession, client: AsyncOpenAI, model: str, query_text: str, limit: int
+    session: AsyncSession, client: genai.Client, model: str, query_text: str, dimensions: int, limit: int
 ) -> list[dict]:
-    vector = await embed_text(client, model, query_text)
+    vector = await embed_text(client, model, query_text, dimensions)
     result = await session.execute(
         select(ProductEmbedding.product_id, ProductEmbedding.name, ProductEmbedding.description)
         # pgvector's <-> operator (Euclidean/L2 distance) — nearest first.

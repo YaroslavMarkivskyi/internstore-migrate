@@ -24,7 +24,7 @@ def settings() -> Settings:
         security_service_url="http://security.invalid",
         chat_service_url="http://chat.invalid",
         ai_db_url="postgresql+asyncpg://ai:ai@ai-db.invalid/ai",
-        openai_api_key="sk-test-dummy",
+        gcp_project="test-project",
     )
 
 

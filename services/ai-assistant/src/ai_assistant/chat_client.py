@@ -22,7 +22,8 @@ class ChatClient:
         resp.raise_for_status()
         # Chat returns newest-first (see routers/rooms.py's
         # Message.created_at.desc()) — reverse to oldest-first for the
-        # OpenAI message array, which reads top-to-bottom chronologically.
+        # model's conversation contents, which reads top-to-bottom
+        # chronologically (context.py/react_loop.py).
         return list(reversed(resp.json()["messages"]))
 
     async def post_message(self, room_id: str, content: str) -> None:

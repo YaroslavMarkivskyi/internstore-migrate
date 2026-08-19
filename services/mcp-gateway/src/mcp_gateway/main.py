@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from openai import AsyncOpenAI
+from google import genai
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 
@@ -33,13 +33,19 @@ class ToolCallRequest(BaseModel):
 def build_clients(settings: Settings) -> GatewayClients:
     timeout = settings.http_timeout_seconds
     session_factory = make_session_factory(settings.ai_db_url)
-    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+    # STR-161b: `enterprise=True` targets the Gemini Enterprise Agent
+    # Platform (Vertex AI's Cloud Next 2026 rebrand) — IAM/Workload Identity
+    # auth via ADC, no API key. Must point at the same gcp_project as
+    # ai-assistant's own client (both embed into the same pgvector index).
+    genai_client = genai.Client(enterprise=True, project=settings.gcp_project, location=settings.gcp_location)
 
     return GatewayClients(
         orders=OrdersToolsClient(settings.orders_service_url, timeout),
         inventory=InventoryToolsClient(settings.inventory_service_url, timeout),
         catalog=CatalogToolsClient(settings.catalog_service_url, timeout),
-        product_search=ProductSearchClient(session_factory, openai_client, settings.embedding_model),
+        product_search=ProductSearchClient(
+            session_factory, genai_client, settings.embedding_model, settings.embedding_dimensions
+        ),
         telemetry=TelemetryToolsClient(settings.telemetry_service_url, timeout),
         security=SecurityToolsClient(settings.security_service_url, timeout),
         chat=ChatToolsClient(settings.chat_service_url, timeout),

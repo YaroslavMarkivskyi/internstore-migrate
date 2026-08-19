@@ -27,7 +27,7 @@ def settings() -> Settings:
         orders_service_url="http://orders.invalid",
         mcp_gateway_url="http://mcp-gateway.invalid",
         auth_backend_url="http://auth-backend.invalid",
-        openai_api_key="sk-test-dummy",
+        gcp_project="test-project",
     )
 
 
@@ -37,7 +37,7 @@ def app(settings: Settings):
     # trigger it) — it would start real Kafka consumers against a
     # bootstrap server that doesn't exist. /agent/shopping only touches
     # app.state.{redis,chat_client,mcp_client,auth_backend_client,
-    # openai_client}, all replaced below with fakes/mocks, same pattern as
+    # genai_client}, all replaced below with fakes/mocks, same pattern as
     # every other service's tests in this repo.
     app = create_app(settings=settings)
     app.state.redis = fakeredis.aioredis.FakeRedis(server=fakeredis.aioredis.FakeServer(), decode_responses=True)
@@ -45,7 +45,7 @@ def app(settings: Settings):
     app.state.chat_client.get_recent_messages = AsyncMock(return_value=[])
     app.state.mcp_client = AsyncMock()
     app.state.auth_backend_client = AsyncMock()
-    app.state.openai_client = AsyncMock()
+    app.state.genai_client = AsyncMock()
     return app
 
 

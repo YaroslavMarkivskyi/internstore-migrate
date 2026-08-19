@@ -94,16 +94,38 @@ every other inter-service call in this repo is.
 **STR-146:** AI Assistant's shopping ReAct loop (`react_loop.py`) is this
 service's first real consumer — it fetches `GET /mcp/tools`, filters to
 exactly `search_products`/`get_cart`/`add_to_cart`/`remove_from_cart`, builds
-the OpenAI function-calling `tools` parameter from those specs, and forwards
+Gemini's `FunctionDeclaration`/`Tool` request shape from those specs
+(**STR-161b:** was OpenAI's function-calling `tools` parameter before the
+Gemini migration — `TOOL_SPECS`' plain JSON Schema in `schema.py` is
+unchanged either way, only the caller-side translation differs), and forwards
 the customer's own internal-token (refreshed via auth-backend if the loop
 outlives its 60s TTL) on every `POST /mcp/tools/call`. The Gateway's full
 16-tool catalog still exists for other admin-facing use, but nothing outside
 that 4-tool subset is ever offered to the shopping agent's model, and no
 checkout/payment tool exists in the registry at all — see
 `src/mcp_gateway/router.py`'s `build_tool_registry` for the enforced
-boundary. Any MCP-compatible client (Claude Desktop, a custom agent) can
-otherwise call this service directly: fetch `GET /mcp/tools` for the schema,
-then `POST /mcp/tools/call` per invocation.
+boundary. This boundary is structural (no registry entry to route to), not a
+prompt instruction or a model-specific behavior, so it holds the same way
+regardless of which model calls it — re-verified specifically against Gemini
+in `tests/test_checkout_tool_absent.py` and
+`services/ai-assistant/tests/test_react_loop.py`'s
+`test_a_hallucinated_checkout_tool_call_is_surfaced_as_an_error_not_executed_as_success`,
+plus the live adversarial-prompt check in
+`scripts/test-shopping-agent-gemini-checkout.sh`. Any MCP-compatible client
+(Claude Desktop, a custom agent) can otherwise call this service directly:
+fetch `GET /mcp/tools` for the schema, then `POST /mcp/tools/call` per
+invocation.
+
+## Gemini migration (STR-161b)
+
+`search_products` (`tools/catalog.py`) embeds the query via Gemini's
+`gemini-embedding-001` through the Gemini Enterprise Agent Platform (Vertex
+AI's Cloud Next 2026 rebrand), not OpenAI's `text-embedding-3-small`
+anymore. See `services/ai-assistant/README.md`'s "Gemini migration" section
+for the full rationale (dimensionality choice, auth, re-embedding) — this
+service's `EMBEDDING_DIMENSIONS`/`embedding_dimensions` must stay in sync
+with ai-assistant's, since both read/write the same `product_embeddings`
+table.
 
 ## Demo query
 

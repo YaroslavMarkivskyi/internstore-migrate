@@ -1,4 +1,4 @@
-from openai import AsyncOpenAI
+from google import genai
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_assistant.chat_client import ChatClient
@@ -15,10 +15,12 @@ Always be concise and professional."""
 
 
 def _sender_role_to_map(sender_type: str) -> str:
-    # Chat's sender_type values map onto OpenAI's roles: the assistant's own
-    # past replies are "assistant", everyone else (customer, admin) reads as
-    # "user" from the model's point of view.
-    return "assistant" if sender_type == "assistant" else "user"
+    # STR-161b: Gemini's two content roles are "user" and "model" (no
+    # "assistant", no "system" — the system prompt is a separate
+    # system_instruction, see build_messages below) — the assistant's own
+    # past replies map to "model", everyone else (customer, admin) to
+    # "user".
+    return "model" if sender_type == "assistant" else "user"
 
 
 def _format_order_history(orders: list[dict]) -> str:
@@ -43,8 +45,9 @@ def _format_product_context(products: list[dict]) -> str:
 async def build_messages(
     *,
     session: AsyncSession,
-    openai_client: AsyncOpenAI,
+    genai_client: genai.Client,
     embedding_model: str,
+    embedding_dimensions: int,
     chat_client: ChatClient,
     orders_client: OrdersClient,
     room_id: str,
@@ -54,7 +57,11 @@ async def build_messages(
     conversation_history_limit: int,
     order_history_limit: int,
     product_context_limit: int,
-) -> list[dict]:
+) -> tuple[str, list[dict]]:
+    """Returns (system_instruction, contents) rather than a single OpenAI-
+    style messages list — Gemini takes the system prompt as its own
+    GenerateContentConfig.system_instruction, not a "system"-role content
+    entry (see agent.generate_reply)."""
     history = await chat_client.get_recent_messages(room_id, conversation_history_limit)
     conversation = [
         {"role": _sender_role_to_map(message["sender_type"]), "content": message["content"]}
@@ -77,14 +84,13 @@ async def build_messages(
         context_sections.append(_format_order_history(orders))
 
     products = await search_similar_products(
-        session, openai_client, embedding_model, customer_message, product_context_limit
+        session, genai_client, embedding_model, customer_message, embedding_dimensions, product_context_limit
     )
     context_sections.append(_format_product_context(products))
 
-    system_content = SYSTEM_PROMPT + "\n\n" + "\n\n".join(context_sections)
+    system_instruction = SYSTEM_PROMPT + "\n\n" + "\n\n".join(context_sections)
 
-    return [
-        {"role": "system", "content": system_content},
+    return system_instruction, [
         *conversation,
         {"role": "user", "content": customer_message},
     ]

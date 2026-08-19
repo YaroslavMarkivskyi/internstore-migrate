@@ -28,16 +28,13 @@ def _mint(sub: str, role: str, *, expires_in: int) -> str:
     )
 
 
-def _response(content: str | None, tool_calls: list | None = None) -> SimpleNamespace:
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=tool_calls))]
-    )
+def _response(text: str | None, function_calls: list | None = None) -> SimpleNamespace:
+    content = SimpleNamespace(role="model", parts=[])
+    return SimpleNamespace(text=text, function_calls=function_calls or [], candidates=[SimpleNamespace(content=content)])
 
 
-def _tool_call(call_id: str, name: str) -> SimpleNamespace:
-    import json
-
-    return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=json.dumps({})))
+def _function_call(name: str) -> SimpleNamespace:
+    return SimpleNamespace(name=name, args={})
 
 
 async def test_loop_refreshes_a_soon_to_expire_token_before_the_next_tool_call():
@@ -51,10 +48,10 @@ async def test_loop_refreshes_a_soon_to_expire_token_before_the_next_tool_call()
     auth_backend_client = AsyncMock()
     auth_backend_client.refresh = AsyncMock(return_value=fresh_token)
 
-    openai_client = AsyncMock()
-    openai_client.chat.completions.create = AsyncMock(
+    genai_client = AsyncMock()
+    genai_client.aio.models.generate_content = AsyncMock(
         side_effect=[
-            _response(None, tool_calls=[_tool_call("call-1", "get_cart")]),
+            _response(None, function_calls=[_function_call("get_cart")]),
             _response("Your cart is empty."),
         ]
     )
@@ -62,10 +59,10 @@ async def test_loop_refreshes_a_soon_to_expire_token_before_the_next_tool_call()
     token = RefreshableToken(about_to_expire)
 
     reply = await run_shopping_agent(
-        openai_client=openai_client,
+        genai_client=genai_client,
         mcp_client=mcp_client,
         auth_backend_client=auth_backend_client,
-        chat_model="gpt-4o",
+        chat_model="gemini-3-flash",
         message="what's in my cart?",
         token=token,
         refresh_margin_seconds=15,  # 10s left < 15s margin -- must refresh
@@ -86,14 +83,14 @@ async def test_loop_does_not_refresh_a_token_with_plenty_of_time_left():
     mcp_client.list_tools = AsyncMock(return_value=TOOL_SPECS)
 
     auth_backend_client = AsyncMock()
-    openai_client = AsyncMock()
-    openai_client.chat.completions.create = AsyncMock(return_value=_response("All good."))
+    genai_client = AsyncMock()
+    genai_client.aio.models.generate_content = AsyncMock(return_value=_response("All good."))
 
     await run_shopping_agent(
-        openai_client=openai_client,
+        genai_client=genai_client,
         mcp_client=mcp_client,
         auth_backend_client=auth_backend_client,
-        chat_model="gpt-4o",
+        chat_model="gemini-3-flash",
         message="hi",
         token=RefreshableToken(plenty_of_time),
         refresh_margin_seconds=15,
@@ -118,20 +115,20 @@ async def test_loop_refreshes_again_across_iterations_if_still_close_to_expiry()
     # proving refresh isn't a one-shot "do it once at the start" thing.
     auth_backend_client.refresh = AsyncMock(side_effect=lambda _t: _mint("customer-1", "customer", expires_in=5))
 
-    openai_client = AsyncMock()
-    openai_client.chat.completions.create = AsyncMock(
+    genai_client = AsyncMock()
+    genai_client.aio.models.generate_content = AsyncMock(
         side_effect=[
-            _response(None, tool_calls=[_tool_call("call-1", "get_cart")]),
-            _response(None, tool_calls=[_tool_call("call-2", "get_cart")]),
+            _response(None, function_calls=[_function_call("get_cart")]),
+            _response(None, function_calls=[_function_call("get_cart")]),
             _response("done"),
         ]
     )
 
     await run_shopping_agent(
-        openai_client=openai_client,
+        genai_client=genai_client,
         mcp_client=mcp_client,
         auth_backend_client=auth_backend_client,
-        chat_model="gpt-4o",
+        chat_model="gemini-3-flash",
         message="check my cart twice",
         token=RefreshableToken(near_expiry),
         refresh_margin_seconds=15,

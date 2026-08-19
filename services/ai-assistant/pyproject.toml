@@ -1,7 +1,7 @@
 [project]
 name = "ai-assistant"
 version = "0.1.0"
-description = "InternStore AI Assistant service — OpenAI-powered chat agent for customers"
+description = "InternStore AI Assistant service — Gemini-powered chat agent for customers"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
@@ -16,7 +16,12 @@ dependencies = [
     "aiokafka>=0.11.0",
     "httpx>=0.27.2",
     "redis>=5.0.8",
-    "openai>=1.51.0",
+    # STR-161b: replaces openai — talks to Gemini via the Gemini Enterprise
+    # Agent Platform (the Cloud Next 2026 rebrand of Vertex AI). Pinned
+    # below 3.0 per the SDK's own README: breaking changes to Automatic
+    # Function Calling are planned for 3.0, and this service builds its
+    # tool declarations manually (see react_loop.py), not via AFC.
+    "google-genai>=1.0.0,<3.0.0",
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
     "opentelemetry-instrumentation-fastapi>=0.65b0",

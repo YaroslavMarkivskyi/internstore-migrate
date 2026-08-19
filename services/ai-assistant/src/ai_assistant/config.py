@@ -20,9 +20,25 @@ class Settings(BaseSettings):
     # when it's close to its 60s TTL (see token_manager.py) — this service
     # has no other way to renew a token it didn't mint itself.
     auth_backend_url: str
-    openai_api_key: str
-    chat_model: str = "gpt-4o"
-    embedding_model: str = "text-embedding-3-small"
+    # STR-161b: no API key — Gemini via the Gemini Enterprise Agent Platform
+    # (Vertex AI's Cloud Next 2026 rebrand) authenticates with IAM/Workload
+    # Identity, same as every other GCP-native call this project makes.
+    # `gcp_location` defaults to "global" per Google's current guidance for
+    # the Gemini Enterprise API surface; override per-region if needed.
+    gcp_project: str
+    gcp_location: str = "global"
+    chat_model: str = "gemini-3-flash"
+    embedding_model: str = "gemini-embedding-001"
+    # STR-161b: gemini-embedding-001 natively outputs 3072 dimensions:
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/embeddings/get-text-embeddings
+    # Kept at 1536 here as a deliberate choice, not a leftover OpenAI
+    # default — Gemini's Matryoshka Representation Learning supports
+    # truncating to 768/1536/3072 with minimal quality loss (see
+    # embeddings.py), so 1536 stays a supported size and this avoids the
+    # Alembic column resize + full-catalog re-embed a 3072 switch would
+    # force. Re-embedding is still required regardless (see README): the
+    # OpenAI and Gemini embedding spaces aren't numerically compatible even
+    # at matching dimensionality.
     embedding_dimensions: int = 1536
     # Default mode when chat:{room_id}:mode is missing from Redis — matches
     # rooms.ai_mode's own server_default of true.

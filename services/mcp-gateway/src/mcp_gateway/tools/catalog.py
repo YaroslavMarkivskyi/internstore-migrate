@@ -1,5 +1,6 @@
 import httpx
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -38,10 +39,17 @@ class ProductSearchClient:
     (and ignores) one, purely so router.call_tool can inject `token` into
     every tool call uniformly rather than special-casing this one."""
 
-    def __init__(self, session_factory: async_sessionmaker, openai_client: AsyncOpenAI, embedding_model: str) -> None:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker,
+        genai_client: genai.Client,
+        embedding_model: str,
+        embedding_dimensions: int,
+    ) -> None:
         self._session_factory = session_factory
-        self._openai_client = openai_client
+        self._genai_client = genai_client
         self._embedding_model = embedding_model
+        self._embedding_dimensions = embedding_dimensions
 
     # STR-146: `filters` is optional and additive — {price_min, price_max,
     # category} — since shopping queries are more filter-heavy than the
@@ -53,8 +61,15 @@ class ProductSearchClient:
         self, token: str, query: str, limit: int = 5, filters: dict | None = None
     ) -> list[dict]:
         del token  # unused — see class docstring
-        response = await self._openai_client.embeddings.create(model=self._embedding_model, input=query)
-        vector = response.data[0].embedding
+        # STR-161b: output_dimensionality must match models.EMBEDDING_DIMENSIONS
+        # — this pgvector column is dimension-fixed, and ai-assistant's own
+        # upsert path (embeddings.py) embeds with the same truncated size.
+        response = await self._genai_client.aio.models.embed_content(
+            model=self._embedding_model,
+            contents=query,
+            config=types.EmbedContentConfig(output_dimensionality=self._embedding_dimensions),
+        )
+        vector = response.embeddings[0].values
 
         stmt = select(
             ProductEmbedding.product_id,

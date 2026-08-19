@@ -7,6 +7,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from mcp_gateway.db import Base
 
+# STR-161b: must match ai-assistant's own EMBEDDING_DIMENSIONS exactly —
+# see that module for the full rationale (Gemini's gemini-embedding-001
+# truncated from its native 3072 dims down to 1536 via Matryoshka
+# Representation Learning, kept at 1536 deliberately rather than resized).
 EMBEDDING_DIMENSIONS = 1536
 
 
