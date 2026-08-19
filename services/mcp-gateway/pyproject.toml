@@ -14,7 +14,9 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.35",
     "asyncpg>=0.29.0",
     "pgvector>=0.3.6",
-    "openai>=1.51.0",
+    # STR-161b: replaces openai — search_products embeds the query via
+    # Gemini (see tools/catalog.py), same SDK/pin rationale as ai-assistant.
+    "google-genai>=1.0.0,<3.0.0",
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
     "opentelemetry-instrumentation-fastapi>=0.65b0",

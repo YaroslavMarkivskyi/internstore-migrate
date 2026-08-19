@@ -52,8 +52,9 @@ async def test_guest_message_over_kafka_never_reaches_the_tool_calling_loop(monk
         ai_mode_default = "ai"
         ai_rate_limit = 10
         ai_rate_limit_window_seconds = 3600
-        embedding_model = "text-embedding-3-small"
-        chat_model = "gpt-4o"
+        embedding_model = "gemini-embedding-001"
+        embedding_dimensions = 1536
+        chat_model = "gemini-3-flash"
         max_response_tokens = 500
         conversation_history_limit = 20
         order_history_limit = 5
@@ -82,7 +83,7 @@ async def test_guest_message_over_kafka_never_reaches_the_tool_calling_loop(monk
     await handle_customer_message_sent(
         session_factory=session_factory,
         redis=redis,
-        openai_client=AsyncMock(),
+        genai_client=AsyncMock(),
         chat_client=chat_client,
         orders_client=orders_client,
         settings=_Settings(),
@@ -107,13 +108,13 @@ async def test_registered_customer_message_over_kafka_is_skipped_entirely():
         ai_rate_limit = 10
         ai_rate_limit_window_seconds = 3600
 
-    openai_client = AsyncMock()
+    genai_client = AsyncMock()
     chat_client = AsyncMock()
 
     await handle_customer_message_sent(
         session_factory=AsyncMock(),
         redis=AsyncMock(),
-        openai_client=openai_client,
+        genai_client=genai_client,
         chat_client=chat_client,
         orders_client=AsyncMock(),
         settings=_Settings(),
@@ -125,5 +126,5 @@ async def test_registered_customer_message_over_kafka_is_skipped_entirely():
         },
     )
 
-    openai_client.chat.completions.create.assert_not_awaited()
+    genai_client.aio.models.generate_content.assert_not_awaited()
     chat_client.post_message.assert_not_awaited()

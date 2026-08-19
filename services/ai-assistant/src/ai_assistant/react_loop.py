@@ -1,7 +1,7 @@
-import json
 import logging
 
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 
 from ai_assistant.auth_backend_client import AuthBackendClient
 from ai_assistant.mcp_client import MCPGatewayClient
@@ -42,31 +42,34 @@ DEFAULT_REFRESH_MARGIN_SECONDS = 15
 FALLBACK_REPLY = "I wasn't able to finish that — please check your cart directly, or try rephrasing your request."
 
 
-def _to_openai_tools(tool_specs: list[dict]) -> list[dict]:
+def _to_genai_tools(tool_specs: list[dict]) -> list[types.Tool]:
+    # STR-161b: a single Tool bundling every allowed FunctionDeclaration —
+    # Gemini's request shape, vs. OpenAI's one {"type": "function", ...}
+    # entry per tool. parameters_json_schema takes the Gateway's own raw
+    # JSON Schema (schema.py's TOOL_SPECS) as-is, no translation needed.
     return [
-        {
-            "type": "function",
-            "function": {
-                "name": spec["name"],
-                "description": spec["description"],
-                "parameters": spec["input_schema"],
-            },
-        }
-        for spec in tool_specs
-        if spec["name"] in SHOPPING_TOOL_NAMES
+        types.Tool(
+            function_declarations=[
+                types.FunctionDeclaration(
+                    name=spec["name"], description=spec["description"], parameters_json_schema=spec["input_schema"]
+                )
+                for spec in tool_specs
+                if spec["name"] in SHOPPING_TOOL_NAMES
+            ]
+        )
     ]
 
 
 def _sender_role_to_map(sender_type: str) -> str:
-    # Same mapping as context.py's copy for the guest/Kafka-driven agent —
-    # the assistant's own past replies read back as "assistant", everyone
-    # else (customer, admin) reads as "user".
-    return "assistant" if sender_type == "assistant" else "user"
+    # STR-161b: Gemini's content roles are "user"/"model", not OpenAI's
+    # "user"/"assistant" — same mapping as context.py's copy for the
+    # guest/Kafka-driven agent.
+    return "model" if sender_type == "assistant" else "user"
 
 
 async def run_shopping_agent(
     *,
-    openai_client: AsyncOpenAI,
+    genai_client: genai.Client,
     mcp_client: MCPGatewayClient,
     auth_backend_client: AuthBackendClient,
     chat_model: str,
@@ -91,64 +94,50 @@ async def run_shopping_agent(
     mock a single self-contained turn, so this never surfaced until a real
     multi-turn conversation against a real model."""
     tool_specs = await mcp_client.list_tools(token.value)
-    openai_tools = _to_openai_tools(tool_specs)
+    tools = _to_genai_tools(tool_specs)
 
-    conversation = [
-        {"role": _sender_role_to_map(entry["sender_type"]), "content": entry["content"]}
+    contents: list[types.Content] = [
+        types.Content(role=_sender_role_to_map(entry["sender_type"]), parts=[types.Part(text=entry["content"])])
         for entry in (history or [])
         if entry.get("content")
     ]
+    contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
 
-    messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        *conversation,
-        {"role": "user", "content": message},
-    ]
+    config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, tools=tools)
 
     for _ in range(max_iterations):
         await token.ensure_fresh(auth_backend_client, refresh_margin_seconds)
 
-        response = await openai_client.chat.completions.create(
-            model=chat_model,
-            messages=messages,
-            tools=openai_tools,
-            tool_choice="auto",
-        )
-        assistant_message = response.choices[0].message
-        tool_calls = assistant_message.tool_calls or []
+        response = await genai_client.aio.models.generate_content(model=chat_model, contents=contents, config=config)
+        function_calls = response.function_calls or []
 
-        if not tool_calls:
-            return assistant_message.content or ""
+        if not function_calls:
+            return response.text or ""
 
-        messages.append(
-            {
-                "role": "assistant",
-                "content": assistant_message.content,
-                "tool_calls": [
-                    {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {"name": call.function.name, "arguments": call.function.arguments},
-                    }
-                    for call in tool_calls
-                ],
-            }
-        )
+        # STR-161b: the model's own turn (both any text and the
+        # function_call parts) has to go back into `contents` verbatim —
+        # Gemini expects the exact Content it produced, not a
+        # re-serialized summary, so the follow-up call has continuity
+        # (mirrors OpenAI's `assistant_message` append, just a whole
+        # Content object instead of a hand-built dict).
+        contents.append(response.candidates[0].content)
 
-        for call in tool_calls:
+        response_parts = []
+        for call in function_calls:
             try:
-                arguments = json.loads(call.function.arguments or "{}")
-                result = await mcp_client.call_tool(token.value, call.function.name, arguments)
-                content = json.dumps(result)
+                result = await mcp_client.call_tool(token.value, call.name, dict(call.args or {}))
+                function_response = {"result": result}
             except Exception as exc:
                 # Surfaced back to the model as a tool error (e.g. "product
                 # not found", a 401 from a stale token the refresh above
-                # missed) so it can recover or apologize, rather than
-                # crashing the whole request over one bad tool call.
-                logger.warning(
-                    "Shopping agent tool call %s(%s) failed: %s", call.function.name, call.function.arguments, exc
-                )
-                content = json.dumps({"error": str(exc)})
-            messages.append({"role": "tool", "tool_call_id": call.id, "content": content})
+                # missed, or a 404 for a hallucinated tool name the
+                # Gateway's registry has no entry for — see
+                # mcp_gateway/router.py) so it can recover or apologize,
+                # rather than crashing the whole request over one bad call.
+                logger.warning("Shopping agent tool call %s(%s) failed: %s", call.name, call.args, exc)
+                function_response = {"error": str(exc)}
+            response_parts.append(types.Part.from_function_response(name=call.name, response=function_response))
+
+        contents.append(types.Content(role="tool", parts=response_parts))
 
     return FALLBACK_REPLY

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
-from openai import AsyncOpenAI
+from google import genai
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 
@@ -34,13 +34,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     chat_dispatch = chat_events.make_dispatch(
         session_factory=app.state.session_factory,
         redis=app.state.redis,
-        openai_client=app.state.openai_client,
+        genai_client=app.state.genai_client,
         chat_client=app.state.chat_client,
         orders_client=app.state.orders_client,
         settings=settings,
     )
     catalog_dispatch = catalog_events.make_dispatch(
-        app.state.session_factory, app.state.openai_client, settings.embedding_model
+        app.state.session_factory, app.state.genai_client, settings.embedding_model, settings.embedding_dimensions
     )
 
     # Distinct consumer groups per topic — a rebalance/restart on one
@@ -82,7 +82,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
     app.state.redis = make_redis_client(settings.redis_url)
-    app.state.openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+    # STR-161b: `enterprise=True` targets the Gemini Enterprise Agent
+    # Platform (Vertex AI's Cloud Next 2026 rebrand) rather than the Gemini
+    # Developer API — auth is IAM/Workload Identity via ADC, no API key.
+    # `vertexai=True` is still accepted as an alias by the SDK but
+    # `enterprise` is the current name post-rebrand.
+    app.state.genai_client = genai.Client(
+        enterprise=True, project=settings.gcp_project, location=settings.gcp_location
+    )
     app.state.chat_client = ChatClient(settings.chat_service_url, 10.0, settings.internal_token_secret)
     app.state.orders_client = OrdersClient(settings.orders_service_url, 10.0, settings.internal_token_secret)
     # STR-146: this service's first actual MCP Gateway caller, and its first
@@ -145,7 +152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload.room_id, settings.conversation_history_limit
         )
         reply = await run_shopping_agent(
-            openai_client=app.state.openai_client,
+            genai_client=app.state.genai_client,
             mcp_client=app.state.mcp_client,
             auth_backend_client=app.state.auth_backend_client,
             chat_model=settings.chat_model,

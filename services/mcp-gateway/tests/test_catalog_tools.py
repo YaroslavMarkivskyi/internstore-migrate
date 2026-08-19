@@ -55,9 +55,11 @@ def _fake_session_factory(rows: list):
     return lambda: _FakeSession(rows)
 
 
-def _fake_openai_client() -> AsyncMock:
+def _fake_genai_client() -> AsyncMock:
     client = AsyncMock()
-    client.embeddings.create = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(embedding=[0.1] * 1536)]))
+    client.aio.models.embed_content = AsyncMock(
+        return_value=SimpleNamespace(embeddings=[SimpleNamespace(values=[0.1] * 1536)])
+    )
     return client
 
 
@@ -67,12 +69,16 @@ async def test_search_products_embeds_query_and_returns_nearest_rows():
             product_id="prod-1", name="Frozen Peas", description="1kg bag", price=4.5, category_name="Frozen"
         )
     ]
-    openai_client = _fake_openai_client()
-    search_client = ProductSearchClient(_fake_session_factory(rows), openai_client, "text-embedding-3-small")
+    genai_client = _fake_genai_client()
+    search_client = ProductSearchClient(_fake_session_factory(rows), genai_client, "gemini-embedding-001", 1536)
 
     result = await search_client.search_products("caller-token", "frozen vegetables", limit=5)
 
-    openai_client.embeddings.create.assert_awaited_once_with(model="text-embedding-3-small", input="frozen vegetables")
+    genai_client.aio.models.embed_content.assert_awaited_once()
+    call_kwargs = genai_client.aio.models.embed_content.call_args.kwargs
+    assert call_kwargs["model"] == "gemini-embedding-001"
+    assert call_kwargs["contents"] == "frozen vegetables"
+    assert call_kwargs["config"].output_dimensionality == 1536
     assert result == [
         {"product_id": "prod-1", "name": "Frozen Peas", "description": "1kg bag", "price": 4.5, "category": "Frozen"}
     ]

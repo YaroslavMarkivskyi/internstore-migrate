@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 
-from openai import AsyncOpenAI
+from google import genai
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -23,7 +23,7 @@ async def handle_customer_message_sent(
     *,
     session_factory: async_sessionmaker,
     redis: Redis,
-    openai_client: AsyncOpenAI,
+    genai_client: genai.Client,
     chat_client: ChatClient,
     orders_client: OrdersClient,
     settings: Settings,
@@ -67,10 +67,11 @@ async def handle_customer_message_sent(
         return
 
     async with session_factory() as session:
-        messages = await build_messages(
+        system_instruction, contents = await build_messages(
             session=session,
-            openai_client=openai_client,
+            genai_client=genai_client,
             embedding_model=settings.embedding_model,
+            embedding_dimensions=settings.embedding_dimensions,
             chat_client=chat_client,
             orders_client=orders_client,
             room_id=room_id,
@@ -82,7 +83,9 @@ async def handle_customer_message_sent(
             product_context_limit=settings.product_context_limit,
         )
 
-    reply = await generate_reply(openai_client, settings.chat_model, messages, settings.max_response_tokens)
+    reply = await generate_reply(
+        genai_client, settings.chat_model, system_instruction, contents, settings.max_response_tokens
+    )
     await chat_client.post_message(room_id, reply)
 
 
@@ -90,7 +93,7 @@ def make_dispatch(
     *,
     session_factory: async_sessionmaker,
     redis: Redis,
-    openai_client: AsyncOpenAI,
+    genai_client: genai.Client,
     chat_client: ChatClient,
     orders_client: OrdersClient,
     settings: Settings,
@@ -105,7 +108,7 @@ def make_dispatch(
         await handle_customer_message_sent(
             session_factory=session_factory,
             redis=redis,
-            openai_client=openai_client,
+            genai_client=genai_client,
             chat_client=chat_client,
             orders_client=orders_client,
             settings=settings,

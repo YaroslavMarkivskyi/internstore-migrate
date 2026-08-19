@@ -7,13 +7,13 @@ ROOM_ID = "room_11111111-1111-1111-1111-111111111111"
 SENDER_ID = "11111111-1111-1111-1111-111111111111"
 
 
-def _response(content: str) -> SimpleNamespace:
-    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=None))])
+def _response(text: str) -> SimpleNamespace:
+    return SimpleNamespace(text=text, function_calls=[], candidates=[SimpleNamespace(content=SimpleNamespace(role="model", parts=[]))])
 
 
 async def test_customer_message_runs_the_agent_and_posts_the_reply(client, app, customer_token):
     app.state.mcp_client.list_tools = AsyncMock(return_value=[])
-    app.state.openai_client.chat.completions.create = AsyncMock(
+    app.state.genai_client.aio.models.generate_content = AsyncMock(
         return_value=_response("Added 2x Gouda to your cart — 3 items now, $34.50 total.")
     )
 
@@ -38,7 +38,7 @@ async def test_customer_message_fetches_and_forwards_room_history(client, app, c
         return_value=[{"sender_type": "customer", "content": "find me a gouda under $20"}]
     )
     app.state.mcp_client.list_tools = AsyncMock(return_value=[])
-    app.state.openai_client.chat.completions.create = AsyncMock(return_value=_response("Added it to your cart."))
+    app.state.genai_client.aio.models.generate_content = AsyncMock(return_value=_response("Added it to your cart."))
 
     resp = await client.post(
         "/agent/shopping",
@@ -48,8 +48,8 @@ async def test_customer_message_fetches_and_forwards_room_history(client, app, c
 
     assert resp.status_code == 200
     app.state.chat_client.get_recent_messages.assert_awaited_once_with(ROOM_ID, app.state.settings.conversation_history_limit)
-    sent_messages = app.state.openai_client.chat.completions.create.call_args.kwargs["messages"]
-    assert {"role": "user", "content": "find me a gouda under $20"} in sent_messages
+    sent_contents = app.state.genai_client.aio.models.generate_content.call_args.kwargs["contents"]
+    assert any(c.role == "user" and c.parts[0].text == "find me a gouda under $20" for c in sent_contents)
 
 
 async def test_human_mode_room_skips_the_agent_entirely(client, app, customer_token):
@@ -63,7 +63,7 @@ async def test_human_mode_room_skips_the_agent_entirely(client, app, customer_to
 
     assert resp.status_code == 200
     assert resp.json() == {"status": "skipped"}
-    app.state.openai_client.chat.completions.create.assert_not_awaited()
+    app.state.genai_client.aio.models.generate_content.assert_not_awaited()
     app.state.chat_client.post_message.assert_not_awaited()
 
 

@@ -144,12 +144,14 @@ an end-to-end run against the real broker. Chat is a producer-only client of
   detected up to one check-interval late, not the instant the underlying
   condition becomes true. See
   [services/telemetry/README.md](../services/telemetry/README.md).
-- **AI Assistant requires a real OpenAI API key, no local LLM fallback.**
-  `docker compose up` without `OPENAI_API_KEY` set starts the service fine,
-  but every chat completion/embedding call fails until a real key is
-  provided — same class of external-dependency trade-off as the Mailpit gap
-  above. Embeddings are also built lazily: `product_embeddings` stays empty
-  until Catalog publishes a `ProductUpdated` event for each product, so a
+- **AI Assistant requires real GCP Application Default Credentials, no
+  local LLM fallback.** (STR-161b: was a real `OPENAI_API_KEY` before the
+  Gemini migration.) `docker compose up` without them set starts the
+  service fine, but every chat completion/embedding call fails until real
+  ADC is provided — same class of external-dependency trade-off as the
+  Mailpit gap above. Embeddings are also built lazily: `product_embeddings`
+  stays empty until Catalog publishes a `ProductUpdated` event for each
+  product, so a
   fresh stack has no RAG context until either an admin edits every product
   once or `scripts/seed-embeddings.sh` is run to trigger it directly. Rate
   limiting (`AI_RATE_LIMIT`, default 10/hour) is per-room, not per-customer —

@@ -12,3 +12,7 @@ data:
   TELEMETRY_SERVICE_URL: "http://telemetry:8000"
   SECURITY_SERVICE_URL: "http://security:8000"
   CHAT_SERVICE_URL: "http://chat:8000"
+  # STR-161b: see ai-assistant/configmap.yaml's comment — not a secret,
+  # must match ai-assistant's own GCP_PROJECT (both embed into the same
+  # pgvector index).
+  GCP_PROJECT: "internstore-dev"

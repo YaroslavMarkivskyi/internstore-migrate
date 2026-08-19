@@ -16,3 +16,10 @@ data:
   # STR-146: refreshes the customer's forwarded internal-token mid-ReAct-loop
   # via auth-backend's POST /auth/refresh when it's close to its 60s TTL.
   AUTH_BACKEND_URL: "http://auth-backend:3000"
+  # STR-161b: not a secret — identifies which GCP project's Gemini
+  # Enterprise Agent Platform to call; the actual credential is IAM/
+  # Workload Identity, not a token that lives in this configmap. Must match
+  # the real GCP project id in any real deployment (placeholder here is
+  # only valid for local kind/minikube, where Gemini calls will fail
+  # without real Application Default Credentials anyway — see README).
+  GCP_PROJECT: "internstore-dev"

@@ -276,6 +276,12 @@ without it" claim only held in practice because local devs have a real value in 
 placeholder (`sk-local-dev-placeholder-not-a-real-key`) — real AI-assistant calls still 401
 without a genuine key, matching Stripe's documented behavior.
 
+**STR-161b update:** `OPENAI_API_KEY` is gone entirely now — the Gemini migration replaced it
+with IAM/Workload Identity, and `google-genai`'s `Client()` constructor (unlike `AsyncOpenAI`'s)
+never raises on a missing/empty project at construction time, only at the first real call. The
+placeholder workaround above no longer exists in either `secret.yaml`; see
+`services/ai-assistant/README.md`'s "Gemini migration" section.
+
 **7. nginx's `resolver` directive was hardcoded to `127.0.0.11`, Docker Compose's embedded DNS
 — the STR-142 "no nginx.conf edits should be needed" claim did not hold.** Every proxied
 request 500'd with `resolver: 127.0.0.11:53` connection-refused errors — that address doesn't

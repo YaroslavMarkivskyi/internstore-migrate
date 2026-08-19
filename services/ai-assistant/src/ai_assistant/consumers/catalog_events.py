@@ -1,7 +1,7 @@
 import uuid
 from collections.abc import Awaitable, Callable
 
-from openai import AsyncOpenAI
+from google import genai
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ai_assistant.embeddings import delete_product_embedding, upsert_product_embedding
@@ -18,12 +18,17 @@ async def _already_processed(session: AsyncSession, event_id: uuid.UUID) -> bool
 
 
 async def handle_product_updated(
-    session: AsyncSession, openai_client: AsyncOpenAI, embedding_model: str, event_id: uuid.UUID, payload: dict
+    session: AsyncSession,
+    genai_client: genai.Client,
+    embedding_model: str,
+    embedding_dimensions: int,
+    event_id: uuid.UUID,
+    payload: dict,
 ) -> None:
     if await _already_processed(session, event_id):
         return
     session.add(ProcessedEvent(event_id=event_id))
-    await upsert_product_embedding(session, openai_client, embedding_model, payload)
+    await upsert_product_embedding(session, genai_client, embedding_model, payload, embedding_dimensions)
 
 
 async def handle_product_deleted(session: AsyncSession, event_id: uuid.UUID, payload: dict) -> None:
@@ -36,7 +41,7 @@ async def handle_product_deleted(session: AsyncSession, event_id: uuid.UUID, pay
 
 
 def make_dispatch(
-    session_factory: async_sessionmaker, openai_client: AsyncOpenAI, embedding_model: str
+    session_factory: async_sessionmaker, genai_client: genai.Client, embedding_model: str, embedding_dimensions: int
 ) -> Dispatch:
     async def dispatch(envelope: dict) -> None:
         event_type = envelope.get("event_type")
@@ -45,7 +50,9 @@ def make_dispatch(
 
         if event_type == "ProductUpdated":
             async with session_factory() as session:
-                await handle_product_updated(session, openai_client, embedding_model, event_id, payload)
+                await handle_product_updated(
+                    session, genai_client, embedding_model, embedding_dimensions, event_id, payload
+                )
                 await session.commit()
         elif event_type == "ProductDeleted":
             async with session_factory() as session:
