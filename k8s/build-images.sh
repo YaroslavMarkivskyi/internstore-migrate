@@ -16,6 +16,7 @@ CLUSTER_NAME="${1:-internstore}"
 declare -A IMAGES=(
   [auth-backend]="services/auth-backend"
   [catalog]="services/catalog"
+  [internal-gate]="services/internal-gate"
   [inventory]="services/inventory"
   [orders]="services/orders"
   [payments]="services/payments"

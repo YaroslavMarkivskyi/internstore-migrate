@@ -1,24 +1,11 @@
-import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from catalog.authz import AuthzResult, get_authz_client
 from catalog.config import Settings
 from catalog.db import Base, make_session_factory
 from catalog.inventory_client import get_inventory_client
 from catalog.main import create_app
 from catalog.minio_dep import get_minio_client
-
-INTERNAL_TOKEN_SECRET = "test-secret"
-ISSUER = "internstore-gateway"
-
-
-def mint_internal_token(sub: str, role: str) -> str:
-    return jwt.encode(
-        {"sub": sub, "role": role, "iss": ISSUER},
-        INTERNAL_TOKEN_SECRET,
-        algorithm="HS256",
-    )
 
 
 class FakeMinioClient:
@@ -63,52 +50,13 @@ def fake_inventory_client() -> FakeInventoryClient:
     return FakeInventoryClient()
 
 
-class FakeAuthzClient:
-    """Swapped in via app.dependency_overrides -- no real OPA sidecar call
-    is made. Verifies the token itself (mirroring what OPA's common.rego
-    now does with io.jwt.decode_verify, since catalog no longer does this
-    locally -- see auth.py/authz.py) and mirrors policies/catalog.rego's
-    admin-only baseline. The actual policy is exercised separately, see
-    test_authz_client.py and opa test policies/."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-
-    def _verify(self, token: str) -> dict | None:
-        try:
-            return jwt.decode(token, INTERNAL_TOKEN_SECRET, algorithms=["HS256"], issuer=ISSUER)
-        except jwt.InvalidTokenError:
-            return None
-
-    async def identify(self, token: str) -> dict | None:
-        payload = self._verify(token)
-        if payload is None or "sub" not in payload or "role" not in payload:
-            return None
-        return {"sub": payload["sub"], "role": payload["role"]}
-
-    async def check(self, token: str, action: str, resource: dict, package: str = "catalog") -> AuthzResult:
-        self.calls.append({"token": token, "action": action, "resource": resource, "package": package})
-        payload = self._verify(token)
-        if payload is None or "sub" not in payload or "role" not in payload:
-            return AuthzResult(subject=None, allowed=False)
-        subject = {"sub": payload["sub"], "role": payload["role"]}
-        return AuthzResult(subject=subject, allowed=subject["role"] == "admin")
-
-
-@pytest.fixture
-def fake_authz_client() -> FakeAuthzClient:
-    return FakeAuthzClient()
-
-
 @pytest.fixture
 async def client(
     fake_minio_client: FakeMinioClient,
     fake_inventory_client: FakeInventoryClient,
-    fake_authz_client: FakeAuthzClient,
 ):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
-        internal_token_secret=INTERNAL_TOKEN_SECRET,
         kafka_bootstrap_servers="kafka.invalid:9092",
         minio_endpoint="http://minio.invalid:9000",
         minio_public_base_url="http://minio.invalid:9000",
@@ -126,7 +74,6 @@ async def client(
     app.state.session_factory = session_factory
     app.dependency_overrides[get_minio_client] = lambda: fake_minio_client
     app.dependency_overrides[get_inventory_client] = lambda: fake_inventory_client
-    app.dependency_overrides[get_authz_client] = lambda: fake_authz_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -136,16 +83,24 @@ async def client(
     await engine.dispose()
 
 
+# catalog no longer checks the internal token or its role at all --
+# admin-only enforcement moved to catalog-gate/internal-gate ahead of this
+# app (see docker-compose.yml, nginx/internal-gate/catalog.conf, and
+# scripts/verify-catalog-gate.sh for the tests that actually exercise
+# that). These fixtures just supply *some* X-Internal-Token value for
+# routes that forward it downstream to Inventory (see
+# routers/products.py's update_product) -- the value itself is never
+# validated by anything in this test suite.
 @pytest.fixture
 def admin_token() -> str:
-    return mint_internal_token(sub="admin-1", role="admin")
+    return "test-token-admin-1"
 
 
 @pytest.fixture
 def customer_token() -> str:
-    return mint_internal_token(sub="customer-1", role="customer")
+    return "test-token-customer-1"
 
 
 @pytest.fixture
 def guest_token() -> str:
-    return mint_internal_token(sub="guest-1", role="guest")
+    return "test-token-guest-1"

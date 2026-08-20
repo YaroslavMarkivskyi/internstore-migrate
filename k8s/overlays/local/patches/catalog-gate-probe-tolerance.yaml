@@ -1,0 +1,11 @@
+# Same tolerance loosening as loosen-probe-tolerance.yaml (see that
+# file's comment for why), but targeting containers/3 (catalog-gate)
+# instead of containers/0 -- catalog's own readiness/liveness probes live
+# there now, not on the catalog container itself (containers/0), since
+# that's the container internal-token verification moved into.
+- op: add
+  path: /spec/template/spec/containers/3/livenessProbe/failureThreshold
+  value: 10
+- op: add
+  path: /spec/template/spec/containers/3/readinessProbe/failureThreshold
+  value: 10

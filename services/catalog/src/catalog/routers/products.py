@@ -1,13 +1,11 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from catalog.auth import enforce, get_internal_token, require_admin
-from catalog.authz import AuthzClient, get_authz_client
 from catalog.db import get_session
 from catalog.inventory_client import InventoryClient, InventoryUnavailableError, get_inventory_client
 from catalog.minio_client import MinioClient
@@ -17,6 +15,12 @@ from catalog.outbox import add_outbox_event
 from catalog.schemas import ProductCreate, ProductRead, ProductUpdate
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+# No role checks in this router: POST/PATCH/DELETE (admin-only) is
+# enforced ahead of this app entirely -- catalog-gate (nginx,
+# auth_request) + internal-gate (OPA-backed, policies/catalog.rego) reject
+# a non-admin request before it ever reaches here. See docker-compose.yml's
+# catalog-gate/catalog-verify. GET stays unauthenticated (public).
 
 
 @router.get("", response_model=list[ProductRead])
@@ -40,16 +44,7 @@ async def get_product(
 async def create_product(
     payload: ProductCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
-    token: Annotated[str, Depends(get_internal_token)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Product:
-    # STR-140: OPA replaces this call site's previous require_admin
-    # dependency (see policies/catalog.rego) -- product creation is still
-    # admin-only, just decided by the sidecar now. OPA verifies the token
-    # itself (common.rego) as part of this same call.
-    result = await authz.check(token=token, action="create", resource={"type": "product"})
-    enforce(result, "Not authorized to create products")
-
     category = await session.get(Category, payload.category_id)
     if category is None:
         raise HTTPException(status_code=422, detail="Unknown category_id")
@@ -74,16 +69,8 @@ async def update_product(
     payload: ProductUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
     inventory_client: Annotated[InventoryClient, Depends(get_inventory_client)],
-    token: Annotated[str, Depends(get_internal_token)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
+    x_internal_token: Annotated[str | None, Header()] = None,
 ) -> Product:
-    # STR-140: OPA replaces this call site's previous require_admin
-    # dependency (see policies/catalog.rego) -- product updates are still
-    # admin-only, just decided by the sidecar now. OPA verifies the token
-    # itself (common.rego) as part of this same call.
-    result = await authz.check(token=token, action="update", resource={"type": "product"})
-    enforce(result, "Not authorized to update products")
-
     product = await session.get(Product, product_id)
     if product is None or product.is_deleted:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -99,12 +86,12 @@ async def update_product(
         # Mirrors the symmetric rule Inventory enforces the other way (see
         # stock_sync.unpublish_if_out_of_stock): a product with zero
         # quantity across every stock shouldn't be orderable, so it
-        # shouldn't be (re)publishable either. authz.check already proved
-        # token is valid; forwarded as-is rather than minting a new one
-        # since this call is on behalf of that same already-authenticated
-        # request.
+        # shouldn't be (re)publishable either. catalog-gate already
+        # verified this request's token (see router-level comment above);
+        # forwarded as-is rather than minting a new one since this call
+        # is on behalf of that same already-authenticated request.
         try:
-            quantity = await inventory_client.get_total_quantity(str(product_id), token)
+            quantity = await inventory_client.get_total_quantity(str(product_id), x_internal_token or "")
         except InventoryUnavailableError as exc:
             raise HTTPException(status_code=503, detail="Inventory temporarily unavailable, please retry") from exc
         if quantity <= 0:
@@ -158,7 +145,7 @@ async def update_product(
     return product
 
 
-@router.delete("/{product_id}", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{product_id}", status_code=204)
 async def delete_product(
     product_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],

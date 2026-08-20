@@ -48,13 +48,37 @@ consumer today (see [services/telemetry](../telemetry)).
 
 ## Auth
 
-Every write endpoint validates the `X-Internal-Token` header locally — HMAC
-(HS256) signature, `iss`, `exp` — against the same shared secret
-`auth-backend` mints with (`INTERNAL_TOKEN_SECRET`). This service never
-trusts `X-User-Id`/`X-User-Role` headers directly and never calls back to
-Firebase or auth-backend. See
-[src/catalog/auth.py](src/catalog/auth.py), which mirrors
-`services/auth-backend/src/auth_backend/auth/internal_token.py`.
+Unlike every other domain service in this repo, catalog's own FastAPI code
+carries **no auth logic at all** — no `X-Internal-Token` verification, no
+role check. Enforcement moved to the sidecar chain in front of it:
+
+- **catalog-gate** (nginx) occupies the network-facing port (`:8000`) that
+  every other service still calls `catalog:8000` at. `GET` requests
+  (catalog's public read paths) pass straight through; everything else
+  (`POST`/`PATCH`/`DELETE`) goes through `auth_request` first.
+- **catalog-verify** ([services/internal-gate](../internal-gate)) is what
+  that `auth_request` hits — a small, domain-agnostic service that POSTs
+  the raw token to catalog-opa and translates its JSON decision into the
+  HTTP status/headers nginx needs (401 for no valid token, 403 for a
+  verified-but-wrong-role token, 200 + `X-User-Id`/`X-User-Role` for an
+  allowed admin).
+- **catalog-opa** verifies the token itself (`io.jwt.decode_verify`, see
+  [policies/common.rego](../../policies/common.rego)) and evaluates
+  [policies/catalog.rego](../../policies/catalog.rego)'s admin-only rule.
+
+The catalog container itself binds `127.0.0.1` only (`HOST=127.0.0.1`,
+see docker-compose.yml) — it isn't reachable at all from outside this
+pod's shared network namespace, even if something guesses its real port,
+so there's no header-spoofing surface to defend against the way a
+network-reachable app would need to.
+
+See [nginx/internal-gate/catalog.conf](../../nginx/internal-gate/catalog.conf)
+for the full `auth_request` wiring and
+[scripts/verify-catalog-gate.sh](../../scripts/verify-catalog-gate.sh) for
+the live end-to-end check (valid admin/customer/forged/expired/missing
+tokens against the real sidecar chain — this replaced catalog's own
+`test_auth.py`, since the app no longer has anything auth-related left to
+unit-test).
 
 ## Local dev without Docker
 

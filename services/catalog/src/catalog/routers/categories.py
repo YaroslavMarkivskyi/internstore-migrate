@@ -5,13 +5,17 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from catalog.auth import enforce, get_internal_token, require_admin
-from catalog.authz import AuthzClient, get_authz_client
 from catalog.db import get_session
 from catalog.models import Category, Product
 from catalog.schemas import CategoryCreate, CategoryDeleteOptions, CategoryRead, CategoryUpdate
 
 router = APIRouter(prefix="/categories", tags=["categories"])
+
+# No role checks in this router: POST/PATCH/DELETE (admin-only) is
+# enforced ahead of this app entirely -- catalog-gate (nginx,
+# auth_request) + internal-gate (OPA-backed, policies/catalog.rego) reject
+# a non-admin request before it ever reaches here. See docker-compose.yml's
+# catalog-gate/catalog-verify. GET stays unauthenticated (public).
 
 # Products moved here by the "unpublish_and_delete" deletion mode -- kept
 # instead of hard-deleted so they're recoverable (just republish + move)
@@ -39,17 +43,7 @@ async def list_categories(session: Annotated[AsyncSession, Depends(get_session)]
 async def create_category(
     payload: CategoryCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
-    token: Annotated[str, Depends(get_internal_token)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Category:
-    # STR-140: OPA replaces this call site's previous require_admin
-    # dependency (see policies/catalog.rego) -- category creation is still
-    # admin-only, just decided by the sidecar now instead of an inline
-    # role check. OPA verifies the token itself (common.rego) as part of
-    # this same call, rather than catalog decoding it first.
-    result = await authz.check(token=token, action="create", resource={"type": "category"})
-    enforce(result, "Not authorized to create categories")
-
     existing = await session.execute(select(Category).where(Category.name == payload.name))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="Category name already exists")
@@ -61,7 +55,7 @@ async def create_category(
     return category
 
 
-@router.patch("/{category_id}", response_model=CategoryRead, dependencies=[Depends(require_admin)])
+@router.patch("/{category_id}", response_model=CategoryRead)
 async def update_category(
     category_id: uuid.UUID,
     payload: CategoryUpdate,
@@ -83,7 +77,7 @@ async def update_category(
     return category
 
 
-@router.delete("/{category_id}", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{category_id}", status_code=204)
 async def delete_category(
     category_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],

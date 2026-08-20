@@ -16,28 +16,21 @@ spec:
     spec:
       enableServiceLinks: false
       containers:
+      # No readiness/liveness probes or :8000 here anymore -- catalog-gate
+      # below owns the network-facing port and health checks (GET /health
+      # passes straight through, same as every other GET, see
+      # nginx-gate-configmap.yaml). This container isn't reachable at all
+      # outside this pod (HOST=127.0.0.1 in catalog-config) -- only
+      # catalog-gate/catalog-verify/catalog-opa share its network
+      # namespace.
       - name: catalog
         image: internstore/catalog:local
         imagePullPolicy: IfNotPresent
-        ports:
-        - containerPort: 8000
         envFrom:
           - configMapRef:
               name: catalog-config
           - secretRef:
               name: catalog-secret
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 15
-          periodSeconds: 10
         resources:
           requests:
             cpu: "100m"
@@ -51,8 +44,7 @@ spec:
         args: ["run", "--server", "--addr=:8181", "/policies/catalog.rego", "/policies/common.rego"]
         env:
           # common.rego's `subject` rule verifies X-Internal-Token itself
-          # now (io.jwt.decode_verify) instead of catalog trusting a
-          # pre-decoded input.subject -- same secret as the catalog
+          # (io.jwt.decode_verify) -- same secret as the catalog
           # container's own INTERNAL_TOKEN_SECRET, referenced by key
           # rather than the whole envFrom (this sidecar has no business
           # seeing catalog-secret's DATABASE_URL/MinIO keys too).
@@ -72,7 +64,66 @@ spec:
           limits:
             cpu: "200m"
             memory: "128Mi"
+      # Translates OPA's JSON decision into the HTTP status/headers
+      # catalog-gate's auth_request needs -- see
+      # services/internal-gate/src/internal_gate/main.py's own comment for
+      # why this can't just be nginx config. Generic (no catalog-specific
+      # code), parameterized by OPA_PACKAGE.
+      - name: catalog-verify
+        image: internstore/internal-gate:local
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: PORT
+            value: "8090"
+          - name: OPA_URL
+            value: "http://localhost:8181"
+          - name: OPA_PACKAGE
+            value: "catalog"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      # Occupies :8000 -- what the Service (and every other service
+      # calling catalog:8000) still targets, unchanged. GET (catalog's
+      # public read paths) passes straight through; everything else goes
+      # through catalog-verify's OPA-backed check first. See
+      # nginx-gate-configmap.yaml for the full auth_request wiring.
+      - name: catalog-gate
+        image: nginx:1.27-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["nginx", "-c", "/etc/nginx-src/catalog.conf", "-g", "daemon off;"]
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: catalog-gate-config
+          mountPath: /etc/nginx-src
+          readOnly: true
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
       volumes:
       - name: policies
         configMap:
           name: opa-policies
+      - name: catalog-gate-config
+        configMap:
+          name: catalog-gate-config

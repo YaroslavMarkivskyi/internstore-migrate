@@ -6,7 +6,6 @@ class Settings(BaseSettings):
 
     port: int = 8000
     database_url: str
-    internal_token_secret: str
     kafka_bootstrap_servers: str
     outbox_poll_interval_seconds: float = 5
     inventory_base_url: str
@@ -16,7 +15,6 @@ class Settings(BaseSettings):
     minio_access_key: str
     minio_secret_key: str
     minio_bucket: str = "catalog-product-images"
-    opa_url: str = "http://localhost:8181"
 
 
 def load_settings() -> Settings:

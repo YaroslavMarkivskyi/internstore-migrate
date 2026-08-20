@@ -8,16 +8,6 @@ async def create_category(client, admin_token, name="Drinks") -> str:
     return resp.json()["id"]
 
 
-async def test_create_product_requires_admin(client, customer_token, admin_token):
-    category_id = await create_category(client, admin_token)
-    resp = await client.post(
-        "/products",
-        json={"name": "Cola", "price": 1.5, "category_id": category_id},
-        headers={"x-internal-token": customer_token},
-    )
-    assert resp.status_code == 403
-
-
 async def test_create_product_as_admin_succeeds(client, admin_token):
     category_id = await create_category(client, admin_token)
     resp = await client.post(
@@ -85,17 +75,6 @@ async def create_product(client, admin_token, category_id, **overrides) -> str:
     resp = await client.post("/products", json=payload, headers={"x-internal-token": admin_token})
     assert resp.status_code == 201
     return resp.json()["id"]
-
-
-async def test_update_product_requires_admin(client, admin_token, customer_token):
-    category_id = await create_category(client, admin_token)
-    product_id = await create_product(client, admin_token, category_id)
-    resp = await client.patch(
-        f"/products/{product_id}",
-        json={"price": 2.0},
-        headers={"x-internal-token": customer_token},
-    )
-    assert resp.status_code == 403
 
 
 async def test_update_product_not_found(client, admin_token):
@@ -277,14 +256,6 @@ async def test_delete_product_stages_product_deleted_event(client, admin_token):
     deleted_events = [e for e in events if e.event_type == "ProductDeleted"]
     assert len(deleted_events) == 1
     assert deleted_events[0].payload == {"product_id": product_id}
-
-
-async def test_delete_product_requires_admin(client, admin_token, customer_token):
-    category_id = await create_category(client, admin_token)
-    product_id = await create_product(client, admin_token, category_id)
-
-    resp = await client.delete(f"/products/{product_id}", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
 
 
 async def test_delete_product_not_found(client, admin_token):

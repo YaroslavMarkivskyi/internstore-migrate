@@ -30,8 +30,16 @@ patches:
     kind: Deployment
     # excludes checkout-workflow-worker: it carries no readinessProbe/
     # livenessProbe at all (see its deployment.yaml comment), so this
-    # patch's `add` ops have no parent path to attach to there.
-    name: "^(ai-assistant|auth-backend|catalog|chat|inventory|mcp-gateway|mock-camera|nginx|notifications|orders|payments|redis|security|telemetry|temporal|temporal-ui)$"
+    # patch's `add` ops have no parent path to attach to there. Also
+    # excludes catalog: its readiness/liveness probes moved off
+    # containers/0 onto catalog-gate (containers/3) when internal-token
+    # verification moved into that sidecar chain -- see
+    # patches/catalog-gate-probe-tolerance.yaml below for its equivalent.
+    name: "^(ai-assistant|auth-backend|chat|inventory|mcp-gateway|mock-camera|nginx|notifications|orders|payments|redis|security|telemetry|temporal|temporal-ui)$"
+- path: patches/catalog-gate-probe-tolerance.yaml
+  target:
+    kind: Deployment
+    name: "^catalog$"
 - path: patches/loosen-probe-tolerance.yaml
   target:
     kind: StatefulSet

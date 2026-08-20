@@ -10,8 +10,11 @@ once it exists.
 
 Same stack as [services/catalog](../catalog): Python/FastAPI/SQLAlchemy
 (async)/Alembic, its own Postgres database with zero shared tables, and the
-same internal-token verification pattern (see [src/inventory/auth.py](src/inventory/auth.py),
-which mirrors `services/catalog/src/catalog/auth.py`).
+same internal-token verification pattern catalog *used to* have (see
+[src/inventory/auth.py](src/inventory/auth.py)) — catalog's own copy was
+retired in favor of a sidecar chain (nginx + internal-gate + OPA), see
+[services/catalog's own Auth section](../catalog/README.md#auth); inventory
+hasn't made that move.
 
 ## Data model
 

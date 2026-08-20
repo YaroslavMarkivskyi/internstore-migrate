@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from catalog.auth import require_admin
 from catalog.db import get_session
 from catalog.minio_client import MinioClient
 from catalog.minio_dep import get_minio_client
@@ -13,6 +12,12 @@ from catalog.models import Product, ProductImage
 from catalog.schemas import ProductImageRead
 
 router = APIRouter(prefix="/products", tags=["product-images"])
+
+# No role checks in this router: POST/DELETE (admin-only) is enforced
+# ahead of this app entirely -- catalog-gate (nginx, auth_request) +
+# internal-gate (OPA-backed) reject a non-admin request before it ever
+# reaches here. See docker-compose.yml's catalog-gate/catalog-verify and
+# nginx/internal-gate/catalog.conf. GET stays unauthenticated (public).
 
 # Same limits as Chat's attachment upload (services/chat/src/chat/routers/
 # attachments.py) -- the frontend's MAX_FILE_SIZE/accepted types already
@@ -44,7 +49,6 @@ async def list_product_images(
     "/{product_id}/images",
     response_model=ProductImageRead,
     status_code=201,
-    dependencies=[Depends(require_admin)],
 )
 async def add_product_image(
     product_id: uuid.UUID,
@@ -72,7 +76,7 @@ async def add_product_image(
     return image
 
 
-@router.delete("/{product_id}/images/{image_id}", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{product_id}/images/{image_id}", status_code=204)
 async def delete_product_image(
     product_id: uuid.UUID,
     image_id: uuid.UUID,

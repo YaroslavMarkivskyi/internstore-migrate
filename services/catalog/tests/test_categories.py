@@ -4,31 +4,13 @@ async def test_list_categories_empty(client):
     assert resp.json() == []
 
 
-async def test_create_category_requires_admin(client, customer_token):
-    resp = await client.post(
-        "/categories",
-        json={"name": "Snacks"},
-        headers={"x-internal-token": customer_token},
-    )
-    assert resp.status_code == 403
-
-
 async def test_list_categories_allows_guest_token(client, guest_token):
     # Catalog browsing is guest-allowed at the Gateway (see
-    # auth-backend's GUEST_ALLOWED_PATH_PREFIXES) — a guest-role internal
-    # token must pass Catalog's own verification too, not just be rejected
-    # for lacking the admin role.
+    # auth-backend's GUEST_ALLOWED_PATH_PREFIXES) — GET never required a
+    # token in the first place, guest or otherwise (see
+    # nginx/internal-gate/catalog.conf).
     resp = await client.get("/categories", headers={"x-internal-token": guest_token})
     assert resp.status_code == 200
-
-
-async def test_create_category_rejects_guest(client, guest_token):
-    resp = await client.post(
-        "/categories",
-        json={"name": "Snacks"},
-        headers={"x-internal-token": guest_token},
-    )
-    assert resp.status_code == 403
 
 
 async def test_create_category_as_admin_succeeds(client, admin_token):
@@ -43,11 +25,6 @@ async def test_create_category_as_admin_succeeds(client, admin_token):
 
     listed = await client.get("/categories")
     assert [c["name"] for c in listed.json()] == ["Snacks"]
-
-
-async def test_create_category_missing_token(client):
-    resp = await client.post("/categories", json={"name": "Snacks"})
-    assert resp.status_code == 401
 
 
 async def test_create_category_name_too_short(client, admin_token):
@@ -99,16 +76,6 @@ async def test_update_category_renames(client, admin_token):
     assert resp.json()["name"] == "Beverages"
 
 
-async def test_update_category_requires_admin(client, admin_token, customer_token):
-    category_id = await create_category(client, admin_token)
-    resp = await client.patch(
-        f"/categories/{category_id}",
-        json={"name": "Beverages"},
-        headers={"x-internal-token": customer_token},
-    )
-    assert resp.status_code == 403
-
-
 async def test_update_category_duplicate_name_rejected(client, admin_token):
     headers = {"x-internal-token": admin_token}
     await create_category(client, admin_token, name="Drinks")
@@ -134,12 +101,6 @@ async def test_delete_empty_category_succeeds(client, admin_token):
 
     listed = await client.get("/categories")
     assert listed.json() == []
-
-
-async def test_delete_category_requires_admin(client, admin_token, customer_token):
-    category_id = await create_category(client, admin_token)
-    resp = await client.delete(f"/categories/{category_id}", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
 
 
 async def test_delete_category_not_found(client, admin_token):
