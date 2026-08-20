@@ -21,14 +21,9 @@ and `k8s/overlays/gcp/generate-overlay.py`.
 
 ### Cloud SQL: 10 instances, not consolidated
 
-k8s/base originally had **11** `postgres-*` directories (9 uniform domain
-DBs + `postgres-keycloak` + `postgres-temporal` + `postgres-ai`), one more
-than the ticket's "10, including Temporal's" estimate at the time —
-corrected here, not silently kept wrong. STR-192 then removed
-`postgres-keycloak` along with Keycloak itself (Firebase replaced it as
-the external identity provider, STR-181/STR-192), bringing the real count
-back down to the ticket's original **10** (9 uniform domain DBs +
-`postgres-temporal` + `postgres-ai`).
+Cloud SQL for PostgreSQL: **10** instances (9 uniform domain DBs +
+`postgres-temporal` + `postgres-ai`), matching the ticket's "10, including
+Temporal's" estimate.
 
 Real Cloud SQL for PostgreSQL pricing (`us-central1`, checked against
 `cloud.google.com/sql/pricing` and Google's own docs, not the ticket's

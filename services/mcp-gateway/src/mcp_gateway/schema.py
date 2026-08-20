@@ -32,7 +32,7 @@ TOOL_SPECS: list[ToolSpec] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "customer_id": {"type": "string", "description": "Customer owner_id (Keycloak sub or guest_id)"},
+                "customer_id": {"type": "string", "description": "Customer owner_id (Firebase sub or guest_id)"},
                 "limit": {"type": "integer", "default": 5},
             },
             "required": ["customer_id"],

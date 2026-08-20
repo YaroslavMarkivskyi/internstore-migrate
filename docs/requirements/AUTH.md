@@ -3,10 +3,7 @@
 These are not yet formally tracked elsewhere in this repo, so they're defined
 here as the baseline the Firebase Authentication integration is validated
 against (see
-[docs/adr/0004-replace-keycloak-with-firebase.md](../adr/0004-replace-keycloak-with-firebase.md);
-[docs/adr/0001](../adr/0001-replace-custom-identity-with-keycloak.md), the
-original Keycloak decision this criteria set was first validated against,
-is kept for history).
+[docs/adr/0004-firebase-authentication.md](../adr/0004-firebase-authentication.md)).
 Update this file if a different source of truth (Jira/Linear) supersedes it.
 
 ## AUTH-01 — Registration
@@ -33,8 +30,7 @@ Update this file if a different source of truth (Jira/Linear) supersedes it.
 - The Gateway accepts the Firebase-issued ID token on inbound requests,
   validates it via the Firebase Admin SDK's `verify_id_token` (no separate
   synchronous call back to Firebase for signature/`exp`/`iss`/`aud`
-  validation — Firebase's signing certs are cached in-process, same
-  no-per-request-call property JWKS caching gave under Keycloak).
+  validation — Firebase's signing certs are cached in-process).
 - On success, the Gateway mints a short-lived (≤60s) internal token (HMAC
   signed, `HS256`) carrying `sub`, `role`, and `exp`, for internal services to
   trust without re-validating against Firebase.
@@ -52,9 +48,8 @@ Update this file if a different source of truth (Jira/Linear) supersedes it.
 ## AUTH-05 — Logout / revocation
 
 - Revoking a user's tokens (`revoke_refresh_tokens`, Admin SDK — logout
-  itself is client-side-only under Firebase, unlike Keycloak's server-side
-  `/logout` endpoint; see ADR 0004) invalidates their previously issued
-  refresh tokens.
+  itself is client-side-only under Firebase; see ADR 0004) invalidates
+  their previously issued refresh tokens.
 - A revoked refresh token can no longer be used to mint new ID tokens.
 - ID tokens already issued are checked on every `/auth/verify` call via
   `verify_id_token(token, check_revoked=True)`, so a revoked token is
@@ -63,11 +58,10 @@ Update this file if a different source of truth (Jira/Linear) supersedes it.
   AUTH-03's "no synchronous call back to the provider per request"
   constraint still applies to signature/`exp`/`iss`/`aud` validation, which
   stays local, but no longer to revocation status.
-- Unlike Keycloak's separate RFC 7662 introspection call with its own
-  30s-TTL cache, `check_revoked=True` is folded into the same
-  `verify_id_token` call and has no separate cache layer — every call does
-  its own lookup. A network failure during that lookup (Firebase
-  unreachable or erroring) fails closed: the token is treated as revoked.
+- `check_revoked=True` is folded into the same `verify_id_token` call and
+  has no separate cache layer — every call does its own lookup. A network
+  failure during that lookup (Firebase unreachable or erroring) fails
+  closed: the token is treated as revoked.
 
 ## Local-dev-only caveat (Firebase Auth emulator)
 

@@ -284,7 +284,7 @@ Every write endpoint validates the `X-Internal-Token` header locally — HMAC
 (HS256) signature, `iss`, `exp` — against the same shared secret
 `auth-backend` mints with (`INTERNAL_TOKEN_SECRET`). This service never
 trusts `X-User-Id`/`X-User-Role` headers directly and never calls back to
-Keycloak or auth-backend.
+Firebase or auth-backend.
 
 ## Local dev without Docker
 
@@ -312,7 +312,7 @@ Reachable through nginx at `/api/inventory/*` (see
 [nginx/nginx.conf](../../nginx/nginx.conf)), not exposed on the host
 directly — same pattern as catalog.
 
-End-to-end smoke test against the real gateway with real Keycloak-issued
+End-to-end smoke test against the real gateway with real Firebase-issued
 tokens (401/403/201/200 through nginx, quantity accumulation, move, and all
 three check-availability outcomes):
 
@@ -329,7 +329,7 @@ gate for any change to `commands.py`/`projector.py`/`event_store.py`:
 ```bash
 docker compose up -d --build \
   temporal temporal-db temporal-ui payments payments-db \
-  checkout-workflow-worker orders inventory nginx keycloak kafka kafka-topic-init
+  checkout-workflow-worker orders inventory nginx kafka kafka-topic-init
 ./scripts/test-reservation-saga.sh
 ./scripts/test-temporal-saga.sh
 ./scripts/test-event-sourcing.sh
@@ -379,9 +379,9 @@ but each one blocked the ticket's own Definition of Done until fixed:
   and `k8s/base/inventory/configmap.yaml` have actually set it to 300s for a
   while. `scripts/k8s/test-reservation-saga.sh` (STR-145) already found and
   fixed this — plus a second, compounding bug it surfaced (the reused
-  `CUSTOMER_TOKEN` expiring mid-poll, since Keycloak's `accessTokenLifespan`
-  is also 300s) — but neither fix was ever ported back to the compose
-  original. Ported here.
+  `CUSTOMER_TOKEN` expiring mid-poll, since the external token's own
+  lifespan is also 300s) — but neither fix was ever ported back to the
+  compose original. Ported here.
 - Both `test-reservation-saga.sh` and `test-event-sourcing.sh`'s
   `poll_until` used `actual=$(eval "$check_cmd")` with no fallback; under
   `set -e`, a `check_cmd` whose pipeline ends non-zero (a `grep -c` match

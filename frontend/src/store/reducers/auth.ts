@@ -7,21 +7,21 @@ import { RootState, store } from '@store/store';
 import { AuthCredentials, AuthState } from '../../types/auth/interfaces';
 import { CurrentUser } from '../../types/users/interfaces';
 
-interface KeycloakAccessTokenClaims {
+interface FirebaseAccessTokenClaims {
   sub: string;
   email?: string;
-  realm_access?: { roles?: string[] };
+  role?: string;
   exp?: number;
   iat?: number;
 }
 
 const decodeCurrentUser = (accessToken: string): CurrentUser | null => {
   try {
-    const claims = jwtDecode<KeycloakAccessTokenClaims>(accessToken);
+    const claims = jwtDecode<FirebaseAccessTokenClaims>(accessToken);
     return {
       user_id: claims.sub,
       email: claims.email,
-      is_admin: claims.realm_access?.roles?.includes('admin') ?? false,
+      is_admin: claims.role === 'admin',
       exp: claims.exp,
       iat: claims.iat,
     };

@@ -30,7 +30,6 @@ locals {
     payments       = ["internal-token-secret", "payments-database-url"]
     "ai-assistant" = ["internal-token-secret", "ai-assistant-database-url", "openai-api-key"]
     "mcp-gateway"  = ["internal-token-secret", "mcp-gateway-database-url", "openai-api-key"]
-    # STR-192: no keycloak-client-secret entry anymore (Keycloak removed).
     # FIREBASE_PROJECT_ID isn't a Secret Manager secret (not sensitive) and
     # wiring the real GCP Firebase project id into auth-backend's config is
     # a separate follow-up — see generate-overlay.py's matching comment.

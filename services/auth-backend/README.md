@@ -2,9 +2,8 @@
 
 Validates Firebase-issued ID tokens and mints short-lived internal tokens
 for downstream services. See
-[docs/adr/0004-replace-keycloak-with-firebase.md](../../docs/adr/0004-replace-keycloak-with-firebase.md)
-for the full design ([docs/adr/0001](../../docs/adr/0001-replace-custom-identity-with-keycloak.md),
-the original Keycloak decision, is kept for history) and
+[docs/adr/0004-firebase-authentication.md](../../docs/adr/0004-firebase-authentication.md)
+for the full design and
 [docs/requirements/AUTH.md](../../docs/requirements/AUTH.md) for acceptance
 criteria.
 
@@ -125,20 +124,16 @@ a revoked token (logout, admin disable, compromised session) is rejected
 instead of staying valid until its own `exp`. This is a deliberate
 reversal of the original "no synchronous call per request" AUTH-03/AUTH-05
 constraint (see [docs/requirements/AUTH.md](../../docs/requirements/AUTH.md))
-— same as it was under Keycloak, just one call instead of two: `verify_id_token`
-does its own lookup per call (via `get_user`), there's no separate
-introspection cache layer here anymore (STR-181/STR-192 retired
-`auth/revocation.py`, the old Keycloak-specific RFC 7662 introspection
-client, along with Keycloak itself). Firebase Admin SDK's own lookup fails
-closed by construction — a network error there propagates as an exception
-rather than being swallowed, so an unreachable Firebase rejects the token
-the same way an unreachable Keycloak used to.
+— `verify_id_token` does its own revocation lookup per call (via
+`get_user`), no separate introspection cache layer. Firebase Admin SDK's
+own lookup fails closed by construction — a network error there propagates
+as an exception rather than being swallowed, so an unreachable Firebase
+rejects the token.
 
 Credentials come from Application Default Credentials (Workload Identity
 in GCP, `FIREBASE_AUTH_EMULATOR_HOST` locally — see
 [firebase/README.md](../../firebase/README.md)) — no service-account JSON
-key file, no `KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET`-style credential
-pair to manage.
+key file, no client-secret-style credential pair to manage.
 
 ## Local dev without Docker
 

@@ -49,6 +49,18 @@ spec:
         image: openpolicyagent/opa:latest
         imagePullPolicy: IfNotPresent
         args: ["run", "--server", "--addr=:8181", "/policies/catalog.rego", "/policies/common.rego"]
+        env:
+          # common.rego's `subject` rule verifies X-Internal-Token itself
+          # now (io.jwt.decode_verify) instead of catalog trusting a
+          # pre-decoded input.subject -- same secret as the catalog
+          # container's own INTERNAL_TOKEN_SECRET, referenced by key
+          # rather than the whole envFrom (this sidecar has no business
+          # seeing catalog-secret's DATABASE_URL/MinIO keys too).
+          - name: INTERNAL_TOKEN_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: catalog-secret
+                key: INTERNAL_TOKEN_SECRET
         volumeMounts:
         - name: policies
           mountPath: /policies

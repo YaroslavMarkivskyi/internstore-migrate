@@ -8,7 +8,7 @@ ISSUER = "internstore-gateway"
 
 
 # Narrower than ExternalClaims: only what minting actually needs. Guests
-# never present a Keycloak token, so there's no ExternalClaims for them —
+# never present a Firebase token, so there's no ExternalClaims for them —
 # this shape lets the guest branch in main.py mint a token without
 # fabricating a fake external-claims object.
 class MintableClaims(BaseModel):

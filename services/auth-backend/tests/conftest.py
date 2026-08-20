@@ -25,9 +25,8 @@ def mint_internal_token(sub: str, role: str) -> str:
 
 # STR-155: there's no real Firebase project in unit tests, and a genuine
 # Firebase ID token can only be produced by Google's own signing keys — so
-# rather than hand-rolling a fake JWT and monkeypatching cert fetch (the old
-# Keycloak approach via PyJWKClient), tests mock
-# firebase_admin.auth.verify_id_token itself, the exact boundary
+# rather than hand-rolling a fake JWT and monkeypatching cert fetch, tests
+# mock firebase_admin.auth.verify_id_token itself, the exact boundary
 # ExternalTokenVerifier calls. The "token" minted here is a small JSON
 # envelope _fake_verify_id_token below decodes — it is never a real JWT and
 # is never parsed by anything else.

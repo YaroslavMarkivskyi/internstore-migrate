@@ -120,7 +120,7 @@ over the compose network (`http://security:8000`), bypassing the Gateway —
 same as `telemetry-simulator`'s direct call to `POST /measurements`.
 
 End-to-end saga verification against the real gateway and real
-Keycloak-issued tokens:
+Firebase-issued tokens:
 
 ```bash
 docker compose up -d --build

@@ -48,7 +48,7 @@ export interface IOrderPublic {
   contactInfo: IContactInfo;
 }
 
-// Backend's `customer` is the order's owner_id — a Keycloak sub (customer)
+// Backend's `customer` is the order's owner_id — a Firebase sub (customer)
 // or auth-backend guest_id (guest checkout), see Order.owner_id in
 // internstore-migrate/services/orders/src/orders/models.py — not a numeric
 // Django PK.

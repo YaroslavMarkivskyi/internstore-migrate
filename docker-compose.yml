@@ -131,6 +131,13 @@ services:
   catalog-opa:
     image: openpolicyagent/opa:latest
     command: ["run", "--server", "--addr=:8181", "/policies/catalog.rego", "/policies/common.rego"]
+    environment:
+      # common.rego's `subject` rule verifies X-Internal-Token itself now
+      # (io.jwt.decode_verify) instead of catalog trusting a pre-decoded
+      # input.subject — must match catalog's own INTERNAL_TOKEN_SECRET
+      # above (and auth-backend's, same shared secret every service
+      # validates the Gateway-minted token against).
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
     volumes:
       - ./policies:/policies:ro
     network_mode: "service:catalog"
@@ -920,15 +927,12 @@ services:
       # container names) — the browser runs on the host, not inside the
       # compose network.
       VITE_SERVER_URL: https://localhost:8443/api/
-      # STR-192: dead since Keycloak was removed — auth-backend no longer
-      # verifies Keycloak-issued tokens (STR-181) and there's no Keycloak
-      # container left to log into (this ticket). Frontend's migration to
-      # the Firebase JS SDK is a separate, not-yet-built piece (see
-      # firebase/README.md) — left here rather than deleted so the
-      # frontend build doesn't break on a missing env var in the meantime.
-      VITE_KEYCLOAK_URL: http://localhost:8081
-      VITE_KEYCLOAK_REALM: internstore
-      VITE_KEYCLOAK_CLIENT_ID: internstore-web
+      # Firebase Auth emulator, same project id as firebase-emulator's
+      # --project flag below and scripts/seed-firebase-users.py's default.
+      # No VITE_FIREBASE_API_KEY here — the emulator accepts any non-empty
+      # key (see src/services/firebase/client.ts's fallback).
+      VITE_FIREBASE_PROJECT_ID: internstore-dev
+      VITE_FIREBASE_AUTH_EMULATOR_HOST: localhost:9099
       # Publishable key (pk_test_...) -- safe to ship to the browser by
       # design (Stripe Elements needs it client-side to mount the card
       # form), unlike STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET below which
@@ -946,11 +950,9 @@ services:
     ports:
       # :5173/:3000 (the frontend's conventional dev port / Next.js
       # default) were already taken by other things on this host, so this
-      # container publishes on :5180 instead — was also registered as an
-      # extra redirectUri/webOrigin on Keycloak's internstore-web client
-      # (realm-export.json, removed by STR-192) and still is on nginx's
-      # CORS allowlist (see nginx/nginx.conf's $cors_origin map). Pick a
-      # free port and update that if :5180 also collides on your machine.
+      # container publishes on :5180 instead — registered on nginx's CORS
+      # allowlist (see nginx/nginx.conf's $cors_origin map). Pick a free
+      # port and update that if :5180 also collides on your machine.
       - "5180:5180"
     depends_on:
       - nginx

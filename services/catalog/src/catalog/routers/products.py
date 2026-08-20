@@ -1,12 +1,12 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from catalog.auth import InternalClaims, get_internal_claims, require_admin
+from catalog.auth import enforce, get_internal_token, require_admin
 from catalog.authz import AuthzClient, get_authz_client
 from catalog.db import get_session
 from catalog.inventory_client import InventoryClient, InventoryUnavailableError, get_inventory_client
@@ -40,18 +40,15 @@ async def get_product(
 async def create_product(
     payload: ProductCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
-    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    token: Annotated[str, Depends(get_internal_token)],
     authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Product:
     # STR-140: OPA replaces this call site's previous require_admin
     # dependency (see policies/catalog.rego) -- product creation is still
-    # admin-only, just decided by the sidecar now.
-    if not await authz.check(
-        subject={"role": claims.role, "sub": claims.sub},
-        action="create",
-        resource={"type": "product"},
-    ):
-        raise HTTPException(status_code=403, detail="Not authorized to create products")
+    # admin-only, just decided by the sidecar now. OPA verifies the token
+    # itself (common.rego) as part of this same call.
+    result = await authz.check(token=token, action="create", resource={"type": "product"})
+    enforce(result, "Not authorized to create products")
 
     category = await session.get(Category, payload.category_id)
     if category is None:
@@ -77,19 +74,15 @@ async def update_product(
     payload: ProductUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
     inventory_client: Annotated[InventoryClient, Depends(get_inventory_client)],
-    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+    token: Annotated[str, Depends(get_internal_token)],
     authz: Annotated[AuthzClient, Depends(get_authz_client)],
-    x_internal_token: Annotated[str | None, Header()] = None,
 ) -> Product:
     # STR-140: OPA replaces this call site's previous require_admin
     # dependency (see policies/catalog.rego) -- product updates are still
-    # admin-only, just decided by the sidecar now.
-    if not await authz.check(
-        subject={"role": claims.role, "sub": claims.sub},
-        action="update",
-        resource={"type": "product"},
-    ):
-        raise HTTPException(status_code=403, detail="Not authorized to update products")
+    # admin-only, just decided by the sidecar now. OPA verifies the token
+    # itself (common.rego) as part of this same call.
+    result = await authz.check(token=token, action="update", resource={"type": "product"})
+    enforce(result, "Not authorized to update products")
 
     product = await session.get(Product, product_id)
     if product is None or product.is_deleted:
@@ -106,12 +99,12 @@ async def update_product(
         # Mirrors the symmetric rule Inventory enforces the other way (see
         # stock_sync.unpublish_if_out_of_stock): a product with zero
         # quantity across every stock shouldn't be orderable, so it
-        # shouldn't be (re)publishable either. require_admin already
-        # proved x_internal_token is valid; forwarded as-is rather than
-        # minting a new one since this call is on behalf of that same
-        # already-authenticated request.
+        # shouldn't be (re)publishable either. authz.check already proved
+        # token is valid; forwarded as-is rather than minting a new one
+        # since this call is on behalf of that same already-authenticated
+        # request.
         try:
-            quantity = await inventory_client.get_total_quantity(str(product_id), x_internal_token or "")
+            quantity = await inventory_client.get_total_quantity(str(product_id), token)
         except InventoryUnavailableError as exc:
             raise HTTPException(status_code=503, detail="Inventory temporarily unavailable, please retry") from exc
         if quantity <= 0:

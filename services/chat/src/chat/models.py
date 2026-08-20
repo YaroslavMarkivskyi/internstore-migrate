@@ -59,7 +59,7 @@ class Message(Base):
         ),
         nullable=False,
     )
-    # Keycloak sub for customer/admin. Guest messages are never persisted
+    # Firebase sub for customer/admin. Guest messages are never persisted
     # (ephemeral, lost on disconnect — per the ticket, guest history isn't
     # kept), so sender_type is never "guest" here.
     sender_id: Mapped[str] = mapped_column(String(255), nullable=False)

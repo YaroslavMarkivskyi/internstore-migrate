@@ -17,7 +17,7 @@ class InternalClaims(BaseModel):
 # service with no browser-facing route (no nginx location — see
 # docker-compose.yml) -- callers are other services (AI Assistant) or a
 # future MCP-compatible agent runtime, always presenting a Gateway-minted
-# internal token, never a raw Keycloak token.
+# internal token, never a raw Firebase token.
 def verify_internal_token(token: str, secret: str) -> InternalClaims:
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"], issuer=ISSUER)

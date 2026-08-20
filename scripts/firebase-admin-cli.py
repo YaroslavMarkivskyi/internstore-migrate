@@ -7,9 +7,8 @@
 saga/verify scripts need that have no REST equivalent reachable from plain
 curl/jq (unlike login, which uses the Identity Toolkit REST API directly —
 see e.g. test-auth-flows.sh's login()). Firebase's client REST API has no
-"revoke this user's tokens" call at all (that's deliberately admin-only,
-unlike Keycloak's client-facing /logout endpoint which did double duty as
-revocation) — only the Admin SDK can do it.
+"revoke this user's tokens" call at all (that's deliberately admin-only)
+— only the Admin SDK can do it.
 
 Targets the Firebase Auth emulator by default (FIREBASE_AUTH_EMULATOR_HOST
 defaults to localhost:9099), same as scripts/seed-firebase-users.py.

@@ -24,7 +24,7 @@ internal-token verification pattern (see
 
 ## Data model
 
-- `Cart` / `CartItem` — one cart per `owner_id` (a Keycloak `sub` for
+- `Cart` / `CartItem` — one cart per `owner_id` (a Firebase `sub` for
   customer/admin, or a `guest_id` minted by auth-backend's guest-session
   fallback for unauthenticated shoppers — see below). `product_id` is a
   bare UUID referencing Catalog's `Product.id`; no foreign key, same
@@ -155,10 +155,10 @@ docker compose up -d orders-db orders
 Reachable through nginx at `/api/orders/*` (see
 [nginx/nginx.conf](../../nginx/nginx.conf)), not exposed on the host
 directly — same pattern as catalog/inventory. Unlike those two, `/api/orders/cart`
-and `/api/orders/checkout` are also reachable without a Keycloak login (see
+and `/api/orders/checkout` are also reachable without a Firebase login (see
 "Guest checkout" above); `/api/orders/orders` still requires one.
 
-End-to-end smoke test against the real gateway with real Keycloak-issued
+End-to-end smoke test against the real gateway with real Firebase-issued
 tokens *and* the real (not mocked) Inventory service — registered-customer
 checkout, insufficient-stock checkout, and the full guest-cookie flow:
 

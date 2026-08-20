@@ -4,9 +4,8 @@
 # separate `kubectl port-forward`. Without this file, `kind create cluster`
 # still works fine — just use port-forward instead (see k8s/README.md).
 #
-# STR-192: no keycloak entry anymore (Keycloak removed, along with its
-# NodePort 30081). k8s/overlays/local has no Firebase Auth emulator of its
-# own to map a port for either -- see k8s/base/auth-backend/configmap.yaml.
+# k8s/overlays/local has no Firebase Auth emulator of its own to map a
+# port for -- see k8s/base/auth-backend/configmap.yaml.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:

@@ -4,8 +4,7 @@
 # customer and admin seed users from scripts/seed-firebase-users.py.
 #
 # AUTH-01 (self-registration) is a browser form flow, not scripted here --
-# same as before STR-192 (it was Keycloak's Account Console page; there's no
-# Firebase-hosted equivalent either, self-registration would be the
+# there's no Firebase-hosted equivalent either, self-registration would be the
 # frontend's own Firebase JS SDK sign-up call, out of scope for this repo
 # per STR-181/STR-192).
 #
@@ -42,8 +41,7 @@ for user in "customer@example.com:Customer123:customer" "admin@example.com:Admin
   pass "$EMAIL login (AUTH-02)"
 
   # AUTH-03: gateway validates external Firebase token and mints an
-  # internal token (STR-181: firebase_admin.auth.verify_id_token(),
-  # replacing Keycloak JWKS validation)
+  # internal token (firebase_admin.auth.verify_id_token())
   ME=$(curl -sf "$GATEWAY_URL/me" -H "Authorization: Bearer $ID_TOKEN") || fail "$EMAIL gateway /me"
   GW_ROLE=$(echo "$ME" | jq -r .role)
   INTERNAL_TOKEN=$(echo "$ME" | jq -r .internalToken)
@@ -52,10 +50,7 @@ for user in "customer@example.com:Customer123:customer" "admin@example.com:Admin
   pass "$EMAIL gateway Firebase token validation + internal token mint (AUTH-03)"
 
   # AUTH-04: change password. Uses the Identity Toolkit REST API's own
-  # accounts:update (idToken + new password) -- genuinely self-service,
-  # unlike the Keycloak version of this test which had to simulate
-  # self-service via the admin API since Keycloak's equivalent is a
-  # browser-only Account Console form.
+  # accounts:update (idToken + new password) -- genuinely self-service.
   NEW_PASSWORD="${PASSWORD}New1"
   curl -sf -X POST "$FIREBASE_AUTH_EMULATOR_URL/identitytoolkit.googleapis.com/v1/accounts:update?key=fake-api-key" \
     -H "Content-Type: application/json" \
@@ -70,8 +65,7 @@ for user in "customer@example.com:Customer123:customer" "admin@example.com:Admin
   pass "$EMAIL old password rejected (AUTH-04)"
 
   # AUTH-05: revocation. Firebase's client REST API has no logout-revokes
-  # endpoint (unlike Keycloak's /protocol/openid-connect/logout) --
-  # revoke_refresh_tokens is Admin SDK-only, see
+  # endpoint -- revoke_refresh_tokens is Admin SDK-only, see
   # scripts/firebase-admin-cli.py. This is the direct, real-HTTP-path
   # version of what STR-181 verified manually: revoke a user's tokens,
   # confirm /auth/verify's check_revoked=True rejects their still

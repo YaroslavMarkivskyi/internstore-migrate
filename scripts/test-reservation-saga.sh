@@ -169,16 +169,17 @@ poll_until 30 "order_status '$CUSTOMER_TOKEN' '$ORDER_C'" "pending" "order C res
 # the real TTL (300s) plus a buffer for the 5s check interval and general
 # poll slack.
 #
-# That bump surfaced a second, compounding bug under Keycloak (whose realm
-# accessTokenLifespan was also 300s): CUSTOMER_TOKEN minted once near the
-# top of the script and reused for the rest of the run could expire
-# *during* this poll, with every subsequent order_status call 401ing
-# (nginx's own auth_request-rejection error page, not JSON, so jq fails to
-# parse it) for the rest of the window -- indistinguishable from a hung
-# saga without checking the raw response. STR-192: Firebase ID tokens
-# default to a 1h lifespan, well clear of this poll's ~300s window, but
-# the re-login-per-poll fix is kept anyway -- still correct, and it's one
-# less assumption about token lifetime for this poll to depend on.
+# That bump surfaced a second, compounding bug under the external token
+# provider used at the time (whose token lifespan was also 300s):
+# CUSTOMER_TOKEN minted once near the top of the script and reused for the
+# rest of the run could expire *during* this poll, with every subsequent
+# order_status call 401ing (nginx's own auth_request-rejection error page,
+# not JSON, so jq fails to parse it) for the rest of the window --
+# indistinguishable from a hung saga without checking the raw response.
+# Firebase ID tokens default to a 1h lifespan, well clear of this poll's
+# ~300s window, but the re-login-per-poll fix is kept anyway -- still
+# correct, and it's one less assumption about token lifetime for this poll
+# to depend on.
 order_status_fresh() {
   local fresh_token
   fresh_token=$(login "customer@example.com" "Customer123")

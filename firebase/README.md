@@ -1,7 +1,7 @@
 # Firebase Auth emulator (local dev only)
 
-STR-181 swapped auth-backend's external token verification from Keycloak to
-the Firebase Admin SDK. This directory is what makes that verifiable
+STR-181 wired auth-backend's external token verification up to the Firebase
+Admin SDK. This directory is what makes that verifiable
 *locally* without a real Firebase project: `docker-compose.yml`'s
 `firebase-emulator` service runs the Firebase Local Emulator Suite's Auth
 emulator only, and `auth-backend` talks to it via

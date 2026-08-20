@@ -37,7 +37,7 @@ This service never modifies an order, product, or inventory row. It reads:
 - Conversation history — `GET /rooms/{id}/messages` from Chat.
 - Registered customers' recent orders — `GET /orders/admin?owner_id=...`
   from Orders (guests are skipped: there's no order history to look up for
-  a session ID, only a Keycloak `sub`; see
+  a session ID, only a Firebase `sub`; see
   `context.is_registered_customer`).
 - Product context — a pgvector similarity search against its own
   `product_embeddings` table, never Catalog's database directly.

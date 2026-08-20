@@ -3,7 +3,7 @@
 # `docker compose exec`/`logs` calls to translate. Two compose-specific
 # things are handled here instead:
 #   - auth-backend has no NodePort (ClusterIP-only) -- port-forwarded for
-#     the duration of the run, same as scripts/k8s/verify-gateway.sh.
+#     the duration of the run.
 #   - Mailpit is excluded from k8s/base (dev-only, no K8s equivalent) --
 #     assumes the throwaway Mailpit Deployment+Service+port-forward from
 #     scripts/k8s/test-telemetry-saga.sh's header comment is already up.

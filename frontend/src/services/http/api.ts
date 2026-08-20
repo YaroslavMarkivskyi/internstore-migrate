@@ -45,12 +45,9 @@ api.interceptors.request.use(
 // Shared across every request that 401s while a refresh is already
 // in-flight -- without this, a page firing several parallel requests right
 // as the access token expires triggers one refresh call *per request*
-// instead of one. Besides being wasteful, this is a genuine bug: any
-// Keycloak client with refresh-token rotation enabled invalidates a
-// refresh token on first use, so every one of those concurrent calls
-// after the first would fail outright (already-consumed token), turning a
-// single ordinary token-expiry moment into a cascade of visible auth
-// failures / an unwanted logout instead of one silent, transparent retry.
+// instead of one, which is wasteful and can turn a single ordinary
+// token-expiry moment into a cascade of redundant refresh calls instead of
+// one silent, transparent retry.
 let refreshPromise: Promise<string | null> | null = null;
 
 const performRefresh = async (refreshToken: string): Promise<string | null> => {

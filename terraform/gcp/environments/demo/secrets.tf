@@ -1,7 +1,6 @@
 # Every credential the ticket names (INTERNAL_TOKEN_SECRET, DB passwords,
 # OPENAI_API_KEY, Stripe keys) plus the GCS HMAC keys, as Secret Manager
-# secrets. (Keycloak's own creds used to live here too — removed by
-# STR-192 along with Keycloak itself.) The k8s overlay's generated
+# secrets. The k8s overlay's generated
 # SecretProviderClasses reference these by name via Workload Identity — see
 # k8s/overlays/gcp/generate-overlay.py. Cloud SQL Auth Proxy sidecars listen
 # on 127.0.0.1, so every DATABASE_URL below points at localhost, not the

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# K8s counterpart: scripts/k8s/verify-gateway.sh (STR-145). If you fix a
-# bug in this script, check whether the same bug exists there too -- see
-# STR-151, which found fixes made in one copy that were never ported to
-# the other.
+# No k8s counterpart: k8s/overlays/local has no Firebase Auth emulator of
+# its own to run this against (see k8s/README.md's "Adapted saga scripts"
+# section).
 #
 # End-to-end verification of the nginx + auth-backend Gateway, beyond just
 # "a request with a valid token returns 200". Covers:
@@ -16,9 +15,8 @@
 #      enforced downstream), never the raw external token or unverified
 #      headers
 #   4. Firebase-unreachable behavior: auth-backend's check_revoked=True
-#      revocation check (STR-181/STR-192, replaces AUTH-05's old Keycloak
-#      introspection) fails closed (401) with the Firebase emulator
-#      stopped, rather than silently trusting the token
+#      revocation check (AUTH-05) fails closed (401) with the Firebase
+#      emulator stopped, rather than silently trusting the token
 #   5. WebSocket proxy: nginx still gates /ws/ with auth_request for an
 #      unauthenticated handshake attempt (full authenticated WS round-trip
 #      is covered by test-chat-saga.sh, which owns a real chat room)
@@ -27,8 +25,7 @@
 # Briefly stops/restarts the firebase-emulator container -- expect ~15-20s
 # runtime.
 #
-# STR-192: the "expired token" negative scenario this script used to run
-# under Keycloak is gone, not just translated -- verified directly (not
+# No "expired token" negative scenario here -- verified directly (not
 # assumed) that firebase_admin's verify_id_token() does NOT reject an
 # expired *emulator*-issued token; the emulator's unsigned (alg: none)
 # tokens skip exp/iat validation that real Firebase enforces. See
@@ -74,8 +71,7 @@ FB_ADMIN_TOKEN=$(login "admin@example.com" "Admin123456")
 #
 # STR-151: shortened from "gw-probe-$RANDOM" (already 13-14 chars) -- the
 # "-guest" suffix used below pushes it past Catalog's `name` schema limit
-# (max_length=15), so that assertion 422s instead of 403ing. Found already
-# fixed in scripts/k8s/verify-gateway.sh (STR-145); ported back here.
+# (max_length=15), so that assertion 422s instead of 403ing.
 PROBE_CATEGORY="gw-$RANDOM"
 
 STATUS=$($CURL -o /dev/null -w "%{http_code}" -X POST "$GATEWAY_URL/api/catalog/categories" \
@@ -129,8 +125,7 @@ STATUS=$($CURL -o /dev/null -w "%{http_code}" "$GATEWAY_URL/api/catalog/categori
 [ "$STATUS" = "401" ] || fail "corrupted token got $STATUS, expected 401"
 pass "corrupted token -> 401"
 
-# A token issued for the wrong Firebase project (aud mismatch) -- the
-# closest Firebase equivalent to Keycloak's "wrong realm" test. There's no
+# A token issued for the wrong Firebase project (aud mismatch). There's no
 # REST-only way to mint a token for a second project against a
 # single-project emulator instance, so this rewrites the `aud`/`iss`
 # claims directly (same "no real signature to preserve" reasoning as
@@ -168,19 +163,16 @@ STATUS=$(DIRECT http://catalog:8000/categories -H "X-Internal-Token: $INTERNAL")
 pass "internal token TTL (~60s) is enforced downstream, independent of the external token's lifetime"
 
 echo "=== 4. Firebase-unreachable behavior ==="
-# STR-192: this used to stop/restart the keycloak container and assert
-# auth-backend's separate RevocationChecker (auth/revocation.py,
-# retired) failed closed on an uncached token. STR-181 folded revocation
-# into ExternalTokenVerifier.verify() itself via check_revoked=True --
-# there's no separate introspection cache anymore, so *every* token
-# (fresh or not) hits this check, and Firebase Admin SDK's own
-# get_user() call inside it fails closed by construction: a connection
+# ExternalTokenVerifier.verify() checks revocation inline via
+# check_revoked=True -- there's no separate introspection cache, so
+# *every* token (fresh or not) hits this check, and Firebase Admin SDK's
+# own get_user() call inside it fails closed by construction: a connection
 # error there propagates as an exception rather than being swallowed. See
 # services/auth-backend/src/auth_backend/auth/external_token.py.
 #
-# Stopping (not pausing) firebase-emulator matches Keycloak's own
-# stop/start here and is deliberate: the emulator's user store is
-# in-memory only (no --export-on-exit configured, see firebase/README.md)
+# Stopping (not pausing) firebase-emulator is deliberate: the emulator's
+# user store is in-memory only (no --export-on-exit configured, see
+# firebase/README.md)
 # so a `pause` (freezes the process, verified to make auth-backend's own
 # call hang instead of fail fast) would work too but a `stop` more
 # faithfully reproduces "the auth provider is actually down", and nothing

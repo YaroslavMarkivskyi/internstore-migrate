@@ -19,7 +19,7 @@ class InternalClaims(BaseModel):
 # (services/auth-backend/src/auth/internalToken.ts) and every other domain
 # service's copy of the same. Every domain service validates the
 # Gateway-minted internal token locally against the shared HMAC secret — no
-# call back to auth-backend or Keycloak. Never trust X-User-Id/X-User-Role
+# call back to auth-backend or Firebase. Never trust X-User-Id/X-User-Role
 # headers directly; only the claims that come out of this verification.
 def verify_internal_token(token: str, secret: str) -> InternalClaims:
     try:

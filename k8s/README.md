@@ -19,7 +19,7 @@ kubectl apply -k k8s/overlays/local
 kubectl get pods -w                 # wait for everything to reach Running/Ready
 ```
 
-`k8s/kind-config.yaml` maps nginx (8443/8082), keycloak (8081), MinIO (9000/9001), and
+`k8s/kind-config.yaml` maps nginx (8443/8082), MinIO (9000/9001), and
 temporal-ui (8088) NodePorts straight onto those same host ports. Skip `--config` and use
 `kubectl port-forward svc/nginx 8443:8443` (etc.) instead if you'd rather not reserve those
 host ports.
@@ -62,9 +62,7 @@ changes** were needed (every service already reads `OPA_URL=http://localhost:818
 `.rego` policy files are mirrored into `k8s/base/opa-policies/policies/` — see that
 directory's `kustomization.yaml` comment and `sync-policies.sh` for why this is a copy, not a
 live reference (kubectl's built-in kustomize refuses to read `configMapGenerator` files from
-outside a kustomization's own directory tree, with no flag to relax that). The same pattern
-used to apply to Keycloak's `realm-export.json` mirror in `k8s/base/keycloak/config/` — removed
-along with Keycloak itself (STR-192, see `docs/adr/0004-replace-keycloak-with-firebase.md`).
+outside a kustomization's own directory tree, with no flag to relax that).
 
 **Postgres**: one StatefulSet + PVC per service database (10 total, including Temporal's own),
 mirroring compose's existing 9 single-tenant containers 1:1, rather than consolidating onto a
@@ -94,16 +92,6 @@ fragile `pgrep`-based exec probe against a `python:3.12-slim` image that doesn't
 by default, **this Deployment has no readiness/liveness probes at all** — a known gap vs.
 every other service, documented rather than papered over. A crash here shows up only as
 `CrashLoopBackOff` from the container exiting, not from a failed probe.
-
-**(Historical, STR-192 removed Keycloak/postgres-keycloak entirely — see
-`docs/adr/0004-replace-keycloak-with-firebase.md`.) Keycloak had no PVC of its own.** Verified
-against compose at the time: the `keycloak` service's only mount was the read-only
-`realm-export.json` import file — there was no volume for `/opt/keycloak/data`. All of
-Keycloak's real state (realms, users, sessions) lived in `keycloak-db` via `KC_DB=postgres`. So
-`postgres-keycloak`'s own PVC was the only persistence that mattered, and `start-dev
---import-realm` re-importing on every pod restart (idempotent, skip-if-exists per entity, same
-as compose) reproduced compose's behavior exactly — no separate import Job/initContainer was
-needed.
 
 **nginx.conf is unchanged** — mounted-in-image (via `internstore/nginx:local`'s own
 Dockerfile, `COPY nginx.conf /etc/nginx/nginx.conf`, same as compose's `build: ./nginx`), not
@@ -148,8 +136,8 @@ Manager + Workload Identity replaces plain `Secret` manifests, not before.
   `docker compose logs <svc>` call to its `kubectl rollout restart deployment/<svc>` /
   `kubectl logs deployment/<svc>` equivalent is real, scoped follow-up work, not done as part
   of this ticket (out of scope: this ticket is the manifests, not a scripts rewrite).
-- **Kafka/temporal/keycloak have no compose healthcheck equivalents in some cases** — where
-  compose defined a real healthcheck (Kafka, Keycloak, Postgres) it's reproduced faithfully
+- **Kafka/temporal have no compose healthcheck equivalents in some cases** — where
+  compose defined a real healthcheck (Kafka, Postgres) it's reproduced faithfully
   here; where compose defined none at all (Temporal has no healthcheck in compose), a
   best-effort TCP probe is added rather than nothing, and rather than inventing an HTTP
   endpoint the service doesn't have. Documented per-manifest.
@@ -171,7 +159,7 @@ of thing that only shows up against a real cluster, not from reading the compose
 ## Resource requests on a small local node
 
 Validating against a real single-node `kind` cluster on a 4-core dev host, the 10 Postgres
-StatefulSets + Kafka + Redis + Keycloak + Temporal + temporal-ui + MinIO alone already reserve
+StatefulSets + Kafka + Redis + Temporal + temporal-ui + MinIO alone already reserve
 ~98% of that node's allocatable CPU before a single domain service Deployment is scheduled —
 some domain service pods sat `Pending` (`Insufficient cpu`) as a direct result, not because of
 a manifest defect. On a small local machine, either give `kind`/`minikube` more CPU (a
@@ -222,7 +210,7 @@ only flag as needing a live check.
 
 **1. Local-overlay CPU-request floor was too high for a 4-core host** (confirmed the STR-142
 capacity finding, then fixed it). Base's per-container `resources.requests.cpu` (100m for most
-domain services, up to 250m for Kafka/Keycloak/Temporal) summed to ~3.7 cores of *requests*
+domain services, up to 250m for Kafka/Temporal) summed to ~3.7 cores of *requests*
 before any pod even starts using CPU — kube-system alone reserves ~0.85 core on a single-node
 kind cluster, leaving ~3.15 allocatable, so several pods sat `Pending` ("Insufficient cpu").
 Chose to **reduce requests via a new `k8s/overlays/local` patch**
@@ -232,12 +220,12 @@ cores — there's no separate allocation to bump on a single dev machine. This o
 scheduling floor (`requests`), not the actual ceiling (`limits`), so nothing loses real
 throughput under load.
 
-**2. `bump-memory-limit.yaml` was silently a *cut*, not a bump, for 3 services.** That existing
-local-overlay patch blanket-replaces every container's memory *limit* to 768Mi — but base sets
-keycloak/kafka/temporal's own limit to 1Gi, so 768Mi was actually lower than base for those
-three. Caught via a live OOMKill on keycloak. Fixed by raising the patch's value to 1536Mi
-(comfortably above every base limit, so it's now always a bump, never a cut, regardless of
-what base sets per-service).
+**2. `bump-memory-limit.yaml` was silently a *cut*, not a bump, for some services.** That
+existing local-overlay patch blanket-replaces every container's memory *limit* to 768Mi — but
+base sets kafka/temporal's own limit to 1Gi, so 768Mi was actually lower than base for those.
+Caught via a live OOMKill. Fixed by raising the patch's value to 1536Mi (comfortably above
+every base limit, so it's now always a bump, never a cut, regardless of what base sets
+per-service).
 
 **3. Probe tolerance was too tight for ~30 services cold-starting on one 4-core node at once.**
 Base's default `failureThreshold` (3) at typical `periodSeconds` (5-15s) gives each container
@@ -310,17 +298,19 @@ each; flagging here that the compose originals carry the same bugs and would ben
 same fixes:
   - `verify-gateway.sh`'s probe-category name (`"gw-probe-$RANDOM-guest"`, ~20 chars) exceeds
     Catalog's `name` schema limit (`max_length=15`), 422ing instead of 403ing.
-  - `verify-gateway.sh`'s "JWKS caching survives Keycloak down" assertion (expects `200`) is
-    stale relative to `auth-backend`'s `RevocationChecker` (AUTH-05) — that does its own live
-    Keycloak token-introspection call per token (30s cache) and deliberately fails closed
-    (`401`) on an uncached token with Keycloak unreachable. Correct secure-by-default behavior,
-    not a caching gap; the assertion needed updating, not the app.
+  - `verify-gateway.sh`'s "cached credentials survive the identity provider being down"
+    assertion (expects `200`) is stale relative to `auth-backend`'s revocation check
+    (AUTH-05) — that does its own live per-token lookup and deliberately fails closed
+    (`401`) on an uncached token with the identity provider unreachable. Correct
+    secure-by-default behavior, not a caching gap; the assertion needed updating, not the app.
+    (This k8s copy has since been removed — see `scripts/verify-gateway.sh`, the compose
+    original, for the Firebase-based version of this check.)
   - `test-reservation-saga.sh` polls for reservation expiry with a 60s timeout and a comment
     claiming `RESERVATION_TTL_SECONDS=30`, but both compose and this manifest set actually set
     it to 300s (confirmed against the live inventory pod's own env) — the poll could never
     succeed as written. Bumping the timeout to match the real TTL then surfaced a *second*,
     compounding bug: the customer/admin tokens are minted once near the top of the script and
-    reused for the whole run, but Keycloak's `accessTokenLifespan` is 300s — with a 330s+ poll
+    reused for the whole run, but the external token's own lifespan is 300s — with a 330s+ poll
     plus everything before it, the token expires mid-poll and every subsequent check 401s
     (nginx's own non-JSON auth-rejection page, not the app's JSON) for the rest of the window,
     indistinguishable from a hung saga without inspecting the raw response. Fixed by
@@ -350,15 +340,16 @@ pre-existing bug in a test script that had simply never been run before.
 ### Adapted saga scripts: `scripts/k8s/*.sh`
 
 New copies, not edits to the originals (which remain the compose source of truth):
-`verify-gateway.sh`, `test-reservation-saga.sh`, `test-telemetry-saga.sh`,
+`test-reservation-saga.sh`, `test-telemetry-saga.sh`,
 `test-security-saga.sh`, `test-chat-saga.sh`, `test-temporal-saga.sh` — all pass against the
-live cluster. Translation pattern: `docker compose exec`/`restart`/`logs` calls become
-`kubectl exec`/`scale`/`logs`; services with no NodePort (`auth-backend`) get a
+live cluster. (`verify-gateway.sh` has no k8s copy — see `scripts/verify-gateway.sh`'s own
+header comment for why.) Translation pattern: `docker compose exec`/`restart`/`logs` calls
+become `kubectl exec`/`scale`/`logs`; services with no NodePort (`auth-backend`) get a
 `kubectl port-forward` for the script's duration; "hit a service directly, bypassing the
-gateway" (`verify-gateway.sh`'s internal-token isolation checks) becomes a reusable
-`kubectl run curlimages/curl` probe pod instead of one-shot `docker run --network` calls (too
-slow to spin up fresh per call on a busy kind node); Temporal's workflow-history check becomes
-a one-shot `kubectl run temporalio/admin-tools` pod instead of `docker run --network`.
+gateway" (an internal-token isolation check) becomes a reusable `kubectl run curlimages/curl`
+probe pod instead of one-shot `docker run --network` calls (too slow to spin up fresh per call
+on a busy kind node); Temporal's workflow-history check becomes a one-shot `kubectl run
+temporalio/admin-tools` pod instead of `docker run --network`.
 `test-security-saga.sh` and `test-chat-saga.sh` needed no compose-specific translation at all
 (pure HTTP/WebSocket through the gateway) — copied over anyway so every in-scope script has one
 `scripts/k8s/` home, and so the real bugs found while running them (above) don't have to be

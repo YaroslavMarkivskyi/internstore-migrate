@@ -16,7 +16,7 @@ from auth_backend.config import Settings, load_settings
 from auth_backend.observability import setup_observability
 
 # Catalog browsing, cart/checkout, chat, and chat attachment uploads are
-# reachable without a Keycloak login — these are the only paths
+# reachable without a Firebase login — these are the only paths
 # /auth/verify grants a role=guest fallback token for. Order history
 # (/api/orders/orders) is deliberately NOT included: a guest can check out
 # but must register/log in to see past orders. /api/catalog is safe to
@@ -125,7 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # same sub/role. Exists for callers that hold a real user's internal
     # token across a sequence of internal calls longer than the 60s TTL
     # (the shopping agent's ReAct loop, see services/ai-assistant) and can't
-    # just re-hit /auth/verify — that path requires the original Keycloak
+    # just re-hit /auth/verify — that path requires the original Firebase
     # bearer token/guest cookie, neither of which a downstream service like
     # AI Assistant holds. Requires the presented token to still be validly
     # signed and unexpired — this extends a live session, it never
@@ -217,10 +217,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             # STR-155: revocation is checked inside verifier.verify() itself
             # (check_revoked=True), not as a separate step — see
-            # external_token.py. The old Keycloak introspection call
-            # (auth/revocation.py, retired) lived here as a second step
-            # because Keycloak had no equivalent built into JWKS
-            # verification; Firebase does.
+            # external_token.py. Firebase's Admin SDK has revocation
+            # checking built into token verification, so there's no
+            # separate introspection step here.
             claims = verifier.verify(external_token)
             internal_token = mint_internal_token(
                 MintableClaims(sub=claims.sub, role=claims.role),

@@ -33,7 +33,7 @@ async def handle_customer_message_sent(
     sender_id = payload["sender_id"]
     # STR-148: this used to be guessed from sender_id's shape
     # (is_registered_customer) — broken, since guest session ids are
-    # uuid4() same as a real customer's Keycloak sub, so it misclassified
+    # uuid4() same as a real customer's Firebase sub, so it misclassified
     # every guest as a customer and silently starved guests of any reply
     # at all (see chat/ws/room.py's staging of this field for the fuller
     # story). sender_role now comes straight from the event payload.

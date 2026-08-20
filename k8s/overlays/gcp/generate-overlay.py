@@ -8,9 +8,7 @@ sidecar patch, per service.
 temporal is NOT covered here — its DB config is inline `env: value:` in
 base rather than `envFrom: secretRef`, so it's hand-written
 (temporal-patch.yaml/temporal-secrets.yaml) instead. notifications has no
-secret.yaml in base at all and needs nothing here either. (STR-192:
-keycloak used to be a second hand-written exception here too
--- removed along with Keycloak itself.)
+secret.yaml in base at all and needs nothing here either.
 
 Deliberately stdlib-only (json + string templates, no PyYAML) — this repo's
 CLAUDE.md says not to add dependencies without asking, and the YAML this
@@ -80,7 +78,6 @@ SERVICE_SECRET_KEYS = {
         ("AI_DB_URL", "mcp-gateway-database-url"),
         ("OPENAI_API_KEY", "openai-api-key"),
     ],
-    # STR-192: no keycloak-client-secret entry anymore (Keycloak removed).
     # FIREBASE_PROJECT_ID isn't here either -- it's not a Secret Manager
     # secret (not sensitive), and wiring the real GCP Firebase project id
     # into this service's config is explicitly out of scope for STR-192

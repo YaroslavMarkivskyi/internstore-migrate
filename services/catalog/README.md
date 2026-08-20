@@ -52,7 +52,7 @@ Every write endpoint validates the `X-Internal-Token` header locally — HMAC
 (HS256) signature, `iss`, `exp` — against the same shared secret
 `auth-backend` mints with (`INTERNAL_TOKEN_SECRET`). This service never
 trusts `X-User-Id`/`X-User-Role` headers directly and never calls back to
-Keycloak or auth-backend. See
+Firebase or auth-backend. See
 [src/catalog/auth.py](src/catalog/auth.py), which mirrors
 `services/auth-backend/src/auth_backend/auth/internal_token.py`.
 

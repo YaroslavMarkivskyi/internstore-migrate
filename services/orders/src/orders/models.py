@@ -21,7 +21,7 @@ class Cart(Base):
     __tablename__ = "carts"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    # Either a real Keycloak sub (customer/admin) or a guest_id (role=guest)
+    # Either a real Firebase sub (customer/admin) or a guest_id (role=guest)
     # minted by auth-backend's guest-session fallback — Orders treats both
     # uniformly off the internal token's `sub` claim.
     owner_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)

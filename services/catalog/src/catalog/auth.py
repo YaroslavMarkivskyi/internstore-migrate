@@ -1,81 +1,50 @@
-from typing import Annotated, Literal
-from enum import StrEnum
+from typing import Annotated
 
-import jwt
 from fastapi import Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
-ISSUER = "internstore-gateway"
-
-class InternalRole(StrEnum):
-    CUSTOMER = "customer"
-    ADMIN = "admin"
-    GUEST = "guest"
+from catalog.authz import AuthzClient, AuthzResult, get_authz_client
 
 
 class InternalClaims(BaseModel):
     sub: str
-    role: Literal[
-        InternalRole.CUSTOMER,
-        InternalRole.ADMIN,
-        InternalRole.GUEST,
-    ]
+    role: str
 
 
-class InternalTokenException(HTTPException):
-    def __init__(self, detail: str = "Invalid internal token"):
-        super().__init__(status_code=401, detail=detail)
-
-
-class PermissionDeniedException(HTTPException):
-    def __init__(self, detail: str = "Permission denied"):
-        super().__init__(status_code=403, detail=detail)
-
-
-def verify_internal_token(
-        token: str, 
-        secret: str,
-    ) -> InternalClaims:
-    try:
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            issuer=ISSUER,
-        )
-    except jwt.InvalidTokenError as exc:
-        raise ValueError("Invalid internal token") from exc
-
-    sub = payload.get("sub")
-    role = payload.get("role")
-    if not sub or role not in (
-        InternalRole.CUSTOMER,
-        InternalRole.ADMIN,
-        InternalRole.GUEST,
-    ):
-        raise ValueError("Invalid internal token claims")
-    return InternalClaims(sub=sub, role=role)
-
-
-def get_internal_claims(
-        request: Request,
-        x_internal_token: Annotated[str | None, Header()] = None,
-) -> InternalClaims:
+# Spike: catalog no longer decodes/verifies the internal token itself --
+# OPA's common.rego does that (io.jwt.decode_verify), reused across every
+# call site here instead of one jwt.decode() copy per domain service. See
+# policies/common.rego and AuthzClient.identify/check.
+def get_internal_token(x_internal_token: Annotated[str | None, Header()] = None) -> str:
     if x_internal_token is None:
-        raise InternalTokenException(detail="Missing internal token")
-    secret: str = request.app.state.settings.internal_token_secret
-    try:
-        return verify_internal_token(x_internal_token, secret)
-    except ValueError as exc:
-        raise InternalTokenException(detail="Invalid internal token") from exc
+        raise HTTPException(status_code=401, detail="Missing internal token")
+    return x_internal_token
 
 
-def require_admin(
-        claims: Annotated[
-            InternalClaims,
-            Depends(get_internal_claims),
-        ],
+async def get_internal_claims(
+    token: Annotated[str, Depends(get_internal_token)],
+    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> InternalClaims:
-    if claims.role != InternalRole.ADMIN:
-        raise PermissionDeniedException(detail="Admin role required")
+    subject = await authz.identify(token)
+    if subject is None:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+    return InternalClaims(sub=subject["sub"], role=subject["role"])
+
+
+async def require_admin(
+    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+) -> InternalClaims:
+    if claims.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
     return claims
+
+
+# Shared by every OPA-routed call site (categories/products POST/PATCH):
+# an AuthzResult with no subject means the token itself never verified
+# (missing/forged/expired/wrong-issuer) -- 401, not authenticated. A
+# verified subject that OPA still denied -- 403, not authorized.
+def enforce(result: AuthzResult, forbidden_detail: str) -> None:
+    if result.subject is None:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+    if not result.allowed:
+        raise HTTPException(status_code=403, detail=forbidden_detail)

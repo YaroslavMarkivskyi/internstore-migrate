@@ -2,7 +2,7 @@ import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from catalog.authz import get_authz_client
+from catalog.authz import AuthzResult, get_authz_client
 from catalog.config import Settings
 from catalog.db import Base, make_session_factory
 from catalog.inventory_client import get_inventory_client
@@ -65,16 +65,34 @@ def fake_inventory_client() -> FakeInventoryClient:
 
 class FakeAuthzClient:
     """Swapped in via app.dependency_overrides -- no real OPA sidecar call
-    is made. Mirrors policies/catalog.rego's admin-only baseline (route
-    tests exercise the actual policy separately, see test_authz_client.py
-    and opa test policies/)."""
+    is made. Verifies the token itself (mirroring what OPA's common.rego
+    now does with io.jwt.decode_verify, since catalog no longer does this
+    locally -- see auth.py/authz.py) and mirrors policies/catalog.rego's
+    admin-only baseline. The actual policy is exercised separately, see
+    test_authz_client.py and opa test policies/."""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def check(self, subject: dict, action: str, resource: dict, package: str = "catalog") -> bool:
-        self.calls.append({"subject": subject, "action": action, "resource": resource, "package": package})
-        return subject.get("role") == "admin"
+    def _verify(self, token: str) -> dict | None:
+        try:
+            return jwt.decode(token, INTERNAL_TOKEN_SECRET, algorithms=["HS256"], issuer=ISSUER)
+        except jwt.InvalidTokenError:
+            return None
+
+    async def identify(self, token: str) -> dict | None:
+        payload = self._verify(token)
+        if payload is None or "sub" not in payload or "role" not in payload:
+            return None
+        return {"sub": payload["sub"], "role": payload["role"]}
+
+    async def check(self, token: str, action: str, resource: dict, package: str = "catalog") -> AuthzResult:
+        self.calls.append({"token": token, "action": action, "resource": resource, "package": package})
+        payload = self._verify(token)
+        if payload is None or "sub" not in payload or "role" not in payload:
+            return AuthzResult(subject=None, allowed=False)
+        subject = {"sub": payload["sub"], "role": payload["role"]}
+        return AuthzResult(subject=subject, allowed=subject["role"] == "admin")
 
 
 @pytest.fixture

@@ -147,19 +147,17 @@ immediately after; nothing left running.
    `.status.resources[]` report `status: Synced` — i.e. the live cluster is provably
    byte-identical to what `kubectl apply -k k8s/overlays/local` would produce directly,
    which is the strongest form of "no behavioral difference" ArgoCD can attest to.
-   Re-ran `scripts/k8s/verify-gateway.sh` and `scripts/k8s/test-telemetry-saga.sh`
-   against the ArgoCD-managed deployment: both fail, but for the exact
-   **pre-existing, already-documented** reasons their own header comments describe —
-   `verify-gateway.sh` is Keycloak-specific logic left over from before STR-192 removed
-   Keycloak (no `deployment/keycloak` to scale, connection refused at step 1);
-   `test-telemetry-saga.sh` needs a Firebase Auth emulator at `localhost:9099` that
-   `k8s/overlays/local` doesn't provide (also a documented STR-192 gap), plus the
-   throwaway Mailpit `Deployment`/`Service` its header describes, neither of which was
-   stood up for this pass. Both gaps are about what's *deployed* to the cluster, not
-   *how* it was deployed — a manual `kubectl apply -k` would hit the identical
-   `curl: (7) Connection refused` at the identical step. No ArgoCD-specific regression
-   found; the resource-level Synced proof above is the parity evidence for the parts
-   these scripts can't currently exercise.
+   Re-ran `scripts/k8s/test-telemetry-saga.sh` against the ArgoCD-managed
+   deployment: it fails, but for the exact **pre-existing, already-documented**
+   reason its own header comment describes — it needs a Firebase Auth
+   emulator at `localhost:9099` that `k8s/overlays/local` doesn't provide
+   (a documented gap), plus the throwaway Mailpit `Deployment`/`Service`
+   its header describes, neither of which was stood up for this pass. That
+   gap is about what's *deployed* to the cluster, not *how* it was
+   deployed — a manual `kubectl apply -k` would hit the identical `curl:
+   (7) Connection refused` at the identical step. No ArgoCD-specific
+   regression found; the resource-level Synced proof above is the parity
+   evidence for the part this script can't currently exercise.
 2. **Drift detection + self-heal — confirmed.** `kubectl scale deployment/catalog
    --replicas=3`, then `--replicas=5`. `kubectl get events` on `deployment/catalog`
    shows ArgoCD's application-controller reverting each one within ~2 seconds — faster

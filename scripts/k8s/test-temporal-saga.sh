@@ -44,7 +44,7 @@
 # Requires: curl, jq, python3, kubectl. Run after
 # `kubectl apply -k k8s/overlays/local/` with every pod Running/Ready
 # (needs temporal, temporal-db, temporal-ui, payments, checkout-workflow-worker,
-# orders, inventory, catalog, nginx, kafka all healthy -- keycloak removed by STR-192, see login() comment above).
+# orders, inventory, catalog, nginx, kafka all healthy -- see login() comment above).
 set -euo pipefail
 
 # STR-192: k8s/overlays/local has no Firebase Auth emulator of its own

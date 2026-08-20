@@ -1,8 +1,7 @@
-# InternStore — Identity migration to Firebase Authentication
+# InternStore — Firebase Authentication
 
-See [docs/adr/0004-replace-keycloak-with-firebase.md](docs/adr/0004-replace-keycloak-with-firebase.md)
-for the current decision and architecture ([docs/adr/0001](docs/adr/0001-replace-custom-identity-with-keycloak.md),
-the original Keycloak decision it supersedes, is kept for history).
+See [docs/adr/0004-firebase-authentication.md](docs/adr/0004-firebase-authentication.md)
+for the decision and architecture.
 Acceptance criteria: [docs/requirements/AUTH.md](docs/requirements/AUTH.md).
 
 ## Local setup
@@ -20,8 +19,7 @@ nginx, e.g. Catalog at `/api/catalog/*`) and their own Postgres DBs, and
 nginx (`:8082` plain → redirects to `:8443` TLS; `:8082` because `:8080` is
 a common local conflict — remap in [docker-compose.yml](docker-compose.yml)
 if `:8443`/`:8082` are also taken on your machine).
-`scripts/seed-firebase-users.py` creates the two seed users
-(`keycloak/realm-export.json`'s old job, before Keycloak was removed):
+`scripts/seed-firebase-users.py` creates the two seed users:
 
 | Email | Password | Role |
 |---|---|---|

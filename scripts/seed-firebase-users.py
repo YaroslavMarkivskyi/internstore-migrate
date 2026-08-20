@@ -3,11 +3,8 @@
 # requires-python = ">=3.12"
 # dependencies = ["firebase-admin>=6.5.0"]
 # ///
-"""STR-192: Firebase equivalent of keycloak/realm-export.json's pre-seeded
-dev users (removed by this ticket along with Keycloak itself). Creates the
-two standard dev test users this project's verification scripts assume
-exist, each with a {"role": ...} custom claim (STR-181's replacement for
-Keycloak's realm_access.roles):
+"""Creates the two standard dev test users this project's verification
+scripts assume exist, each with a {"role": ...} custom claim:
 
   customer@example.com / Customer123    -> {"role": "customer"}
   admin@example.com    / Admin123456    -> {"role": "admin"}

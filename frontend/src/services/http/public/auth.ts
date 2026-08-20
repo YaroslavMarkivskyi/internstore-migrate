@@ -1,8 +1,6 @@
-import {
-  passwordGrant,
-  refreshTokenGrant,
-  revokeSession,
-} from '@services/http/keycloak';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+
+import { auth } from '@services/firebase/client';
 
 import {
   AccessToken,
@@ -15,13 +13,15 @@ import {
 export const login = async (
   creds: LoginCredentials
 ): Promise<AuthCredentials> => {
-  const token = await passwordGrant(creds.email, creds.password);
-  return { access: token.access_token, refresh: token.refresh_token };
+  const { user } = await signInWithEmailAndPassword(
+    auth,
+    creds.email,
+    creds.password
+  );
+  const access = await user.getIdToken();
+  return { access, refresh: user.refreshToken };
 };
 
-// Keycloak's `internstore-web` realm has no open self-registration endpoint
-// (see keycloak/realm-export.json in internstore-migrate) — only the two
-// seed users exist. Registration isn't wired up backend-side yet.
 export const signUp = async (
   _creds: SignUpCredentials
 ): Promise<AuthCredentials> => {
@@ -30,11 +30,15 @@ export const signUp = async (
   );
 };
 
-export const logout = async (creds: RefreshToken): Promise<void> => {
-  await revokeSession(creds.refresh);
+export const logout = async (_creds: RefreshToken): Promise<void> => {
+  await signOut(auth);
 };
 
-export const refresh = async (creds: RefreshToken): Promise<AccessToken> => {
-  const token = await refreshTokenGrant(creds.refresh);
-  return { access: token.access_token };
+export const refresh = async (_creds: RefreshToken): Promise<AccessToken> => {
+  await auth.authStateReady();
+  if (!auth.currentUser) {
+    throw new Error('No signed-in Firebase user to refresh.');
+  }
+  const access = await auth.currentUser.getIdToken(true);
+  return { access };
 };

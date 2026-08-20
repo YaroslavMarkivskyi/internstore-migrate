@@ -11,7 +11,6 @@ dependencies = [
     "alembic>=1.13.2",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.2",
-    "pyjwt>=2.9.0",
     "aiokafka>=0.14.0",
     "boto3>=1.35.0",
     "python-multipart>=0.0.12",
@@ -30,6 +29,11 @@ dev = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
     "aiosqlite>=0.20.0",
+    # Spike: catalog no longer verifies internal tokens itself (OPA does,
+    # via common.rego) -- pyjwt is now only needed to mint tokens for
+    # tests (conftest.py's mint_internal_token) and to simulate what OPA
+    # verifies (FakeAuthzClient), not by any src/catalog code.
+    "pyjwt>=2.9.0",
     # STR-140: mocks AuthzClient's httpx calls in test_authz_client.py,
     # same tool orders' test_inventory_client.py already uses for this.
     "respx>=0.21.1",

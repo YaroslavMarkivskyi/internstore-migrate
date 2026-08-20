@@ -32,8 +32,7 @@
 # Requires: curl, jq, python3, kubectl. Run after
 # `kubectl apply -k k8s/overlays/local/` with every pod Running/Ready.
 # Assumes nginx's NodePort (30843->8443) is reachable at localhost via
-# k8s/kind-config.yaml. STR-192: Keycloak's own NodePort is gone along
-# with the Deployment -- k8s/overlays/local has no Firebase Auth emulator
+# k8s/kind-config.yaml. k8s/overlays/local has no Firebase Auth emulator
 # of its own (that's docker-compose.yml-only, see firebase/README.md), so
 # login() below assumes one is separately reachable at localhost:9099
 # (e.g. `docker compose up -d firebase-emulator` run alongside this kind
@@ -190,9 +189,9 @@ poll_until 30 "order_status '$CUSTOMER_TOKEN' '$ORDER_C'" "pending" "order C res
 # plus a buffer for the 5s check interval and general poll slack.
 #
 # STR-145: bumping that timeout to 330s surfaced a second, compounding
-# real bug under Keycloak (confirmed live: `GET /admin/realms/internstore`
-# -> accessTokenLifespan: 300): CUSTOMER_TOKEN minted once near the top of
-# the script and reused for the rest of the run could expire *during* this
+# real bug under the external token provider used at the time (confirmed
+# live: a 300s access-token lifespan): CUSTOMER_TOKEN minted once near the
+# top of the script and reused for the rest of the run could expire *during* this
 # poll, with every subsequent order_status call 401ing (nginx's own
 # auth_request-rejection error page, not JSON, so jq fails to parse it) for
 # the rest of the window -- indistinguishable from a hung saga without
