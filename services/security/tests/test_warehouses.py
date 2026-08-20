@@ -1,11 +1,6 @@
 import uuid
 
 
-async def test_warehouses_requires_admin(client, customer_token):
-    resp = await client.get("/warehouses", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
-
-
 async def test_list_warehouses_empty(client, admin_headers):
     resp = await client.get("/warehouses", headers=admin_headers)
     assert resp.status_code == 200

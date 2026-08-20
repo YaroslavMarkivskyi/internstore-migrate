@@ -5,13 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from security.auth import require_authz
 from security.db import get_session
 from security.models import AccessRule, AuthType, User
 from security.schemas import UserCreate, UserRead, UserUpdate
 from security.warehouses import get_or_create_warehouse
 
-router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_authz("manage", "user"))])
+router = APIRouter(prefix="/users", tags=["users"])
+
+# No role checks in this router: it's admin-only in full, including its
+# own GET route -- enforced ahead of this app entirely by security-gate
+# (nginx, auth_request) + security-verify (OPA-backed,
+# policies/security.rego). See docker-compose.yml's security-gate/
+# security-verify.
 
 
 async def _sync_access_rules(session: AsyncSession, user_id: uuid.UUID, warehouse_ids: list[uuid.UUID]) -> None:

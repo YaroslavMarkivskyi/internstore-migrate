@@ -5,12 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from security.auth import require_admin
 from security.db import get_session
 from security.models import Warehouse
 from security.schemas import WarehouseRead, WarehouseUpdate
 
-router = APIRouter(prefix="/warehouses", tags=["warehouses"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/warehouses", tags=["warehouses"])
+
+# No role checks in this router: admin-only in full (including its own GET
+# route) -- enforced ahead of this app entirely, see users.py's own
+# comment.
 
 
 @router.get("", response_model=list[WarehouseRead])

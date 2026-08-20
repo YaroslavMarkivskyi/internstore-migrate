@@ -8,13 +8,11 @@ independently retriable payment step to orchestrate. There is no real
 payment gateway integration here; see "Failure simulation" below.
 
 Same stack as [services/inventory](../inventory): Python/FastAPI/SQLAlchemy
-(async)/Alembic, its own Postgres database, and the same internal-token
-verification pattern (see [src/payments/auth.py](src/payments/auth.py)).
-Unlike the other domain services, Payments has **no nginx route** — it's
-only reachable from other containers on the compose network (the
-checkout-workflow worker mints its own internal token via
-`mint_internal_token`, the same pattern `ai-assistant`/`mcp-gateway` use for
-their own internal-only call sites).
+(async)/Alembic, its own Postgres database. Unlike the other domain
+services, Payments has **no nginx Gateway route** — it's only ever called
+by the checkout-workflow worker, over the compose network (it mints its
+own internal token via `mint_internal_token`, the same pattern
+`ai-assistant`/`mcp-gateway` use for their own internal-only call sites).
 
 ## Data model
 
@@ -26,11 +24,20 @@ their own internal-only call sites).
 
 ## Endpoints
 
-Both require a valid `X-Internal-Token` (any role — Payments is only ever
-called by the checkout-workflow worker, which always mints an `admin`-role
-token for itself). Each handler calls a `check_permission()` stub (always
-`True`) at the point a real OPA check will eventually go — placeholder
-only, per STR-139's authorization note; no policy logic here.
+Every route is admin-only, no browser-facing endpoint at all — Payments is
+only ever called by the checkout-workflow worker, which mints an
+`admin`-role internal token for itself. None of this is enforced in this
+service's own Python anymore: **payments-gate** (nginx, `auth_request`)
+sits in front of it, occupying the network-facing port (`:8000`)
+checkout-workflow's `PAYMENTS_BASE_URL` still calls; only `/health` passes
+straight through, everything else goes through **payments-verify**
+([services/internal-gate](../internal-gate), the same generic image
+catalog/security use, parameterized by `OPA_PACKAGE=payments`) which
+translates **payments-opa**'s decision
+([policies/payments.rego](../../policies/payments.rego)) into the HTTP
+status/headers `auth_request` needs. See
+[nginx/internal-gate/payments.conf](../../nginx/internal-gate/payments.conf)
+and [scripts/verify-payments-gate.sh](../../scripts/verify-payments-gate.sh).
 
 - `POST /charge` — `{order_id, amount, payment_method}` →
   `{payment_id, status}`, 201. Idempotent via `order_id`: a retried/duplicate
@@ -53,7 +60,7 @@ the payment-failure/compensation path on demand without a real gateway.
 ## Local dev without Docker
 
 ```
-cp .env.example .env   # DATABASE_URL, INTERNAL_TOKEN_SECRET
+cp .env.example .env   # DATABASE_URL
 uv sync
 uv run alembic upgrade head
 uv run uvicorn payments.main:create_app --factory --reload
@@ -70,11 +77,12 @@ Self-contained — uses an in-memory SQLite DB, no Postgres/Docker required.
 ## Via docker compose
 
 ```
-docker compose up -d --build payments
+docker compose up -d --build payments payments-opa payments-verify payments-gate payments-db
 ```
 
-Not routed through nginx (internal-only). Reachable from other containers
-at `http://payments:8000`.
+Not routed through the external Gateway (internal-only). Reachable from
+other containers at `http://payments:8000`, gated by payments-gate/
+payments-verify/payments-opa as described above.
 
 ## Migrations
 

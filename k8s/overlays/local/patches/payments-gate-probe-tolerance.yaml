@@ -1,0 +1,10 @@
+# Same tolerance loosening as loosen-probe-tolerance.yaml (see that
+# file's comment for why), but targeting containers/3 (payments-gate)
+# instead of containers/0 -- payments' own readiness/liveness probes
+# live there now, same reasoning as catalog-gate-probe-tolerance.yaml.
+- op: add
+  path: /spec/template/spec/containers/3/livenessProbe/failureThreshold
+  value: 10
+- op: add
+  path: /spec/template/spec/containers/3/readinessProbe/failureThreshold
+  value: 10

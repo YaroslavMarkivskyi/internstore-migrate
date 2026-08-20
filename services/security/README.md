@@ -12,8 +12,9 @@ monitoring is [Telemetry](../telemetry)'s.
 
 Same stack as [services/telemetry](../telemetry):
 Python/FastAPI/SQLAlchemy(async)/Alembic, its own Postgres database with
-zero shared tables, and the same internal-token verification pattern (see
-[src/security/auth.py](src/security/auth.py)).
+zero shared tables. Unlike Telemetry, this service's own FastAPI code
+carries no internal-token verification at all anymore — see "Auth flow"
+below.
 
 ## Data model
 
@@ -44,6 +45,29 @@ they're called directly by the hardware simulator (a fingerprint reader or
 an NFC reader), not through a logged-in admin session. Same trust model as
 Telemetry's `POST /measurements`: open within the docker network, not
 routed through the Gateway.
+
+`/users`, `/visit-log`, and `/warehouses` are admin-only, including their
+own `GET` routes — unlike catalog's public-read/admin-write split, this
+service's split is path-based, not method-based. None of this is enforced
+in this service's own Python anymore: **security-gate** (nginx,
+`auth_request`) sits in front of it, occupying the network-facing port
+(`:8000`) every other service still calls `security:8000` at; `/auth/*`
+and `/health` pass straight through, everything else goes through
+**security-verify** ([services/internal-gate](../internal-gate), the same
+generic image catalog uses, parameterized by `OPA_PACKAGE=security`) which
+translates **security-opa**'s decision
+([policies/security.rego](../../policies/security.rego)) into the HTTP
+status/headers `auth_request` needs. See
+[nginx/internal-gate/security.conf](../../nginx/internal-gate/security.conf)
+for the full wiring and
+[scripts/verify-security-gate.sh](../../scripts/verify-security-gate.sh)
+for the live end-to-end check — same pattern as
+[services/catalog's own Auth section](../catalog/README.md#auth), which
+this mirrors.
+
+The `security` container itself binds `127.0.0.1` only (`HOST=127.0.0.1`)
+— unreachable from outside this pod's shared network namespace even if
+something guesses its real port.
 
 Each attempt:
 

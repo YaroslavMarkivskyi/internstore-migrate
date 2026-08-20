@@ -5,6 +5,10 @@ metadata:
   labels:
     app: security
 data:
-  PORT: "8000"
+  # Not the network-facing port anymore -- the security-gate container
+  # below occupies :8000 (what the Service still targets, unchanged) and
+  # proxies here. HOST=127.0.0.1 means this is unreachable from outside
+  # the pod even if something guesses the port.
+  PORT: "8010"
+  HOST: "127.0.0.1"
   CAMERA_BASE_URL: "http://mock-camera:8001"
-  OPA_URL: "http://localhost:8181"

@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-from payments.authz import AuthzClient
 from payments.config import Settings, load_settings
 from payments.db import make_session_factory
 from payments.observability import setup_observability
@@ -16,7 +15,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
-    app.state.authz_client = AuthzClient(settings.opa_url)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

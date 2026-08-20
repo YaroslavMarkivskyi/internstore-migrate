@@ -25,3 +25,12 @@ test_customer_cannot_charge if {
 		"resource": {"type": "payment"},
 	}
 }
+
+test_subject_present_when_verified if {
+	subject == {"role": "admin", "sub": "checkout-workflow"}
+		with data.common.subject as {"role": "admin", "sub": "checkout-workflow"}
+}
+
+test_subject_undefined_when_not_verified if {
+	not subject with input as {}
+}

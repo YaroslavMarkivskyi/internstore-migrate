@@ -33,3 +33,12 @@ test_customer_cannot_view_visit_log if {
 		"resource": {"type": "visit_log"},
 	}
 }
+
+test_subject_present_when_verified if {
+	subject == {"role": "admin", "sub": "admin-1"}
+		with data.common.subject as {"role": "admin", "sub": "admin-1"}
+}
+
+test_subject_undefined_when_not_verified if {
+	not subject with input as {}
+}

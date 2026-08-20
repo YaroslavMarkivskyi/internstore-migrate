@@ -5,11 +5,6 @@ async def _attempt(client, warehouse_id, template):
     return await client.post("/auth/fingerprint", json={"warehouse_id": warehouse_id, "fingerprint_template": template})
 
 
-async def test_visit_log_requires_admin(client, customer_token):
-    resp = await client.get("/visit-log", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
-
-
 async def test_filter_by_warehouse_id(client, admin_headers):
     warehouse_a = str(uuid.uuid4())
     warehouse_b = str(uuid.uuid4())

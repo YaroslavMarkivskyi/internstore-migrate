@@ -6,14 +6,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from security.auth import require_authz
 from security.db import get_session
 from security.models import AuthType, VisitLog
 from security.schemas import VisitLogRead
 
-router = APIRouter(
-    prefix="/visit-log", tags=["visit-log"], dependencies=[Depends(require_authz("view", "visit_log"))]
-)
+router = APIRouter(prefix="/visit-log", tags=["visit-log"])
+
+# No role checks in this router: admin-only in full (including its own GET
+# route) -- enforced ahead of this app entirely, see users.py's own
+# comment.
 
 
 @router.get("", response_model=list[VisitLogRead])

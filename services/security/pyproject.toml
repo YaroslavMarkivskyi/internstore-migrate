@@ -11,8 +11,9 @@ dependencies = [
     "alembic>=1.13.2",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.2",
-    "pyjwt>=2.9.0",
-    # STR-140: AuthzClient's OPA sidecar call (authz.py).
+    # No longer called directly by this service's own code (authz.py
+    # retired) -- kept for HTTPXClientInstrumentor (observability.py) to
+    # patch, in case anything here starts making outbound HTTP calls again.
     "httpx>=0.27.2",
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
@@ -25,9 +26,10 @@ dev = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
     "aiosqlite>=0.20.0",
-    # STR-140: mocks AuthzClient's httpx calls in test_authz_client.py,
-    # same tool orders' test_inventory_client.py already uses for this.
-    "respx>=0.21.1",
+    # Only needed to mint tokens for tests (conftest.py's
+    # mint_internal_token) -- this service no longer verifies internal
+    # tokens itself (see docker-compose.yml's security-gate/security-verify).
+    "pyjwt>=2.9.0",
 ]
 
 [tool.pytest.ini_options]

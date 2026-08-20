@@ -427,18 +427,17 @@ services:
   payments:
     build: ./services/payments
     environment:
-      PORT: "8000"
+      # Not the network-facing port anymore -- payments-gate (nginx)
+      # below occupies :8000 (what checkout-workflow's PAYMENTS_BASE_URL
+      # still calls, unchanged) and proxies here. HOST=127.0.0.1 means
+      # this is unreachable from outside this pod's shared network
+      # namespace even if something guesses the port.
+      PORT: "8010"
+      HOST: "127.0.0.1"
       DATABASE_URL: postgresql+asyncpg://payments:payments@payments-db:5432/payments
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
-      # other domain service — validated locally against checkout-workflow's
-      # minted token, no callback to auth-backend/Firebase.
-      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       # See payments/config.py — an amount ending in this suffix simulates
       # a declined charge, for saga testing (no real payment gateway here).
       PAYMENT_FAIL_ON_AMOUNT_SUFFIX: "99"
-      # STR-140: sidecar, same pod/network namespace — see payments-opa
-      # below.
-      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/payments/src:/app/src
@@ -452,17 +451,48 @@ services:
     # over the compose network, never directly by the browser. Same
     # treatment as ai-assistant/mcp-gateway.
 
-  # STR-140: OPA policy sidecar for Payments — see catalog-opa above for
-  # the sidecar-vs-central-service rationale and the network_mode note.
-  # Wires the check_permission() stub STR-139 left in routers/payments.py.
+  # OPA policy sidecar for Payments — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note. Wires
+  # the check_permission() stub STR-139 left in routers/payments.py.
   payments-opa:
     image: openpolicyagent/opa:latest
     command: ["run", "--server", "--addr=:8181", "/policies/payments.rego", "/policies/common.rego"]
+    environment:
+      # common.rego's `subject` rule verifies X-Internal-Token itself
+      # (io.jwt.decode_verify) — must match payments' own (removed)
+      # INTERNAL_TOKEN_SECRET and checkout-workflow's minted-token secret.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
     volumes:
       - ./policies:/policies:ro
     network_mode: "service:payments"
     depends_on:
       - payments
+
+  # Translates OPA's JSON decision into the HTTP status/headers
+  # payments-gate's auth_request needs — same generic image as
+  # catalog-verify/security-verify, parameterized by OPA_PACKAGE.
+  payments-verify:
+    build: ./services/internal-gate
+    environment:
+      PORT: "8090"
+      OPA_URL: http://localhost:8181
+      OPA_PACKAGE: payments
+    network_mode: "service:payments"
+    depends_on:
+      - payments-opa
+
+  # Occupies :8000 -- what checkout-workflow's PAYMENTS_BASE_URL still
+  # calls. Every route is admin-only (no browser-facing endpoint at all),
+  # so only /health is exempted. See nginx/internal-gate/payments.conf.
+  payments-gate:
+    image: nginx:1.27-alpine
+    command: ["nginx", "-c", "/etc/nginx-src/payments.conf", "-g", "daemon off;"]
+    volumes:
+      - ./nginx/internal-gate:/etc/nginx-src:ro
+    network_mode: "service:payments"
+    depends_on:
+      - payments
+      - payments-verify
 
   # Pure Temporal task-queue poller — no FastAPI app, no host port. Its own
   # container/deployment (not co-located with Orders) so it's independently
@@ -655,15 +685,15 @@ services:
   security:
     build: ./services/security
     environment:
-      PORT: "8000"
+      # Not the network-facing port anymore -- security-gate (nginx)
+      # below occupies :8000 (what every other service still calls
+      # security:8000, unchanged) and proxies here. HOST=127.0.0.1 means
+      # this is unreachable from outside this pod's shared network
+      # namespace even if something guesses the port.
+      PORT: "8010"
+      HOST: "127.0.0.1"
       DATABASE_URL: postgresql+asyncpg://security:security@security-db:5432/security
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
-      # other domain service.
-      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       CAMERA_BASE_URL: http://mock-camera:8001
-      # STR-140: sidecar, same pod/network namespace — see security-opa
-      # below.
-      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/security/src:/app/src
@@ -676,16 +706,51 @@ services:
     # door open/close decision can't wait on eventual consistency). See
     # docs/EVENT_BROKER.md and services/security/README.md.
 
-  # STR-140: OPA policy sidecar for Security — see catalog-opa above for
-  # the sidecar-vs-central-service rationale and the network_mode note.
+  # OPA policy sidecar for Security — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note.
   security-opa:
     image: openpolicyagent/opa:latest
     command: ["run", "--server", "--addr=:8181", "/policies/security.rego", "/policies/common.rego"]
+    environment:
+      # common.rego's `subject` rule verifies X-Internal-Token itself
+      # (io.jwt.decode_verify) — must match security's own (removed)
+      # INTERNAL_TOKEN_SECRET and auth-backend's, same shared secret every
+      # service validates the Gateway-minted token against.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
     volumes:
       - ./policies:/policies:ro
     network_mode: "service:security"
     depends_on:
       - security
+
+  # Translates OPA's JSON decision into the HTTP status/headers
+  # security-gate's auth_request needs — same generic image as
+  # catalog-verify, parameterized by OPA_PACKAGE. See
+  # services/internal-gate/README.md.
+  security-verify:
+    build: ./services/internal-gate
+    environment:
+      PORT: "8090"
+      OPA_URL: http://localhost:8181
+      OPA_PACKAGE: security
+    network_mode: "service:security"
+    depends_on:
+      - security-opa
+
+  # Occupies :8000 -- the port every other service already calls
+  # security:8000 at. /auth/* (hardware simulator) and /health pass
+  # straight through; /users, /visit-log, /warehouses (including their
+  # own GET routes) go through security-verify's OPA-backed check first.
+  # See nginx/internal-gate/security.conf.
+  security-gate:
+    image: nginx:1.27-alpine
+    command: ["nginx", "-c", "/etc/nginx-src/security.conf", "-g", "daemon off;"]
+    volumes:
+      - ./nginx/internal-gate:/etc/nginx-src:ro
+    network_mode: "service:security"
+    depends_on:
+      - security
+      - security-verify
 
   mailpit:
     image: axllent/mailpit:v1.20

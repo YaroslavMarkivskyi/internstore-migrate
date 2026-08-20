@@ -14,20 +14,6 @@ async def _create_user(client, admin_headers, **overrides):
     return resp.json()
 
 
-async def test_create_user_requires_admin(client, customer_token):
-    resp = await client.post(
-        "/users",
-        json={"name": "Alice", "auth_type": "fingerprint", "credential": "abc", "warehouse_ids": []},
-        headers={"x-internal-token": customer_token},
-    )
-    assert resp.status_code == 403
-
-
-async def test_list_users_requires_admin(client, customer_token):
-    resp = await client.get("/users", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
-
-
 async def test_create_user_does_not_expose_credential(client, admin_headers):
     user = await _create_user(client, admin_headers)
     assert "credential" not in user
