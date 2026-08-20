@@ -1,4 +1,5 @@
 from typing import Annotated, Literal
+from enum import StrEnum
 
 import jwt
 from fastapi import Depends, Header, HTTPException, Request
@@ -6,47 +7,75 @@ from pydantic import BaseModel
 
 ISSUER = "internstore-gateway"
 
+class InternalRole(StrEnum):
+    CUSTOMER = "customer"
+    ADMIN = "admin"
+    GUEST = "guest"
+
 
 class InternalClaims(BaseModel):
     sub: str
-    role: Literal["customer", "admin", "guest"]
+    role: Literal[
+        InternalRole.CUSTOMER,
+        InternalRole.ADMIN,
+        InternalRole.GUEST,
+    ]
 
 
-# Mirrors auth-backend's mint_internal_token
-# (services/auth-backend/src/auth_backend/auth/internal_token.py). Every
-# domain service validates the Gateway-minted internal token locally
-# against the shared HMAC secret — no call back to auth-backend or
-# Keycloak. Never trust X-User-Id/X-User-Role headers directly; only the
-# claims that come out of this verification.
-def verify_internal_token(token: str, secret: str) -> InternalClaims:
+class InternalTokenException(HTTPException):
+    def __init__(self, detail: str = "Invalid internal token"):
+        super().__init__(status_code=401, detail=detail)
+
+
+class PermissionDeniedException(HTTPException):
+    def __init__(self, detail: str = "Permission denied"):
+        super().__init__(status_code=403, detail=detail)
+
+
+def verify_internal_token(
+        token: str, 
+        secret: str,
+    ) -> InternalClaims:
     try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"], issuer=ISSUER)
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            issuer=ISSUER,
+        )
     except jwt.InvalidTokenError as exc:
         raise ValueError("Invalid internal token") from exc
 
     sub = payload.get("sub")
     role = payload.get("role")
-    if not sub or role not in ("customer", "admin", "guest"):
+    if not sub or role not in (
+        InternalRole.CUSTOMER,
+        InternalRole.ADMIN,
+        InternalRole.GUEST,
+    ):
         raise ValueError("Invalid internal token claims")
     return InternalClaims(sub=sub, role=role)
 
 
 def get_internal_claims(
-    request: Request,
-    x_internal_token: Annotated[str | None, Header()] = None,
+        request: Request,
+        x_internal_token: Annotated[str | None, Header()] = None,
 ) -> InternalClaims:
     if x_internal_token is None:
-        raise HTTPException(status_code=401, detail="Missing internal token")
+        raise InternalTokenException(detail="Missing internal token")
     secret: str = request.app.state.settings.internal_token_secret
     try:
         return verify_internal_token(x_internal_token, secret)
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid internal token") from exc
+        raise InternalTokenException(detail="Invalid internal token") from exc
 
 
 def require_admin(
-    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
+        claims: Annotated[
+            InternalClaims,
+            Depends(get_internal_claims),
+        ],
 ) -> InternalClaims:
-    if claims.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin role required")
+    if claims.role != InternalRole.ADMIN:
+        raise PermissionDeniedException(detail="Admin role required")
     return claims

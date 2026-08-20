@@ -1,11 +1,6 @@
 import httpx
 from fastapi import Request
 
-# STR-140: thin wrapper around the OPA sidecar running alongside this
-# service (see docker-compose.yml's catalog-opa, and policies/catalog.rego
-# for the policy itself) -- a localhost call, not a network hop to a
-# centralized authorization service. Per-service duplication (not a shared
-# pip package), same convention as this repo's kafka.py/outbox.py.
 DEFAULT_PACKAGE = "catalog"
 
 
@@ -29,10 +24,6 @@ class AuthzClient:
                 )
             resp.raise_for_status()
         except httpx.HTTPError:
-            # Fail closed: sidecar unreachable/erroring (startup race,
-            # crash, malformed policy) must deny, not silently allow. Same
-            # fail-closed pattern as auth-backend's RevocationChecker (see
-            # services/auth-backend/src/auth_backend/auth/revocation.py).
             return False
         return resp.json().get("result", False)
 
