@@ -23,7 +23,6 @@ configMapGenerator:
   files:
   - policies/catalog.rego
   - policies/chat.rego
-  - policies/checkout.rego
   - policies/common.rego
   - policies/inventory.rego
   - policies/orders.rego

@@ -37,7 +37,7 @@ def _stripe_event(event_type: str, intent_id: str) -> bytes:
 async def test_create_payment_intent_prices_from_catalog_not_client(
     client, customer_token, fake_inventory_client, fake_catalog_client, fake_stripe_client
 ):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     order_id, product_id, price = await _create_order(client, headers, fake_inventory_client, price=9.99)
     await _set_status(client, order_id, OrderStatus.PENDING)
     fake_catalog_client.set_price(product_id, price)
@@ -64,7 +64,7 @@ async def test_create_payment_intent_concurrent_request_returns_409(
     # order colliding on Stripe's idempotency key (see
     # StripePaymentStep.tsx's hasStartedRef comment for how this happens in
     # practice -- React StrictMode's double effect invocation).
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     order_id, product_id, price = await _create_order(client, headers, fake_inventory_client)
     await _set_status(client, order_id, OrderStatus.PENDING)
     fake_catalog_client.set_price(product_id, price)
@@ -77,7 +77,7 @@ async def test_create_payment_intent_concurrent_request_returns_409(
 async def test_create_payment_intent_rejects_cash_on_delivery(
     client, customer_token, fake_inventory_client
 ):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     order_id, _, _ = await _create_order(client, headers, fake_inventory_client, payload=CASH_ON_DELIVERY_PAYLOAD)
     await _set_status(client, order_id, OrderStatus.PENDING)
 
@@ -88,7 +88,7 @@ async def test_create_payment_intent_rejects_cash_on_delivery(
 async def test_create_payment_intent_rejects_non_pending_order(
     client, customer_token, fake_inventory_client
 ):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     order_id, _, _ = await _create_order(client, headers, fake_inventory_client)  # still "new"
 
     resp = await client.post(f"/orders/{order_id}/payment-intent", headers=headers)
@@ -98,11 +98,11 @@ async def test_create_payment_intent_rejects_non_pending_order(
 async def test_create_payment_intent_other_owners_order_returns_404(
     client, customer_token, guest_token, fake_inventory_client
 ):
-    order_id, _, _ = await _create_order(client, {"x-internal-token": customer_token}, fake_inventory_client)
+    order_id, _, _ = await _create_order(client, customer_token, fake_inventory_client)
     await _set_status(client, order_id, OrderStatus.PENDING)
 
     resp = await client.post(
-        f"/orders/{order_id}/payment-intent", headers={"x-internal-token": guest_token}
+        f"/orders/{order_id}/payment-intent", headers=guest_token
     )
     assert resp.status_code == 404
 
@@ -110,7 +110,7 @@ async def test_create_payment_intent_other_owners_order_returns_404(
 async def test_stripe_webhook_marks_order_paid(
     client, customer_token, fake_inventory_client, fake_catalog_client
 ):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     order_id, product_id, price = await _create_order(client, headers, fake_inventory_client)
     await _set_status(client, order_id, OrderStatus.PENDING)
     fake_catalog_client.set_price(product_id, price)
@@ -156,27 +156,17 @@ async def test_admin_pay_confirms_cash_on_delivery_order(
     client, customer_token, admin_token, fake_inventory_client
 ):
     order_id, _, _ = await _create_order(
-        client, {"x-internal-token": customer_token}, fake_inventory_client, payload=CASH_ON_DELIVERY_PAYLOAD
+        client, customer_token, fake_inventory_client, payload=CASH_ON_DELIVERY_PAYLOAD
     )
     await _set_status(client, order_id, OrderStatus.PENDING)
 
-    resp = await client.post(f"/admin/{order_id}/pay", headers={"x-internal-token": admin_token})
+    resp = await client.post(f"/admin/{order_id}/pay", headers=admin_token)
     assert resp.status_code == 200
     assert resp.json()["status"] == "paid"
 
 
-async def test_admin_pay_rejects_non_admin(client, customer_token, fake_inventory_client):
-    order_id, _, _ = await _create_order(
-        client, {"x-internal-token": customer_token}, fake_inventory_client, payload=CASH_ON_DELIVERY_PAYLOAD
-    )
-    await _set_status(client, order_id, OrderStatus.PENDING)
-
-    resp = await client.post(f"/admin/{order_id}/pay", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
-
-
 async def test_admin_pay_non_pending_order_returns_409(client, customer_token, admin_token, fake_inventory_client):
-    order_id, _, _ = await _create_order(client, {"x-internal-token": customer_token}, fake_inventory_client)
+    order_id, _, _ = await _create_order(client, customer_token, fake_inventory_client)
 
-    resp = await client.post(f"/admin/{order_id}/pay", headers={"x-internal-token": admin_token})
+    resp = await client.post(f"/admin/{order_id}/pay", headers=admin_token)
     assert resp.status_code == 409

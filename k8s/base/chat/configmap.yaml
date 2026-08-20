@@ -5,14 +5,18 @@ metadata:
   labels:
     app: chat
 data:
-  PORT: "8000"
+  # Not the network-facing port anymore -- the chat-gate container below
+  # occupies :8000 (what the Service still targets, unchanged) and
+  # proxies here. HOST=127.0.0.1 means this is unreachable from outside
+  # the pod even if something guesses the port.
+  PORT: "8010"
+  HOST: "127.0.0.1"
   KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
   OUTBOX_POLL_INTERVAL_SECONDS: "1.0"
   REDIS_URL: "redis://redis:6379"
   MINIO_ENDPOINT: "http://minio:9000"
   MINIO_PUBLIC_BASE_URL: "http://localhost:9000"
   MINIO_BUCKET: "chat-attachments"
-  OPA_URL: "http://localhost:8181"
   # STR-146: forwards a registered customer's own internal-token here
   # synchronously on every message, so the shopping agent's ReAct loop has a
   # real per-customer identity to propagate into cart-mutating tool calls.

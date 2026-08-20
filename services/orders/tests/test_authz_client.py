@@ -37,16 +37,20 @@ async def test_check_denies_when_opa_returns_false():
 
 @respx.mock
 async def test_check_queries_given_package():
-    route = respx.post("http://opa.invalid/v1/data/checkout/allow").mock(
+    # `package` is a per-call override, not hardcoded to "orders" -- this
+    # only exercises that the client itself is reusable; the only actual
+    # production call site is routers/orders.py's get_order, always
+    # against the default "orders" package.
+    route = respx.post("http://opa.invalid/v1/data/some-other-package/allow").mock(
         return_value=httpx.Response(200, json={"result": True})
     )
 
     client = AuthzClient("http://opa.invalid")
     allowed = await client.check(
         subject={"role": "customer", "sub": "cust-1"},
-        action="checkout",
+        action="view",
         resource={"type": "order"},
-        package="checkout",
+        package="some-other-package",
     )
 
     assert allowed is True

@@ -7,7 +7,7 @@ ROOM_ID = "room_11111111-1111-1111-1111-111111111111"
 
 
 def connect(ws_client, room_id: str, token: str):
-    return ws_client.websocket_connect(f"/ws/room/{room_id}", headers={"x-internal-token": token})
+    return ws_client.websocket_connect(f"/ws/room/{room_id}", headers=token)
 
 
 async def _seed_messages(app, count: int) -> list[str]:
@@ -35,7 +35,7 @@ async def test_pagination_cursor_walks_backwards_through_history(app, client, ad
     ids = await _seed_messages(app, 5)
 
     first_page = await client.get(
-        f"/rooms/{ROOM_ID}/messages", params={"limit": 2}, headers={"x-internal-token": admin_token}
+        f"/rooms/{ROOM_ID}/messages", params={"limit": 2}, headers=admin_token
     )
     assert first_page.status_code == 200
     first_contents = [m["content"] for m in first_page.json()["messages"]]
@@ -44,7 +44,7 @@ async def test_pagination_cursor_walks_backwards_through_history(app, client, ad
     second_page = await client.get(
         f"/rooms/{ROOM_ID}/messages",
         params={"limit": 2, "before": ids[3]},
-        headers={"x-internal-token": admin_token},
+        headers=admin_token,
     )
     second_contents = [m["content"] for m in second_page.json()["messages"]]
     assert second_contents == ["message 2", "message 1"]

@@ -6,7 +6,6 @@ class Settings(BaseSettings):
 
     port: int = 8000
     database_url: str
-    internal_token_secret: str
     inventory_base_url: str
     inventory_timeout_seconds: float = 5.0
     # Container-to-container address, same pattern as inventory_base_url --

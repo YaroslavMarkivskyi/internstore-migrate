@@ -14,6 +14,10 @@ from orders.schemas import OrderRead
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
+# claims here come from orders-gate's forwarded X-User-Id/X-User-Role (see
+# orders/auth.py) -- already-verified identity, not this service's own
+# jwt.decode() anymore.
+
 
 @router.post("/{order_id}/pay", response_model=OrderRead)
 async def pay_order(

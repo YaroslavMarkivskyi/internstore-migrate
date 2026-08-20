@@ -13,7 +13,13 @@ GUEST_ROOM_ID = "room_guest-session-1"
 
 
 def test_customer_message_notifies_the_shopping_agent_with_the_real_token(app, ws_client, customer_token):
-    with connect(ws_client, ROOM_ID, customer_token) as ws:
+    # chat-gate forwards the raw X-Internal-Token header through to this
+    # app unchanged (it only *adds* X-User-Id/X-User-Role on top, see
+    # nginx/internal-gate/chat.conf) -- ws/room.py re-forwards it to the
+    # shopping agent as-is, so a real one needs to be present here for
+    # this request-shape assurance.
+    headers_with_raw_token = {**customer_token, "x-internal-token": "caller-supplied-token"}
+    with connect(ws_client, ROOM_ID, headers_with_raw_token) as ws:
         ws.send_text(json.dumps({"type": "message", "content": "find me a gouda under $20"}))
         ws.receive_text()
 
@@ -23,7 +29,7 @@ def test_customer_message_notifies_the_shopping_agent_with_the_real_token(app, w
         room_id=ROOM_ID,
         sender_id="11111111-1111-1111-1111-111111111111",
         message="find me a gouda under $20",
-        token=customer_token,
+        token="caller-supplied-token",
     )
 
 

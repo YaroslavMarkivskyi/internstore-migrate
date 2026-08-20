@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-from inventory.authz import AuthzClient
 from inventory.catalog_client import CatalogClient
 from inventory.config import Settings, load_settings
 from inventory.consumers.order_events import GROUP_ID, TOPIC as ORDER_EVENTS_TOPIC, make_dispatch
@@ -79,7 +78,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.catalog_client = CatalogClient(
         settings.catalog_base_url, settings.catalog_timeout_seconds, settings.internal_token_secret
     )
-    app.state.authz_client = AuthzClient(settings.opa_url)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

@@ -18,12 +18,18 @@ async def _add_item(client, headers, product_id: str, quantity: int = 2) -> None
 
 
 async def test_checkout_happy_path_creates_order_and_clears_cart(client, customer_token, fake_inventory_client):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     product_id = str(uuid.uuid4())
     await _add_item(client, headers, product_id, quantity=2)
     fake_inventory_client.set_sufficient([{"product_id": product_id, "quantity": 2}])
 
-    resp = await client.post("/checkout", json=CHECKOUT_PAYLOAD, headers=headers)
+    # orders-gate forwards the raw X-Internal-Token header through to this
+    # app unchanged (it only *adds* X-User-Id/X-User-Role on top, see
+    # nginx/internal-gate/orders.conf) -- checkout.py re-forwards it to
+    # Inventory's check-availability as-is, so a real one needs to be
+    # present here for that request-shape assurance below.
+    checkout_headers = {**headers, "x-internal-token": "caller-supplied-token"}
+    resp = await client.post("/checkout", json=CHECKOUT_PAYLOAD, headers=checkout_headers)
     assert resp.status_code == 201
     body = resp.json()
     assert body["status"] == "new"
@@ -36,7 +42,7 @@ async def test_checkout_happy_path_creates_order_and_clears_cart(client, custome
     # request-shape assurance: the caller's own internal token was forwarded
     assert fake_inventory_client.last_call is not None
     _, forwarded_token = fake_inventory_client.last_call
-    assert forwarded_token == customer_token
+    assert forwarded_token == "caller-supplied-token"
 
     # outbox: an OrderCreated row was staged in the same transaction as the
     # Order — this is what the background worker publishes, not a direct
@@ -53,7 +59,7 @@ async def test_checkout_happy_path_creates_order_and_clears_cart(client, custome
 async def test_checkout_insufficient_stock_returns_409_and_creates_no_order(
     client, customer_token, fake_inventory_client
 ):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     product_id = str(uuid.uuid4())
     await _add_item(client, headers, product_id, quantity=10)
     fake_inventory_client.set_insufficient(
@@ -75,7 +81,7 @@ async def test_checkout_insufficient_stock_returns_409_and_creates_no_order(
 
 
 async def test_checkout_inventory_unavailable_returns_503(client, customer_token, fake_inventory_client):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     product_id = str(uuid.uuid4())
     await _add_item(client, headers, product_id)
     fake_inventory_client.set_unavailable()
@@ -89,12 +95,12 @@ async def test_checkout_inventory_unavailable_returns_503(client, customer_token
 
 
 async def test_checkout_empty_cart_returns_422(client, customer_token):
-    resp = await client.post("/checkout", json=CHECKOUT_PAYLOAD, headers={"x-internal-token": customer_token})
+    resp = await client.post("/checkout", json=CHECKOUT_PAYLOAD, headers=customer_token)
     assert resp.status_code == 422
 
 
 async def test_guest_checkout_works(client, guest_token, fake_inventory_client):
-    headers = {"x-internal-token": guest_token}
+    headers = guest_token
     product_id = str(uuid.uuid4())
     await _add_item(client, headers, product_id, quantity=1)
     fake_inventory_client.set_sufficient([{"product_id": product_id, "quantity": 1}])

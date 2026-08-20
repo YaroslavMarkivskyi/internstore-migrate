@@ -39,24 +39,59 @@ access rides on the exact mechanism Orders' cart/checkout already use:
 Redis and mints an `X-Internal-Token` with `role: "guest"` — see
 [services/auth-backend/README.md](../auth-backend/README.md#guest-sessions).
 `GUEST_ALLOWED_PATH_PREFIXES` in `services/auth-backend/src/index.ts` was
-extended to cover `/ws/room` and `/api/chat/rooms` for this. Chat just
-verifies `X-Internal-Token` locally like every other service
-([src/chat/auth.py](src/chat/auth.py)) and trusts the `role`/`sub` claims —
-no direct Redis guest-session lookups here, avoiding a second copy of that
-logic.
+extended to cover `/ws/room` and `/api/chat/rooms` for this.
+
+Chat is a **hybrid** case, same shape as [Orders](../orders#auth):
+**chat-gate** (nginx, `auth_request`) sits in front of it, occupying the
+network-facing port (`:8000`) the external Gateway's `/ws/` and
+`/api/chat/` locations still call, and handles the coarse, route-level
+tier:
+
+- **admin** — `GET /rooms` (the admin room list), `DELETE /rooms/{id}`.
+- **admin-or-assistant** — `GET /rooms/{id}/messages` (the AI Assistant
+  reads recent history to build conversation context).
+- **assistant** (not admin-or-assistant — admin does *not* get a bypass
+  here) — `POST /rooms/{id}/messages`, the AI Assistant's only way to
+  inject a message into a room.
+- **any authenticated caller** — everything else, including the
+  `/ws/room/{id}` WebSocket handshake, `GET`/`PATCH /rooms/{id}/mode`,
+  and `POST /rooms/{id}/attachments`.
+
+See [nginx/internal-gate/chat.conf](../../nginx/internal-gate/chat.conf)'s
+`$chat_auth_tier` map, **chat-verify**
+([services/internal-gate](../internal-gate)) and **chat-opa**'s policy
+([policies/chat.rego](../../policies/chat.rego)).
+
+What does **not** move to the gate: room-ownership decisions ("is this my
+room"). `_room_owner_matches` (`routers/mode.py`, `ws/room.py`) is a pure
+function of `room_id` + the caller's own `sub` — no DB lookup needed, so
+it just stays inline in the app. `_authorize_room_access`
+(`routers/attachments.py`) *does* need a DB lookup (`room.customer_id`/
+`room.session_id`), unreachable from the gate, same reasoning as Orders'
+`GET /orders/{id}` — it also stays inline, unchanged.
+
+The app no longer verifies the internal token itself either way — it
+trusts `X-User-Id`/`X-User-Role`, forwarded by chat-gate once *it* has
+verified them (see [src/chat/auth.py](src/chat/auth.py)). This is
+identity *extraction*, not verification: safe only because this app is
+unreachable on any path except through chat-gate (`HOST=127.0.0.1`, see
+docker-compose.yml).
 
 WebSocket-specific: browsers' native `WebSocket` API can't set an
-`Authorization` header on the handshake, so nginx's `/ws/` location accepts
-a `?token=` query param as a fallback and forwards it through the same
-`auth_request` gate as everything else (see `nginx/nginx.conf`). Either way,
-by the time a request reaches this service, `X-Internal-Token` is already
-set on the handshake request — `get_internal_claims_ws` in
-[src/chat/auth.py](src/chat/auth.py) reads it straight off
-`WebSocket.headers`.
+`Authorization` header on the handshake, so nginx's `/ws/` location (the
+external Gateway) accepts a `?token=` query param as a fallback and
+forwards the resulting `X-Internal-Token` straight through — the
+handshake is a plain HTTP GET with an `Upgrade` header, so both the
+external Gateway's and chat-gate's `auth_request` work on it exactly like
+any REST call. `get_internal_claims_ws` in
+[src/chat/auth.py](src/chat/auth.py) reads `X-User-Id`/`X-User-Role`
+straight off `WebSocket.headers`, forwarded by chat-gate.
 
 Room ownership: a customer/guest may only open `/ws/room/room_{their own
 sub}` — attempting another room closes the connection (WS 1008). An admin
 may open any room.
+
+Live verification: [scripts/verify-chat-gate.sh](../../scripts/verify-chat-gate.sh).
 
 ## WebSocket flow — Approach 1 (publish-then-fanout)
 
@@ -182,7 +217,7 @@ uv run pytest
 ## Via docker compose
 
 ```bash
-docker compose up -d --build chat-db chat redis minio minio-init nginx
+docker compose up -d --build chat chat-opa chat-verify chat-gate chat-db redis minio minio-init nginx
 ```
 
 Reachable through nginx at `wss://localhost:8443/ws/room/{room_id}` and

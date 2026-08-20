@@ -6,7 +6,6 @@ class Settings(BaseSettings):
 
     port: int = 8000
     database_url: str
-    internal_token_secret: str
     kafka_bootstrap_servers: str
     outbox_poll_interval_seconds: float = 1.0
     redis_url: str

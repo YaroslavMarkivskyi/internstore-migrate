@@ -14,6 +14,13 @@ from orders.schemas import OrderRead
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
+# claims here come from orders-gate's forwarded X-User-Id/X-User-Role
+# (see orders/auth.py) -- already-verified identity, not this service's
+# own jwt.decode() anymore. get_order's per-order ownership check below
+# still needs a direct OPA call (owner_id lives in this service's own DB,
+# unreachable from the gate) -- see policies/orders.rego's resource-level
+# rules.
+
 
 @router.get("", response_model=list[OrderRead])
 async def list_orders(

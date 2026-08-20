@@ -16,16 +16,74 @@ spec:
     spec:
       enableServiceLinks: false
       containers:
+      # No readiness/liveness probes or :8000 here anymore -- inventory-gate
+      # below owns the network-facing port and health checks. This
+      # container isn't reachable at all outside this pod (HOST=127.0.0.1
+      # in inventory-config) -- only inventory-gate/inventory-verify/
+      # inventory-opa share its network namespace.
       - name: inventory
         image: internstore/inventory:local
         imagePullPolicy: IfNotPresent
-        ports:
-        - containerPort: 8000
         envFrom:
           - configMapRef:
               name: inventory-config
           - secretRef:
               name: inventory-secret
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      - name: inventory-opa
+        image: openpolicyagent/opa:latest
+        imagePullPolicy: IfNotPresent
+        args: ["run", "--server", "--addr=:8181", "/policies/inventory.rego", "/policies/common.rego"]
+        env:
+          - name: INTERNAL_TOKEN_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: inventory-secret
+                key: INTERNAL_TOKEN_SECRET
+        volumeMounts:
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      - name: inventory-verify
+        image: internstore/internal-gate:local
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: PORT
+            value: "8090"
+          - name: OPA_URL
+            value: "http://localhost:8181"
+          - name: OPA_PACKAGE
+            value: "inventory"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      - name: inventory-gate
+        image: nginx:1.27-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["nginx", "-c", "/etc/nginx-src/inventory.conf", "-g", "daemon off;"]
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: inventory-gate-config
+          mountPath: /etc/nginx-src
+          readOnly: true
         readinessProbe:
           httpGet:
             path: /health
@@ -40,21 +98,6 @@ spec:
           periodSeconds: 10
         resources:
           requests:
-            cpu: "100m"
-            memory: "256Mi"
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
-      - name: inventory-opa
-        image: openpolicyagent/opa:latest
-        imagePullPolicy: IfNotPresent
-        args: ["run", "--server", "--addr=:8181", "/policies/inventory.rego", "/policies/common.rego"]
-        volumeMounts:
-        - name: policies
-          mountPath: /policies
-          readOnly: true
-        resources:
-          requests:
             cpu: "50m"
             memory: "64Mi"
           limits:
@@ -64,3 +107,6 @@ spec:
       - name: policies
         configMap:
           name: opa-policies
+      - name: inventory-gate-config
+        configMap:
+          name: inventory-gate-config

@@ -1,23 +1,12 @@
-import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from inventory.authz import get_authz_client
 from inventory.catalog_client import get_catalog_client
 from inventory.config import Settings
 from inventory.db import Base, make_session_factory
 from inventory.main import create_app
 
 INTERNAL_TOKEN_SECRET = "test-secret"
-ISSUER = "internstore-gateway"
-
-
-def mint_internal_token(sub: str, role: str) -> str:
-    return jwt.encode(
-        {"sub": sub, "role": role, "iss": ISSUER},
-        INTERNAL_TOKEN_SECRET,
-        algorithm="HS256",
-    )
 
 
 class FakeCatalogClient:
@@ -35,27 +24,8 @@ def fake_catalog_client() -> FakeCatalogClient:
     return FakeCatalogClient()
 
 
-class FakeAuthzClient:
-    """Swapped in via app.dependency_overrides -- no real OPA sidecar call
-    is made. Mirrors policies/inventory.rego's admin-only baseline (route
-    tests exercise the actual policy separately, see test_authz_client.py
-    and opa test policies/)."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-
-    async def check(self, subject: dict, action: str, resource: dict, package: str = "inventory") -> bool:
-        self.calls.append({"subject": subject, "action": action, "resource": resource, "package": package})
-        return subject.get("role") == "admin"
-
-
 @pytest.fixture
-def fake_authz_client() -> FakeAuthzClient:
-    return FakeAuthzClient()
-
-
-@pytest.fixture
-async def client(fake_catalog_client: FakeCatalogClient, fake_authz_client: FakeAuthzClient):
+async def client(fake_catalog_client: FakeCatalogClient):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
         internal_token_secret=INTERNAL_TOKEN_SECRET,
@@ -71,7 +41,6 @@ async def client(fake_catalog_client: FakeCatalogClient, fake_authz_client: Fake
     app = create_app(settings=settings)
     app.state.session_factory = session_factory
     app.dependency_overrides[get_catalog_client] = lambda: fake_catalog_client
-    app.dependency_overrides[get_authz_client] = lambda: fake_authz_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -81,19 +50,26 @@ async def client(fake_catalog_client: FakeCatalogClient, fake_authz_client: Fake
     await engine.dispose()
 
 
+# inventory no longer checks the internal token or its role at all --
+# admin/identity-only enforcement moved to inventory-gate/internal-gate
+# ahead of this app (see docker-compose.yml, nginx/internal-gate/
+# inventory.conf, and scripts/verify-inventory-gate.sh for the tests that
+# actually exercise that). These fixtures just supply *some*
+# X-Internal-Token value for the many call sites in this suite that still
+# send one -- the value itself is never validated by anything here.
 @pytest.fixture
 def admin_token() -> str:
-    return mint_internal_token(sub="admin-1", role="admin")
+    return "test-token-admin-1"
 
 
 @pytest.fixture
 def customer_token() -> str:
-    return mint_internal_token(sub="customer-1", role="customer")
+    return "test-token-customer-1"
 
 
 @pytest.fixture
 def guest_token() -> str:
-    return mint_internal_token(sub="guest-1", role="guest")
+    return "test-token-guest-1"
 
 
 async def create_stock(client, admin_token: str, name: str = "Warehouse A") -> str:

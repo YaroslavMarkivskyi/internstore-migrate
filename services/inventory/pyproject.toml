@@ -11,11 +11,8 @@ dependencies = [
     "alembic>=1.13.2",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.2",
-    "pyjwt>=2.9.0",
     "aiokafka>=0.14.0",
-    # STR-140: AuthzClient's OPA sidecar call (authz.py) -- previously only
-    # a dev/test dependency despite catalog_client.py already using it at
-    # runtime.
+    # catalog_client.py's outbound call to Catalog (unpublish-on-zero-stock).
     "httpx>=0.27.2",
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
@@ -28,8 +25,9 @@ dev = [
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
     "aiosqlite>=0.20.0",
-    # STR-140: mocks AuthzClient's httpx calls in test_authz_client.py,
-    # same tool orders' test_inventory_client.py already uses for this.
+    "pyjwt>=2.9.0",
+    # mocks catalog_client.py's outbound httpx calls in tests, same tool
+    # orders' test_inventory_client.py uses for its own outbound client.
     "respx>=0.21.1",
 ]
 

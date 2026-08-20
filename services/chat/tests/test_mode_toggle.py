@@ -25,7 +25,7 @@ async def test_patch_mode_sets_db_and_redis(app, ws_client, client, customer_tok
     response = await client.patch(
         f"/rooms/{ROOM_ID}/mode",
         json={"mode": "human"},
-        headers={"x-internal-token": customer_token},
+        headers=customer_token,
     )
     assert response.status_code == 200
     assert response.json() == {"mode": "human"}
@@ -40,15 +40,15 @@ async def test_patch_mode_sets_db_and_redis(app, ws_client, client, customer_tok
 async def test_get_mode_reflects_current_state(app, ws_client, client, customer_token):
     await _create_room(ws_client, ROOM_ID, customer_token)
 
-    response = await client.get(f"/rooms/{ROOM_ID}/mode", headers={"x-internal-token": customer_token})
+    response = await client.get(f"/rooms/{ROOM_ID}/mode", headers=customer_token)
     assert response.status_code == 200
     assert response.json() == {"mode": "ai"}
 
     await client.patch(
-        f"/rooms/{ROOM_ID}/mode", json={"mode": "human"}, headers={"x-internal-token": customer_token}
+        f"/rooms/{ROOM_ID}/mode", json={"mode": "human"}, headers=customer_token
     )
 
-    response = await client.get(f"/rooms/{ROOM_ID}/mode", headers={"x-internal-token": customer_token})
+    response = await client.get(f"/rooms/{ROOM_ID}/mode", headers=customer_token)
     assert response.json() == {"mode": "human"}
 
 
@@ -58,7 +58,7 @@ async def test_customer_cannot_toggle_other_rooms(app, ws_client, client, custom
     response = await client.patch(
         f"/rooms/{OTHER_ROOM_ID}/mode",
         json={"mode": "human"},
-        headers={"x-internal-token": customer_token},
+        headers=customer_token,
     )
     assert response.status_code == 403
 
@@ -69,7 +69,7 @@ async def test_admin_can_toggle_any_room(app, ws_client, client, customer_token,
     response = await client.patch(
         f"/rooms/{ROOM_ID}/mode",
         json={"mode": "human"},
-        headers={"x-internal-token": admin_token},
+        headers=admin_token,
     )
     assert response.status_code == 200
     assert response.json() == {"mode": "human"}
@@ -79,7 +79,7 @@ async def test_switching_to_human_stages_admin_requested_event(app, ws_client, c
     await _create_room(ws_client, ROOM_ID, customer_token)
 
     await client.patch(
-        f"/rooms/{ROOM_ID}/mode", json={"mode": "human"}, headers={"x-internal-token": customer_token}
+        f"/rooms/{ROOM_ID}/mode", json={"mode": "human"}, headers=customer_token
     )
 
     events = await _outbox_events(app, "AdminRequested")
@@ -90,10 +90,10 @@ async def test_switching_to_human_stages_admin_requested_event(app, ws_client, c
 async def test_switching_to_ai_stages_ai_mode_enabled_event(app, ws_client, client, customer_token):
     await _create_room(ws_client, ROOM_ID, customer_token)
     await client.patch(
-        f"/rooms/{ROOM_ID}/mode", json={"mode": "human"}, headers={"x-internal-token": customer_token}
+        f"/rooms/{ROOM_ID}/mode", json={"mode": "human"}, headers=customer_token
     )
 
-    await client.patch(f"/rooms/{ROOM_ID}/mode", json={"mode": "ai"}, headers={"x-internal-token": customer_token})
+    await client.patch(f"/rooms/{ROOM_ID}/mode", json={"mode": "ai"}, headers=customer_token)
 
     events = await _outbox_events(app, "AIModeEnabled")
     assert len(events) == 1
@@ -107,24 +107,13 @@ async def test_assistant_can_post_internal_message(app, ws_client, client, custo
     response = await client.post(
         f"/rooms/{ROOM_ID}/messages",
         json={"content": "Your order shipped yesterday."},
-        headers={"x-internal-token": assistant_token},
+        headers=assistant_token,
     )
     assert response.status_code == 201
     assert response.json()["sender_type"] == "assistant"
 
     messages_response = await client.get(
-        f"/rooms/{ROOM_ID}/messages", headers={"x-internal-token": mint_internal_token(sub="a", role="admin")}
+        f"/rooms/{ROOM_ID}/messages", headers=mint_internal_token(sub="a", role="admin")
     )
     contents = [m["content"] for m in messages_response.json()["messages"]]
     assert "Your order shipped yesterday." in contents
-
-
-async def test_non_assistant_cannot_post_internal_message(app, ws_client, client, customer_token):
-    await _create_room(ws_client, ROOM_ID, customer_token)
-
-    response = await client.post(
-        f"/rooms/{ROOM_ID}/messages",
-        json={"content": "hi"},
-        headers={"x-internal-token": customer_token},
-    )
-    assert response.status_code == 403

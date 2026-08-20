@@ -25,6 +25,13 @@ router = APIRouter(prefix="/orders", tags=["payments"])
 # dedicated `location =` block, since Stripe has no internal token to send.
 webhook_router = APIRouter(tags=["payments"])
 
+# claims here come from orders-gate's forwarded X-User-Id/X-User-Role (see
+# orders/auth.py) -- already-verified identity, not this service's own
+# jwt.decode() anymore. /webhooks/stripe below is exempted from
+# orders-gate entirely (Stripe has no internal token to send, see
+# nginx/internal-gate/orders.conf) -- its own signature check
+# (stripe_client.construct_webhook_event) is the only auth it gets.
+
 
 @router.post("/{order_id}/payment-intent", response_model=PaymentIntentRead)
 async def create_payment_intent(

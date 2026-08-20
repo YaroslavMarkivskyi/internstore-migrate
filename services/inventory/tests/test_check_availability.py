@@ -107,14 +107,6 @@ async def test_check_availability_partial_across_multiple_products(client, admin
     assert by_product[insufficient_product] is False
 
 
-async def test_check_availability_requires_internal_token(client):
-    resp = await client.post(
-        "/stocks/check-availability",
-        json={"items": [{"product_id": str(uuid.uuid4()), "quantity": 1}]},
-    )
-    assert resp.status_code == 401
-
-
 async def test_check_availability_guest_token_allowed(client, guest_token):
     resp = await client.post(
         "/stocks/check-availability",

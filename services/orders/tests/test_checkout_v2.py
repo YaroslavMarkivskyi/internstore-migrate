@@ -80,7 +80,7 @@ async def test_checkout_v2_happy_path_returns_confirmed_and_clears_cart(
 ):
     client.app.dependency_overrides[get_temporal_client] = lambda: fake_temporal_client
 
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     product_id = str(uuid.uuid4())
     await _add_item(client, headers, product_id, quantity=2)
     fake_catalog_client.set_price(product_id, 10.0)
@@ -109,7 +109,7 @@ async def test_checkout_v2_falls_back_to_202_on_wait_timeout(
     client.app.dependency_overrides[get_temporal_client] = lambda: fake_temporal_client
     client.app.state.settings.checkout_v2_wait_seconds = 0.05
 
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     product_id = str(uuid.uuid4())
     await _add_item(client, headers, product_id, quantity=1)
     fake_catalog_client.set_price(product_id, 5.0)
@@ -129,7 +129,7 @@ async def test_checkout_v2_falls_back_to_202_on_wait_timeout(
 
 async def test_checkout_v2_empty_cart_returns_422(client, customer_token, fake_temporal_client):
     client.app.dependency_overrides[get_temporal_client] = lambda: fake_temporal_client
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
 
     resp = await client.post("/checkout/v2", json=CHECKOUT_PAYLOAD, headers=headers)
     assert resp.status_code == 422
@@ -138,7 +138,7 @@ async def test_checkout_v2_empty_cart_returns_422(client, customer_token, fake_t
 
 async def test_checkout_v2_returns_503_when_temporal_unavailable(client, customer_token):
     client.app.dependency_overrides[get_temporal_client] = lambda: None
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
 
     resp = await client.post("/checkout/v2", json=CHECKOUT_PAYLOAD, headers=headers)
     assert resp.status_code == 503
@@ -146,7 +146,7 @@ async def test_checkout_v2_returns_503_when_temporal_unavailable(client, custome
 
 async def test_get_checkout_v2_status_running(client, customer_token, fake_temporal_client):
     client.app.dependency_overrides[get_temporal_client] = lambda: fake_temporal_client
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     workflow_id = f"checkout-{uuid.uuid4()}"
     fake_temporal_client._handles[workflow_id] = FakeWorkflowHandle(workflow_id, hangs=True)
 
@@ -156,7 +156,7 @@ async def test_get_checkout_v2_status_running(client, customer_token, fake_tempo
 
 
 async def test_internal_create_order_is_idempotent_by_id(client, admin_token):
-    headers = {"x-internal-token": admin_token}
+    headers = admin_token
     order_id = str(uuid.uuid4())
     product_id = str(uuid.uuid4())
     payload = {
@@ -179,7 +179,7 @@ async def test_internal_create_order_is_idempotent_by_id(client, admin_token):
 
 
 async def test_internal_update_order_status_unknown_order_404(client, admin_token):
-    headers = {"x-internal-token": admin_token}
+    headers = admin_token
     resp = await client.patch(
         f"/internal/checkout-workflow/orders/{uuid.uuid4()}/status",
         json={"status": "paid"},
@@ -189,7 +189,7 @@ async def test_internal_update_order_status_unknown_order_404(client, admin_toke
 
 
 async def test_internal_update_order_status_sets_status(client, admin_token):
-    headers = {"x-internal-token": admin_token}
+    headers = admin_token
     order_id = str(uuid.uuid4())
     await client.post(
         "/internal/checkout-workflow/orders",

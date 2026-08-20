@@ -6,6 +6,10 @@ class Settings(BaseSettings):
 
     port: int = 8000
     database_url: str
+    # Only used to mint this service's own outbound token when calling
+    # Catalog (see catalog_client.py) -- verifying *inbound* tokens is now
+    # inventory-gate/inventory-verify/inventory-opa's job, ahead of this
+    # app entirely. See inventory/README.md's Auth section.
     internal_token_secret: str
     kafka_bootstrap_servers: str
     # For unpublishing a product in Catalog once it hits zero quantity
@@ -18,9 +22,6 @@ class Settings(BaseSettings):
     # runnable in local dev/tests instead of only declared.
     reservation_ttl_seconds: float = 86400
     reservation_check_interval_seconds: float = 60
-    # STR-140: OPA sidecar, same pod/network namespace on GKE (see
-    # docker-compose.yml's inventory-opa for the local dev equivalent).
-    opa_url: str = "http://localhost:8181"
     # STR-149: how often the snapshot worker polls for aggregates that have
     # crossed snapshots.SNAPSHOT_EVENT_THRESHOLD / SNAPSHOT_MAX_AGE. Not on
     # the reservation hot path -- see snapshots.py.

@@ -5,16 +5,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chat.auth import InternalClaims, require_admin, require_admin_or_assistant
 from chat.db import get_session
 from chat.models import Message, Room, RoomMember, SenderType
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
+# No role checks in this router anymore: GET /rooms is admin-only, GET
+# /rooms/{id}/messages is admin-or-assistant, DELETE /rooms/{id} is
+# admin-only -- all enforced ahead of this app entirely by chat-gate
+# (nginx, auth_request) + chat-verify (OPA-backed, policies/chat.rego).
+# See docker-compose.yml's chat-gate/chat-verify and
+# nginx/internal-gate/chat.conf's $chat_auth_tier map.
+
 
 @router.get("")
 async def list_rooms(
-    claims: Annotated[InternalClaims, Depends(require_admin)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> dict:
     rooms = (
@@ -64,7 +69,6 @@ async def list_rooms(
 @router.get("/{room_id}/messages")
 async def get_messages(
     room_id: str,
-    claims: Annotated[InternalClaims, Depends(require_admin_or_assistant)],
     session: Annotated[AsyncSession, Depends(get_session)],
     before: str | None = None,
     limit: int = 50,
@@ -103,7 +107,6 @@ async def get_messages(
 @router.delete("/{room_id}", status_code=204)
 async def delete_room(
     room_id: str,
-    claims: Annotated[InternalClaims, Depends(require_admin)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> None:
     room = await session.get(Room, room_id)

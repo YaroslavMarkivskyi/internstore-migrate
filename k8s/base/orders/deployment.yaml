@@ -16,16 +16,74 @@ spec:
     spec:
       enableServiceLinks: false
       containers:
+      # No readiness/liveness probes or :8000 here anymore -- orders-gate
+      # below owns the network-facing port and health checks. This
+      # container isn't reachable at all outside this pod (HOST=127.0.0.1
+      # in orders-config) -- only orders-gate/orders-verify/orders-opa
+      # share its network namespace.
       - name: orders
         image: internstore/orders:local
         imagePullPolicy: IfNotPresent
-        ports:
-        - containerPort: 8000
         envFrom:
           - configMapRef:
               name: orders-config
           - secretRef:
               name: orders-secret
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      - name: orders-opa
+        image: openpolicyagent/opa:latest
+        imagePullPolicy: IfNotPresent
+        args: ["run", "--server", "--addr=:8181", "/policies/orders.rego", "/policies/common.rego"]
+        env:
+          - name: INTERNAL_TOKEN_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: orders-secret
+                key: INTERNAL_TOKEN_SECRET
+        volumeMounts:
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      - name: orders-verify
+        image: internstore/internal-gate:local
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: PORT
+            value: "8090"
+          - name: OPA_URL
+            value: "http://localhost:8181"
+          - name: OPA_PACKAGE
+            value: "orders"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      - name: orders-gate
+        image: nginx:1.27-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["nginx", "-c", "/etc/nginx-src/orders.conf", "-g", "daemon off;"]
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: orders-gate-config
+          mountPath: /etc/nginx-src
+          readOnly: true
         readinessProbe:
           httpGet:
             path: /health
@@ -40,21 +98,6 @@ spec:
           periodSeconds: 10
         resources:
           requests:
-            cpu: "100m"
-            memory: "256Mi"
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
-      - name: orders-opa
-        image: openpolicyagent/opa:latest
-        imagePullPolicy: IfNotPresent
-        args: ["run", "--server", "--addr=:8181", "/policies/orders.rego", "/policies/checkout.rego", "/policies/common.rego"]
-        volumeMounts:
-        - name: policies
-          mountPath: /policies
-          readOnly: true
-        resources:
-          requests:
             cpu: "50m"
             memory: "64Mi"
           limits:
@@ -64,3 +107,6 @@ spec:
       - name: policies
         configMap:
           name: opa-policies
+      - name: orders-gate-config
+        configMap:
+          name: orders-gate-config

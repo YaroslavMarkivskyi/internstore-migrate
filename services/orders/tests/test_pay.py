@@ -30,7 +30,7 @@ async def _set_status(client, order_id: str, status: OrderStatus) -> None:
 async def test_pay_pending_order_transitions_to_paid_and_stages_outbox_event(
     client, customer_token, fake_inventory_client
 ):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     order_id = await _create_order(client, headers, fake_inventory_client)
     await _set_status(client, order_id, OrderStatus.PENDING)
 
@@ -46,7 +46,7 @@ async def test_pay_pending_order_transitions_to_paid_and_stages_outbox_event(
 
 
 async def test_pay_non_pending_order_returns_409(client, customer_token, fake_inventory_client):
-    headers = {"x-internal-token": customer_token}
+    headers = customer_token
     order_id = await _create_order(client, headers, fake_inventory_client)  # still "new", not pending
 
     resp = await client.post(f"/orders/{order_id}/pay", headers=headers)
@@ -54,13 +54,13 @@ async def test_pay_non_pending_order_returns_409(client, customer_token, fake_in
 
 
 async def test_pay_other_owners_order_returns_404(client, customer_token, guest_token, fake_inventory_client):
-    order_id = await _create_order(client, {"x-internal-token": customer_token}, fake_inventory_client)
+    order_id = await _create_order(client, customer_token, fake_inventory_client)
     await _set_status(client, order_id, OrderStatus.PENDING)
 
-    resp = await client.post(f"/orders/{order_id}/pay", headers={"x-internal-token": guest_token})
+    resp = await client.post(f"/orders/{order_id}/pay", headers=guest_token)
     assert resp.status_code == 404
 
 
 async def test_pay_unknown_order_returns_404(client, customer_token):
-    resp = await client.post(f"/orders/{uuid.uuid4()}/pay", headers={"x-internal-token": customer_token})
+    resp = await client.post(f"/orders/{uuid.uuid4()}/pay", headers=customer_token)
     assert resp.status_code == 404

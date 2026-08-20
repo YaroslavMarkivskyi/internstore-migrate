@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from inventory import commands, events as ev
-from inventory.auth import get_internal_claims, require_authz
 from inventory.catalog_client import CatalogClient, get_catalog_client
 from inventory.db import get_session
 from inventory.event_store import ConcurrencyConflict
@@ -36,6 +35,14 @@ from inventory.stock_sync import unpublish_if_out_of_stock
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
+# No role checks in this router anymore: stock/stock_item mutations and
+# the history/as-of reads are admin-only, check-availability/reserve/
+# release require only a valid identity (any role) -- all enforced ahead
+# of this app entirely by inventory-gate (nginx, auth_request) +
+# inventory-verify (OPA-backed, policies/inventory.rego). See
+# docker-compose.yml's inventory-gate/inventory-verify and
+# nginx/internal-gate/inventory.conf's three-tier map.
+
 
 async def _get_stock_or_404(session: AsyncSession, stock_id: uuid.UUID) -> Stock:
     stock = await session.get(Stock, stock_id)
@@ -50,7 +57,7 @@ async def list_stocks(session: Annotated[AsyncSession, Depends(get_session)]) ->
     return list(result.scalars().all())
 
 
-@router.post("", response_model=StockRead, status_code=201, dependencies=[Depends(require_authz("create", "stock"))])
+@router.post("", response_model=StockRead, status_code=201)
 async def create_stock(
     payload: StockCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -74,7 +81,7 @@ async def get_stock(
     return await _get_stock_or_404(session, stock_id)
 
 
-@router.patch("/{stock_id}", response_model=StockRead, dependencies=[Depends(require_authz("update", "stock"))])
+@router.patch("/{stock_id}", response_model=StockRead)
 async def update_stock(
     stock_id: uuid.UUID,
     payload: StockUpdate,
@@ -98,7 +105,7 @@ async def update_stock(
     return stock
 
 
-@router.delete("/{stock_id}", status_code=204, dependencies=[Depends(require_authz("delete", "stock"))])
+@router.delete("/{stock_id}", status_code=204)
 async def delete_stock(
     stock_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -129,7 +136,6 @@ async def list_stock_items(
     "/{stock_id}/items",
     response_model=StockItemRead,
     status_code=201,
-    dependencies=[Depends(require_authz("create", "stock_item"))],
 )
 async def receive_stock_item(
     stock_id: uuid.UUID,
@@ -145,7 +151,6 @@ async def receive_stock_item(
 @router.patch(
     "/{stock_id}/items/{item_id}",
     response_model=StockItemRead,
-    dependencies=[Depends(require_authz("update", "stock_item"))],
 )
 async def update_stock_item_quantity(
     stock_id: uuid.UUID,
@@ -168,7 +173,6 @@ async def update_stock_item_quantity(
 @router.delete(
     "/{stock_id}/items/{item_id}",
     status_code=204,
-    dependencies=[Depends(require_authz("delete", "stock_item"))],
 )
 async def delete_stock_item(
     stock_id: uuid.UUID,
@@ -190,7 +194,6 @@ async def delete_stock_item(
 @router.post(
     "/{stock_id}/items/{item_id}/move",
     response_model=StockItemRead,
-    dependencies=[Depends(require_authz("move", "stock_item"))],
 )
 async def move_stock_item(
     stock_id: uuid.UUID,
@@ -217,7 +220,6 @@ async def move_stock_item(
 @router.post(
     "/{stock_id}/items/{item_id}/mark-available",
     response_model=StockItemRead,
-    dependencies=[Depends(require_authz("update", "stock_item"))],
 )
 async def mark_stock_item_available(
     stock_id: uuid.UUID,
@@ -244,7 +246,6 @@ async def mark_stock_item_available(
 @router.post(
     "/check-availability",
     response_model=CheckAvailabilityResponse,
-    dependencies=[Depends(get_internal_claims)],
 )
 async def check_availability(
     payload: CheckAvailabilityRequest,
@@ -297,7 +298,6 @@ async def check_availability(
 @router.post(
     "/reserve",
     response_model=ReserveStockResponse,
-    dependencies=[Depends(get_internal_claims)],
 )
 async def reserve_stock(
     payload: ReserveStockRequest,
@@ -331,7 +331,6 @@ async def reserve_stock(
 @router.post(
     "/release",
     response_model=ReleaseStockResponse,
-    dependencies=[Depends(get_internal_claims)],
 )
 async def release_stock(
     payload: ReleaseStockRequest,
@@ -358,7 +357,6 @@ async def release_stock(
 @router.get(
     "/{stock_id}/{product_id}/history",
     response_model=StockEventHistoryPage,
-    dependencies=[Depends(require_authz("read", "stock_item_history"))],
 )
 async def get_stock_item_history(
     stock_id: uuid.UUID,
@@ -388,7 +386,6 @@ async def get_stock_item_history(
 @router.get(
     "/{stock_id}/{product_id}/as-of",
     response_model=StockItemAsOf,
-    dependencies=[Depends(require_authz("read", "stock_item_history"))],
 )
 async def get_stock_item_as_of(
     stock_id: uuid.UUID,

@@ -1,7 +1,6 @@
 import json
 from types import SimpleNamespace
 
-import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -13,16 +12,13 @@ from orders.inventory_client import InventoryUnavailableError, get_inventory_cli
 from orders.main import create_app
 from orders.stripe_client import get_stripe_client
 
-INTERNAL_TOKEN_SECRET = "test-secret"
-ISSUER = "internstore-gateway"
 
-
-def mint_internal_token(sub: str, role: str) -> str:
-    return jwt.encode(
-        {"sub": sub, "role": role, "iss": ISSUER},
-        INTERNAL_TOKEN_SECRET,
-        algorithm="HS256",
-    )
+# orders no longer verifies a JWT itself -- it trusts X-User-Id/X-User-Role,
+# forwarded by orders-gate once *it* has verified the caller (see
+# orders/auth.py). These headers are what tests send in place of the old
+# mint_internal_token(...)-produced JWT.
+def mint_internal_token(sub: str, role: str) -> dict[str, str]:
+    return {"X-User-Id": sub, "X-User-Role": role}
 
 
 class FakeInventoryClient:
@@ -113,11 +109,13 @@ def fake_stripe_client() -> FakeStripeClient:
 
 class FakeAuthzClient:
     """Swapped in via app.dependency_overrides -- no real OPA sidecar call
-    is made. Mirrors policies/orders.rego (own-order view/update,
-    guest-can-create) and policies/checkout.rego (customer/guest can check
-    out, checkout-workflow's own admin identity can do anything) -- route
-    tests exercise the actual policies separately, see
-    test_authz_client.py and opa test policies/."""
+    is made. Mirrors policies/orders.rego's resource-level rules (own-order
+    view/update, guest-can-create) -- the only ones orders' own code still
+    calls directly (routers/orders.py's get_order); every route-level tier
+    (admin-only, admin-or-assistant, any-authenticated) is enforced by
+    orders-gate ahead of this app entirely, so it's not exercised through
+    this fake at all -- see scripts/verify-orders-gate.sh and
+    opa test policies/ for those."""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -127,14 +125,10 @@ class FakeAuthzClient:
         role = subject.get("role")
         if role == "admin":
             return True
-        if package == "orders":
-            if action in ("view", "update") and resource.get("type") == "order":
-                return role == "customer" and resource.get("owner") == subject.get("sub")
-            if action == "create" and resource.get("type") == "order":
-                return role == "guest"
-            return False
-        if package == "checkout":
-            return action == "checkout" and role in ("customer", "guest")
+        if action in ("view", "update") and resource.get("type") == "order":
+            return role == "customer" and resource.get("owner") == subject.get("sub")
+        if action == "create" and resource.get("type") == "order":
+            return role == "guest"
         return False
 
 
@@ -152,7 +146,6 @@ async def client(
 ):
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
-        internal_token_secret=INTERNAL_TOKEN_SECRET,
         inventory_base_url="http://inventory.invalid",
         catalog_base_url="http://catalog.invalid",
         kafka_bootstrap_servers="kafka.invalid:9092",
@@ -181,15 +174,15 @@ async def client(
 
 
 @pytest.fixture
-def admin_token() -> str:
+def admin_token() -> dict[str, str]:
     return mint_internal_token(sub="admin-1", role="admin")
 
 
 @pytest.fixture
-def customer_token() -> str:
+def customer_token() -> dict[str, str]:
     return mint_internal_token(sub="customer-1", role="customer")
 
 
 @pytest.fixture
-def guest_token() -> str:
+def guest_token() -> dict[str, str]:
     return mint_internal_token(sub="guest-1", role="guest")

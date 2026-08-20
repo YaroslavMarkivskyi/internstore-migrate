@@ -25,8 +25,9 @@ for the *internal* token, one instance per gated domain service.
 
 - `GET /health` — liveness check.
 - `GET /verify` — the `auth_request` target. Reads `X-Internal-Token`
-  (required) and `X-Original-Method`, POSTs `{"input": {"token": ...,
-  "method": ...}}` to `${OPA_URL}/v1/data/${OPA_PACKAGE}`, and returns:
+  (required), `X-Original-Method`, and optionally `X-Required-Role`, POSTs
+  `{"input": {"token": ..., "method": ..., "required_role"?: ...}}` to
+  `${OPA_URL}/v1/data/${OPA_PACKAGE}`, and returns:
   - `401` if the token is missing or OPA's `subject` rule is undefined
     (missing/forged/expired/wrong-issuer token, or OPA itself is
     unreachable — fails closed)
@@ -35,6 +36,14 @@ for the *internal* token, one instance per gated domain service.
 
 No domain-specific logic lives here — `OPA_PACKAGE` is the only thing
 that varies per deployment (see docker-compose.yml's `catalog-verify`).
+`X-Required-Role` is a generic passthrough for services whose
+access-control shape needs more than a flat admin-only gate: inventory
+sets it from its own nginx map to distinguish its identity-only routes
+(any authenticated caller — `check-availability`/`reserve`/`release`) from
+its admin-only ones, and `policies/inventory.rego` reads
+`input.required_role` accordingly. Omitted entirely for services that
+don't need the distinction (catalog/security/payments), so it's simply
+absent from `input` there.
 
 ## Config
 

@@ -3,14 +3,6 @@ import uuid
 from tests.conftest import create_stock
 
 
-async def test_history_requires_admin(client, customer_token):
-    resp = await client.get(
-        f"/stocks/{uuid.uuid4()}/{uuid.uuid4()}/history",
-        headers={"x-internal-token": customer_token},
-    )
-    assert resp.status_code == 403
-
-
 async def test_history_shows_exact_event_sequence(client, admin_token):
     headers = {"x-internal-token": admin_token}
     stock_id = await create_stock(client, admin_token)

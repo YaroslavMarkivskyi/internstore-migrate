@@ -5,12 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chat.auth import InternalClaims, require_assistant
 from chat.db import get_session
 from chat.models import Message, Room, SenderType
 from chat.pubsub import PubSubRouter
 
 router = APIRouter(prefix="/rooms", tags=["internal-messages"])
+
+# No role check in this router anymore: this route is assistant-only,
+# enforced ahead of this app entirely by chat-gate + chat-verify. See
+# routers/rooms.py's comment for the full pattern.
 
 
 class InternalMessageCreate(BaseModel):
@@ -30,7 +33,6 @@ def get_pubsub(request: Request) -> PubSubRouter:
 async def post_internal_message(
     room_id: str,
     payload: InternalMessageCreate,
-    claims: Annotated[InternalClaims, Depends(require_assistant)],
     session: Annotated[AsyncSession, Depends(get_session)],
     pubsub: Annotated[PubSubRouter, Depends(get_pubsub)],
 ) -> dict:

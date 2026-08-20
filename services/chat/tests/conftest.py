@@ -2,7 +2,6 @@ import contextlib
 
 import anyio.from_thread
 import fakeredis
-import jwt
 import pytest
 import sqlalchemy
 from fastapi.testclient import TestClient
@@ -12,16 +11,13 @@ from chat.config import Settings
 from chat.db import Base, make_session_factory
 from chat.main import create_app
 
-INTERNAL_TOKEN_SECRET = "test-secret"
-ISSUER = "internstore-gateway"
 
-
-def mint_internal_token(sub: str, role: str) -> str:
-    return jwt.encode(
-        {"sub": sub, "role": role, "iss": ISSUER},
-        INTERNAL_TOKEN_SECRET,
-        algorithm="HS256",
-    )
+# chat no longer verifies a JWT itself -- it trusts X-User-Id/X-User-Role,
+# forwarded by chat-gate once *it* has verified the caller (see
+# chat/auth.py). These headers are what tests send in place of the old
+# mint_internal_token(...)-produced JWT.
+def mint_internal_token(sub: str, role: str) -> dict[str, str]:
+    return {"X-User-Id": sub, "X-User-Role": role}
 
 
 class FakeMinioClient:
@@ -54,7 +50,6 @@ async def app_and_client(fake_minio_client: FakeMinioClient, tmp_path):
     # against the same durable file.
     settings = Settings(
         database_url=f"sqlite+aiosqlite:///{tmp_path}/test.db",
-        internal_token_secret=INTERNAL_TOKEN_SECRET,
         kafka_bootstrap_servers="kafka.invalid:9092",
         redis_url="redis://redis.invalid:6379",
         minio_endpoint="http://minio.invalid:9000",
@@ -172,28 +167,28 @@ def ws_client(app):
 
 
 @contextlib.contextmanager
-def ws_connect(ws_client: TestClient, room_id: str, token: str, *, is_guest: bool = False):
+def ws_connect(ws_client: TestClient, room_id: str, token: dict[str, str], *, is_guest: bool = False):
     """Connects and, for registered users (customer/admin), drains the
     "history" frame the server sends immediately on connect (see
     chat/ws/room.py's _send_history) before handing control back to the
     test — callers shouldn't have to know that frame exists unless a test
     is specifically about history replay (see test_messages.py)."""
-    with ws_client.websocket_connect(f"/ws/room/{room_id}", headers={"x-internal-token": token}) as ws:
+    with ws_client.websocket_connect(f"/ws/room/{room_id}", headers=token) as ws:
         if not is_guest:
             ws.receive_text()
         yield ws
 
 
 @pytest.fixture
-def admin_token() -> str:
+def admin_token() -> dict[str, str]:
     return mint_internal_token(sub="admin-1", role="admin")
 
 
 @pytest.fixture
-def customer_token() -> str:
+def customer_token() -> dict[str, str]:
     return mint_internal_token(sub="11111111-1111-1111-1111-111111111111", role="customer")
 
 
 @pytest.fixture
-def guest_token() -> str:
+def guest_token() -> dict[str, str]:
     return mint_internal_token(sub="guest-session-1", role="guest")

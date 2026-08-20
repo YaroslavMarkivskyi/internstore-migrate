@@ -31,14 +31,16 @@ patches:
     # excludes checkout-workflow-worker: it carries no readinessProbe/
     # livenessProbe at all (see its deployment.yaml comment), so this
     # patch's `add` ops have no parent path to attach to there. Also
-    # excludes catalog, security and payments: their readiness/liveness
-    # probes moved off containers/0 onto their own *-gate container
-    # (index 3) when internal-token verification moved into that
-    # sidecar chain -- see patches/catalog-gate-probe-tolerance.yaml,
-    # patches/security-gate-probe-tolerance.yaml and
-    # patches/payments-gate-probe-tolerance.yaml below for their
-    # equivalents.
-    name: "^(ai-assistant|auth-backend|chat|inventory|mcp-gateway|mock-camera|nginx|notifications|orders|redis|telemetry|temporal|temporal-ui)$"
+    # excludes catalog, security, payments, inventory, orders and chat:
+    # their readiness/liveness probes moved off containers/0 onto their
+    # own *-gate container (index 3) when internal-token verification
+    # moved into that sidecar chain -- see patches/catalog-gate-probe-tolerance.yaml,
+    # patches/security-gate-probe-tolerance.yaml,
+    # patches/payments-gate-probe-tolerance.yaml,
+    # patches/inventory-gate-probe-tolerance.yaml,
+    # patches/orders-gate-probe-tolerance.yaml and
+    # patches/chat-gate-probe-tolerance.yaml below for their equivalents.
+    name: "^(ai-assistant|auth-backend|mcp-gateway|mock-camera|nginx|notifications|redis|telemetry|temporal|temporal-ui)$"
 - path: patches/catalog-gate-probe-tolerance.yaml
   target:
     kind: Deployment
@@ -51,6 +53,18 @@ patches:
   target:
     kind: Deployment
     name: "^payments$"
+- path: patches/inventory-gate-probe-tolerance.yaml
+  target:
+    kind: Deployment
+    name: "^inventory$"
+- path: patches/orders-gate-probe-tolerance.yaml
+  target:
+    kind: Deployment
+    name: "^orders$"
+- path: patches/chat-gate-probe-tolerance.yaml
+  target:
+    kind: Deployment
+    name: "^chat$"
 - path: patches/loosen-probe-tolerance.yaml
   target:
     kind: StatefulSet

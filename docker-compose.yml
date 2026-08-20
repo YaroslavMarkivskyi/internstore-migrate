@@ -192,9 +192,17 @@ services:
   inventory:
     build: ./services/inventory
     environment:
-      PORT: "8000"
+      # Not the network-facing port anymore -- inventory-gate (nginx)
+      # below occupies :8000 (what every other service's InventoryClient
+      # still calls, unchanged) and proxies here. HOST=127.0.0.1 means
+      # this is unreachable from outside this pod's shared network
+      # namespace even if something guesses the port.
+      PORT: "8010"
+      HOST: "127.0.0.1"
       DATABASE_URL: postgresql+asyncpg://inventory:inventory@inventory-db:5432/inventory
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as catalog.
+      # Only used to mint this service's own outbound token when calling
+      # Catalog (see catalog_client.py) -- must match auth-backend's
+      # INTERNAL_TOKEN_SECRET, same as catalog.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # Short dev/test values so the reservation-saga's expired-reservation
@@ -211,9 +219,6 @@ services:
       # as Orders -> Catalog.
       CATALOG_BASE_URL: http://catalog:8000
       CATALOG_TIMEOUT_SECONDS: "5.0"
-      # STR-140: sidecar, same pod/network namespace — see inventory-opa
-      # below.
-      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/inventory/src:/app/src
@@ -227,16 +232,49 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # catalog.
 
-  # STR-140: OPA policy sidecar for Inventory — see catalog-opa above for
-  # the sidecar-vs-central-service rationale and the network_mode note.
+  # OPA policy sidecar for Inventory — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note. Wires
+  # policies/inventory.rego's admin-only/identity-only split.
   inventory-opa:
     image: openpolicyagent/opa:latest
     command: ["run", "--server", "--addr=:8181", "/policies/inventory.rego", "/policies/common.rego"]
+    environment:
+      # common.rego's `subject` rule verifies X-Internal-Token itself
+      # (io.jwt.decode_verify) — must match inventory's own (removed)
+      # INTERNAL_TOKEN_SECRET and every caller's minted-token secret.
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
     volumes:
       - ./policies:/policies:ro
     network_mode: "service:inventory"
     depends_on:
       - inventory
+
+  # Translates OPA's JSON decision into the HTTP status/headers
+  # inventory-gate's auth_request needs — same generic image as
+  # catalog-verify/security-verify/payments-verify, parameterized by
+  # OPA_PACKAGE.
+  inventory-verify:
+    build: ./services/internal-gate
+    environment:
+      PORT: "8090"
+      OPA_URL: http://localhost:8181
+      OPA_PACKAGE: inventory
+    network_mode: "service:inventory"
+    depends_on:
+      - inventory-opa
+
+  # Occupies :8000 -- what every other service's InventoryClient still
+  # calls. Three-tier split (public/identity-only/admin-only), see
+  # nginx/internal-gate/inventory.conf.
+  inventory-gate:
+    image: nginx:1.27-alpine
+    command: ["nginx", "-c", "/etc/nginx-src/inventory.conf", "-g", "daemon off;"]
+    volumes:
+      - ./nginx/internal-gate:/etc/nginx-src:ro
+    network_mode: "service:inventory"
+    depends_on:
+      - inventory
+      - inventory-verify
 
   orders-db:
     image: postgres:16-alpine
@@ -255,10 +293,14 @@ services:
   orders:
     build: ./services/orders
     environment:
-      PORT: "8000"
+      # Not the network-facing port anymore -- orders-gate (nginx) below
+      # occupies :8000 (what the external Gateway and stripe-cli below
+      # still call, unchanged) and proxies here. HOST=127.0.0.1 means this
+      # is unreachable from outside this pod's shared network namespace
+      # even if something guesses the port.
+      PORT: "8010"
+      HOST: "127.0.0.1"
       DATABASE_URL: postgresql+asyncpg://orders:orders@orders-db:5432/orders
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as catalog/inventory.
-      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       # Container-to-container address on the compose network — bypasses
       # nginx for this one synchronous inter-service call (see
       # libs/contracts/inventory/check-availability.md).
@@ -282,8 +324,10 @@ services:
       TEMPORAL_HOST: temporal:7233
       TEMPORAL_TASK_QUEUE: checkout-workflow
       CHECKOUT_V2_WAIT_SECONDS: "10.0"
-      # STR-140: sidecar, same pod/network namespace — see orders-opa
-      # below.
+      # Only used for routers/orders.py's get_order resource-ownership
+      # check -- a direct call this service's own code still makes to the
+      # orders-opa sidecar below (owner_id lives in this service's own DB,
+      # unreachable from orders-gate). See orders/authz.py.
       OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
@@ -310,28 +354,58 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory.
 
-  # STR-140: OPA policy sidecar for Orders — see catalog-opa above for the
-  # sidecar-vs-central-service rationale and the network_mode note. Loads
-  # both orders.rego (order view/update ownership check) and checkout.rego
-  # (the check_permission() stub STR-139 left in routers/checkout_v2.py) —
-  # both packages live behind this one sidecar since they're both queried
-  # by this same service.
+  # OPA policy sidecar for Orders — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note. A
+  # single package (orders.rego) covers both orders-verify's route-level
+  # gate tiers (admin-only/admin-or-assistant/any-authenticated) *and*
+  # the resource-ownership check orders' own code queries directly (see
+  # orders/authz.py) -- policies/checkout.rego was merged into it when
+  # that route-level gating moved out of the app.
   orders-opa:
     image: openpolicyagent/opa:latest
-    command:
-      [
-        "run",
-        "--server",
-        "--addr=:8181",
-        "/policies/orders.rego",
-        "/policies/checkout.rego",
-        "/policies/common.rego",
-      ]
+    command: ["run", "--server", "--addr=:8181", "/policies/orders.rego", "/policies/common.rego"]
+    environment:
+      # common.rego's `subject` rule verifies X-Internal-Token itself
+      # (io.jwt.decode_verify) — must match every caller's minted-token
+      # secret. Orders itself no longer has its own INTERNAL_TOKEN_SECRET
+      # (removed along with jwt.decode() -- see orders/auth.py).
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
     volumes:
       - ./policies:/policies:ro
     network_mode: "service:orders"
     depends_on:
       - orders
+
+  # Translates OPA's JSON decision into the HTTP status/headers
+  # orders-gate's auth_request needs — same generic image as
+  # catalog-verify/security-verify/payments-verify/inventory-verify,
+  # parameterized by OPA_PACKAGE.
+  orders-verify:
+    build: ./services/internal-gate
+    environment:
+      PORT: "8090"
+      OPA_URL: http://localhost:8181
+      OPA_PACKAGE: orders
+    network_mode: "service:orders"
+    depends_on:
+      - orders-opa
+
+  # Occupies :8000 -- what the external Gateway and stripe-cli below still
+  # call. Three-tier split (public/admin/admin-or-assistant/any-
+  # authenticated), see nginx/internal-gate/orders.conf. Unlike
+  # catalog/security/payments/inventory, orders' own code still forwards
+  # X-User-Id/X-User-Role for business logic that genuinely needs identity
+  # (own cart, own orders) -- this gate only stops it from having to
+  # verify that identity itself.
+  orders-gate:
+    image: nginx:1.27-alpine
+    command: ["nginx", "-c", "/etc/nginx-src/orders.conf", "-g", "daemon off;"]
+    volumes:
+      - ./nginx/internal-gate:/etc/nginx-src:ro
+    network_mode: "service:orders"
+    depends_on:
+      - orders
+      - orders-verify
 
   # Forwards Stripe test-mode webhook events straight to the orders
   # container (bypassing nginx/TLS entirely -- no cert-trust issues to
@@ -348,10 +422,11 @@ services:
     image: stripe/stripe-cli:latest
     restart: unless-stopped
     command: listen --api-key ${STRIPE_SECRET_KEY:-} --forward-to http://orders:8000/webhooks/stripe
-    # orders has no healthcheck defined, so service_started (not
-    # service_healthy) is all that's available to depend on here.
+    # orders-gate (not orders itself, see above) has no healthcheck
+    # defined, so service_started (not service_healthy) is all that's
+    # available to depend on here. It's what actually owns :8000 now.
     depends_on:
-      orders:
+      orders-gate:
         condition: service_started
 
   # --- STR-139: Temporal orchestration for checkout, parallel to Orders'
@@ -841,11 +916,14 @@ services:
   chat:
     build: ./services/chat
     environment:
-      PORT: "8000"
+      # Not the network-facing port anymore -- chat-gate (nginx) below
+      # occupies :8000 (what the external Gateway's /ws/ and /api/chat/
+      # locations still call, unchanged) and proxies here. HOST=127.0.0.1
+      # means this is unreachable from outside this pod's shared network
+      # namespace even if something guesses the port.
+      PORT: "8010"
+      HOST: "127.0.0.1"
       DATABASE_URL: postgresql+asyncpg://chat:chat@chat-db:5432/chat
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as every
-      # other domain service.
-      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OUTBOX_POLL_INTERVAL_SECONDS: "1.0"
       # Shared with auth-backend — Redis pub/sub + presence sets live under
@@ -857,9 +935,6 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: chat-attachments
-      # STR-140: sidecar, same pod/network namespace — see chat-opa below.
-      # Not yet consumed by this service's own code, same as telemetry's.
-      OPA_URL: http://localhost:8181
       # STR-146: forwards a registered customer's own internal-token here on
       # every message, synchronously, so the shopping agent's ReAct loop has
       # a real per-customer identity to propagate into cart-mutating tool
@@ -882,20 +957,57 @@ services:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory/orders/telemetry/security. nginx's /ws/ and
-    # /api/chat/ locations address this container as chat:8000.
+    # /api/chat/ locations address this container as chat:8000 (now
+    # chat-gate, see below).
 
-  # STR-140: OPA policy sidecar for Chat — see catalog-opa above for the
-  # sidecar-vs-central-service rationale and the network_mode note. No Chat
-  # endpoint calls it yet (see policies/chat.rego) — this establishes the
-  # sidecar ahead of a follow-up ticket's incremental rollout.
+  # OPA policy sidecar for Chat — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note. Wires
+  # chat-verify's route-level gate tiers (admin/admin-or-assistant/
+  # assistant/any-authenticated) -- room-ownership decisions stay inline
+  # in chat's own code (see policies/chat.rego's comment).
   chat-opa:
     image: openpolicyagent/opa:latest
     command: ["run", "--server", "--addr=:8181", "/policies/chat.rego", "/policies/common.rego"]
+    environment:
+      # common.rego's `subject` rule verifies X-Internal-Token itself
+      # (io.jwt.decode_verify) — must match auth-backend's
+      # INTERNAL_TOKEN_SECRET. Chat itself no longer has its own copy
+      # (removed along with jwt.decode() -- see chat/auth.py).
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
     volumes:
       - ./policies:/policies:ro
     network_mode: "service:chat"
     depends_on:
       - chat
+
+  # Translates OPA's JSON decision into the HTTP status/headers
+  # chat-gate's auth_request needs — same generic image as
+  # catalog-verify/security-verify/payments-verify/inventory-verify/
+  # orders-verify, parameterized by OPA_PACKAGE.
+  chat-verify:
+    build: ./services/internal-gate
+    environment:
+      PORT: "8090"
+      OPA_URL: http://localhost:8181
+      OPA_PACKAGE: chat
+    network_mode: "service:chat"
+    depends_on:
+      - chat-opa
+
+  # Occupies :8000 -- what the external Gateway's /ws/ and /api/chat/
+  # locations still call. Handles both REST and the /ws/room/{id}
+  # WebSocket handshake (auth_request works on it the same way, see
+  # nginx/internal-gate/chat.conf's comment). Four-tier split (public/
+  # admin/admin-or-assistant/assistant/any-authenticated).
+  chat-gate:
+    image: nginx:1.27-alpine
+    command: ["nginx", "-c", "/etc/nginx-src/chat.conf", "-g", "daemon off;"]
+    volumes:
+      - ./nginx/internal-gate:/etc/nginx-src:ro
+    network_mode: "service:chat"
+    depends_on:
+      - chat
+      - chat-verify
 
   ai-db:
     image: ankane/pgvector:latest

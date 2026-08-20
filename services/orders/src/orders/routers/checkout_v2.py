@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 from temporalio.client import Client, WorkflowFailureError
 
 from orders.auth import InternalClaims, get_internal_claims
-from orders.authz import AuthzClient, get_authz_client
 from orders.catalog_client import CatalogClient, CatalogUnavailableError, get_catalog_client
 from orders.db import get_session
 from orders.models import Cart, Order, OrderItem
@@ -30,22 +29,15 @@ router = APIRouter(tags=["checkout-v2"])
 # mark_order_rejected — see services/checkout-workflow/src/checkout_workflow/activities.py).
 # Kept in this same file rather than a new module since every route here
 # exists only in service of /checkout/v2.
+#
+# No role checks in this file anymore: /checkout/v2 and its status poll
+# are "any authenticated caller" (customer/guest alike), and the
+# /internal/checkout-workflow/* routes are admin-only (checkout-workflow's
+# own internal token) -- both enforced ahead of this app entirely by
+# orders-gate (nginx, auth_request) + orders-verify (OPA-backed,
+# policies/orders.rego). See nginx/internal-gate/orders.conf's
+# $orders_auth_tier map.
 internal_router = APIRouter(prefix="/internal/checkout-workflow", tags=["checkout-v2-internal"])
-
-
-# STR-140: wires the check_permission() stub STR-139 left here to a real
-# OPA call (see policies/checkout.rego) — every call site below is
-# unchanged, only what's inside this function is. "checkout" is
-# customer/guest-facing (their own cart); "create_order"/"update_order_status"
-# are only ever called by checkout-workflow's own admin-role internal
-# token, presented to the /internal/checkout-workflow/* endpoints below.
-async def check_permission(claims: InternalClaims, action: str, authz: AuthzClient) -> bool:
-    return await authz.check(
-        subject={"role": claims.role, "sub": claims.sub},
-        action=action,
-        resource={"type": "order"},
-        package="checkout",
-    )
 
 
 @router.post("/checkout/v2", response_model=CheckoutV2Response, status_code=201)
@@ -56,11 +48,7 @@ async def checkout_v2(
     session: Annotated[AsyncSession, Depends(get_session)],
     catalog_client: Annotated[CatalogClient, Depends(get_catalog_client)],
     temporal_client: Annotated[Client | None, Depends(get_temporal_client)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> CheckoutV2Response | JSONResponse:
-    if not await check_permission(claims, "checkout", authz):
-        raise HTTPException(status_code=403, detail="Not authorized to checkout")
-
     if temporal_client is None:
         raise HTTPException(status_code=503, detail="Temporal unavailable")
 
@@ -143,13 +131,8 @@ async def checkout_v2(
 async def get_checkout_v2_status(
     workflow_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
-    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
     temporal_client: Annotated[Client | None, Depends(get_temporal_client)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> CheckoutV2Response:
-    if not await check_permission(claims, "checkout", authz):
-        raise HTTPException(status_code=403, detail="Not authorized to checkout")
-
     if temporal_client is None:
         raise HTTPException(status_code=503, detail="Temporal unavailable")
 
@@ -186,21 +169,15 @@ async def _get_order_or_none(session: AsyncSession, order_id: uuid.UUID) -> Orde
 
 # --- Internal endpoints, called only by checkout-workflow's Temporal
 # activities (admin-role internal token, minted via
-# checkout_workflow.auth.mint_internal_token — see auth.mint_internal_token
-# here for the mirrored identity Orders itself presents to *other*
-# services). Not part of the public checkout contract. ---
+# checkout_workflow.auth.mint_internal_token). Not part of the public
+# checkout contract. ---
 
 
 @internal_router.post("/orders", response_model=OrderRead, status_code=201)
 async def create_order_from_workflow(
     payload: WorkflowOrderCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
-    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Order:
-    if not await check_permission(claims, "create_order", authz):
-        raise HTTPException(status_code=403, detail="Not authorized to create orders")
-
     # Idempotent by primary key: a retried create_order activity call for
     # the same (workflow-supplied) order_id finds the order it already
     # created instead of inserting a duplicate.
@@ -228,12 +205,7 @@ async def update_order_status_from_workflow(
     order_id: uuid.UUID,
     payload: WorkflowOrderStatusUpdate,
     session: Annotated[AsyncSession, Depends(get_session)],
-    claims: Annotated[InternalClaims, Depends(get_internal_claims)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Order:
-    if not await check_permission(claims, "update_order_status", authz):
-        raise HTTPException(status_code=403, detail="Not authorized to update order status")
-
     order = await session.get(Order, order_id, options=[selectinload(Order.items)])
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")

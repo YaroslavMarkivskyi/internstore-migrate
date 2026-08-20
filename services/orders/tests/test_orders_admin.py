@@ -28,8 +28,8 @@ async def _set_status(client, order_id: str, status: OrderStatus) -> None:
 async def test_list_orders_admin_sees_all_customers(
     client, customer_token, admin_token, fake_inventory_client
 ):
-    customer_headers = {"x-internal-token": customer_token}
-    admin_headers = {"x-internal-token": admin_token}
+    customer_headers = customer_token
+    admin_headers = admin_token
 
     order = await _checkout(client, customer_headers, fake_inventory_client, str(uuid.uuid4()))
 
@@ -41,38 +41,33 @@ async def test_list_orders_admin_sees_all_customers(
     assert body[0]["customer"]
 
 
-async def test_list_orders_admin_rejects_non_admin(client, customer_token):
-    resp = await client.get("/admin", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
-
-
 async def test_get_order_admin_sees_other_customers_order(
     client, customer_token, admin_token, fake_inventory_client
 ):
-    customer_headers = {"x-internal-token": customer_token}
+    customer_headers = customer_token
     order = await _checkout(client, customer_headers, fake_inventory_client, str(uuid.uuid4()))
 
-    resp = await client.get(f"/admin/{order['id']}", headers={"x-internal-token": admin_token})
+    resp = await client.get(f"/admin/{order['id']}", headers=admin_token)
     assert resp.status_code == 200
     assert resp.json()["id"] == order["id"]
 
 
 async def test_get_nonexistent_order_admin_404(client, admin_token):
-    resp = await client.get(f"/admin/{uuid.uuid4()}", headers={"x-internal-token": admin_token})
+    resp = await client.get(f"/admin/{uuid.uuid4()}", headers=admin_token)
     assert resp.status_code == 404
 
 
 async def test_list_orders_admin_filters_by_owner_id(
     client, customer_token, admin_token, guest_token, fake_inventory_client
 ):
-    customer_headers = {"x-internal-token": customer_token}
-    guest_headers = {"x-internal-token": guest_token}
+    customer_headers = customer_token
+    guest_headers = guest_token
 
     customer_order = await _checkout(client, customer_headers, fake_inventory_client, str(uuid.uuid4()))
     await _checkout(client, guest_headers, fake_inventory_client, str(uuid.uuid4()))
 
     resp = await client.get(
-        "/admin", params={"owner_id": "customer-1"}, headers={"x-internal-token": admin_token}
+        "/admin", params={"owner_id": "customer-1"}, headers=admin_token
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -81,12 +76,12 @@ async def test_list_orders_admin_filters_by_owner_id(
 
 
 async def test_list_orders_admin_accepts_assistant_role(client, customer_token, fake_inventory_client):
-    customer_headers = {"x-internal-token": customer_token}
+    customer_headers = customer_token
     order = await _checkout(client, customer_headers, fake_inventory_client, str(uuid.uuid4()))
 
     assistant_token = mint_internal_token(sub="ai-assistant", role="assistant")
     resp = await client.get(
-        "/admin", params={"owner_id": "customer-1"}, headers={"x-internal-token": assistant_token}
+        "/admin", params={"owner_id": "customer-1"}, headers=assistant_token
     )
     assert resp.status_code == 200
     assert resp.json()[0]["id"] == order["id"]
@@ -95,31 +90,23 @@ async def test_list_orders_admin_accepts_assistant_role(client, customer_token, 
 async def test_ship_order_admin_marks_paid_order_done(
     client, customer_token, admin_token, fake_inventory_client
 ):
-    order = await _checkout(client, {"x-internal-token": customer_token}, fake_inventory_client, str(uuid.uuid4()))
+    order = await _checkout(client, customer_token, fake_inventory_client, str(uuid.uuid4()))
     await _set_status(client, order["id"], OrderStatus.PAID)
 
-    resp = await client.post(f"/admin/{order['id']}/ship", headers={"x-internal-token": admin_token})
+    resp = await client.post(f"/admin/{order['id']}/ship", headers=admin_token)
     assert resp.status_code == 200
     assert resp.json()["status"] == "done"
-
-
-async def test_ship_order_admin_rejects_non_admin(client, customer_token, fake_inventory_client):
-    order = await _checkout(client, {"x-internal-token": customer_token}, fake_inventory_client, str(uuid.uuid4()))
-    await _set_status(client, order["id"], OrderStatus.PAID)
-
-    resp = await client.post(f"/admin/{order['id']}/ship", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
 
 
 async def test_ship_order_admin_non_paid_order_returns_409(
     client, customer_token, admin_token, fake_inventory_client
 ):
-    order = await _checkout(client, {"x-internal-token": customer_token}, fake_inventory_client, str(uuid.uuid4()))
+    order = await _checkout(client, customer_token, fake_inventory_client, str(uuid.uuid4()))
 
-    resp = await client.post(f"/admin/{order['id']}/ship", headers={"x-internal-token": admin_token})
+    resp = await client.post(f"/admin/{order['id']}/ship", headers=admin_token)
     assert resp.status_code == 409
 
 
 async def test_ship_nonexistent_order_admin_404(client, admin_token):
-    resp = await client.post(f"/admin/{uuid.uuid4()}/ship", headers={"x-internal-token": admin_token})
+    resp = await client.post(f"/admin/{uuid.uuid4()}/ship", headers=admin_token)
     assert resp.status_code == 404

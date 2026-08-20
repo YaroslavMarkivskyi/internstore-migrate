@@ -1,0 +1,64 @@
+# Same content as nginx/internal-gate/chat.conf (compose's source of
+# truth for this) -- kept in sync by hand, same treatment as
+# k8s/base/catalog/nginx-gate-configmap.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chat-gate-config
+  labels:
+    app: chat
+data:
+  chat.conf: |
+    worker_processes 1;
+    events {
+      worker_connections 128;
+    }
+
+    http {
+      map "$request_method:$uri" $chat_auth_tier {
+        default                              any;
+
+        "GET:/health"                        public;
+
+        "GET:/rooms"                         admin;
+        "~^GET:/rooms/[^/]+/messages$"       admin_or_assistant;
+        "~^DELETE:/rooms/[^/]+$"             admin;
+        "~^POST:/rooms/[^/]+/messages$"      assistant;
+      }
+
+      server {
+        listen 8000;
+
+        location = /internal/verify {
+          internal;
+          proxy_pass http://127.0.0.1:8090/verify;
+          proxy_pass_request_body off;
+          proxy_set_header Content-Length "";
+          proxy_set_header X-Internal-Token $http_x_internal_token;
+          proxy_set_header X-Original-Method $request_method;
+          proxy_set_header X-Required-Role $chat_auth_tier;
+        }
+
+        location / {
+          error_page 418 = @gated;
+          if ($chat_auth_tier != public) {
+            return 418;
+          }
+          proxy_pass http://127.0.0.1:8010;
+        }
+
+        location @gated {
+          auth_request /internal/verify;
+          auth_request_set $user_id $upstream_http_x_user_id;
+          auth_request_set $user_role $upstream_http_x_user_role;
+          proxy_set_header X-User-Id $user_id;
+          proxy_set_header X-User-Role $user_role;
+
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+
+          proxy_pass http://127.0.0.1:8010;
+        }
+      }
+    }

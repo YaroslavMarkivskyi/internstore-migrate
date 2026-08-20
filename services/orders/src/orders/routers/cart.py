@@ -13,6 +13,10 @@ from orders.schemas import CartItemCreate, CartItemUpdate, CartRead
 
 router = APIRouter(prefix="/cart", tags=["cart"])
 
+# claims here come from orders-gate's forwarded X-User-Id/X-User-Role (see
+# orders/auth.py) -- already-verified identity, not this service's own
+# jwt.decode() anymore.
+
 
 async def _get_cart(session: AsyncSession, owner_id: str) -> Cart | None:
     result = await session.execute(

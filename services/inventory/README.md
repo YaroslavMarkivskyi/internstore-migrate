@@ -283,11 +283,42 @@ fingerprint/NFC part of EP-08/09.
 
 ## Auth
 
-Every write endpoint validates the `X-Internal-Token` header locally — HMAC
-(HS256) signature, `iss`, `exp` — against the same shared secret
-`auth-backend` mints with (`INTERNAL_TOKEN_SECRET`). This service never
-trusts `X-User-Id`/`X-User-Role` headers directly and never calls back to
-Firebase or auth-backend.
+None of this is enforced in this service's own Python anymore:
+**inventory-gate** (nginx, `auth_request`) sits in front of it, occupying
+the network-facing port (`:8000`) every other service's `InventoryClient`
+still calls `inventory:8000` at. Unlike catalog (method-based) or security
+(path-based public/private), inventory has **three** tiers, not two:
+
+- **public** — read-only listing/detail GETs (`/items`, `/items/detailed`,
+  `/stocks`, `GET /stocks/{id}`, `GET /stocks/{id}/items`) pass straight
+  through, no token at all.
+- **any authenticated identity** — `POST /stocks/check-availability`,
+  `/reserve`, `/release` accept any valid role, not just admin (mirrors
+  the pre-migration `get_internal_claims`-only check on these three
+  routes with no `require_admin` on top; `check-availability` in
+  particular gets a *forwarded customer token* from Orders, not an admin
+  one).
+- **admin-only** — every stock/stock_item mutation, plus the
+  history/as-of read endpoints (mirrors `require_admin`/`require_authz`'s
+  previous behavior there).
+
+`nginx/internal-gate/inventory.conf`'s three-way `$inventory_auth_mode`
+map decides which tier a request falls into and forwards the
+identity-only-vs-admin distinction to **inventory-verify**
+([services/internal-gate](../internal-gate), the same generic image
+catalog/security/payments use, parameterized by `OPA_PACKAGE=inventory`)
+via an `X-Required-Role` header, which passes straight through into
+**inventory-opa**'s policy input
+([policies/inventory.rego](../../policies/inventory.rego)'s
+`required_role`). See
+[scripts/verify-inventory-gate.sh](../../scripts/verify-inventory-gate.sh)
+for the live checks against all three tiers.
+
+The only auth-related code left in this service's own container is
+`inventory/auth.py`'s `mint_internal_token` — the identity it presents on
+its own *outbound* calls to Catalog (unpublishing a product that just hit
+zero stock everywhere, see `stock_sync.py`), unrelated to verifying
+inbound requests.
 
 ## Local dev without Docker
 
@@ -308,7 +339,7 @@ uv run pytest
 ## Via docker compose
 
 ```bash
-docker compose up -d inventory-db inventory
+docker compose up -d --build inventory inventory-opa inventory-verify inventory-gate inventory-db
 ```
 
 Reachable through nginx at `/api/inventory/*` (see

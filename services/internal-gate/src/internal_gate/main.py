@@ -37,16 +37,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response: Response,
         x_internal_token: Annotated[str | None, Header()] = None,
         x_original_method: Annotated[str, Header()] = "GET",
+        # Generic passthrough, same spirit as x_original_method: nginx sets
+        # this from its own per-route map when a service's access-control
+        # shape needs more than one gated tier (e.g. inventory's
+        # identity-only routes vs its admin-only ones -- see
+        # nginx/internal-gate/inventory.conf and policies/inventory.rego's
+        # `required_role`). Omitted entirely for services that don't need
+        # it (catalog/security/payments), so it's simply absent from
+        # `input` and those packages' rego never reference it.
+        x_required_role: Annotated[str | None, Header()] = None,
     ) -> dict[str, str]:
         if x_internal_token is None:
             raise HTTPException(status_code=401, detail="Missing internal token")
 
         settings: Settings = app.state.settings
+        opa_input: dict[str, str] = {"token": x_internal_token, "method": x_original_method}
+        if x_required_role is not None:
+            opa_input["required_role"] = x_required_role
         try:
             async with httpx.AsyncClient(timeout=settings.opa_timeout_seconds) as client:
                 resp = await client.post(
                     f"{settings.opa_url}/v1/data/{settings.opa_package}",
-                    json={"input": {"token": x_internal_token, "method": x_original_method}},
+                    json={"input": opa_input},
                 )
             resp.raise_for_status()
         except httpx.HTTPError as exc:

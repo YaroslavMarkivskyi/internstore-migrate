@@ -5,10 +5,14 @@ metadata:
   labels:
     app: inventory
 data:
-  PORT: "8000"
+  # Not the network-facing port anymore -- the inventory-gate container
+  # below occupies :8000 (what the Service still targets, unchanged) and
+  # proxies here. HOST=127.0.0.1 means this is unreachable from outside
+  # the pod even if something guesses the port.
+  PORT: "8010"
+  HOST: "127.0.0.1"
   KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
   RESERVATION_TTL_SECONDS: "300"
   RESERVATION_CHECK_INTERVAL_SECONDS: "5"
   CATALOG_BASE_URL: "http://catalog:8000"
   CATALOG_TIMEOUT_SECONDS: "5.0"
-  OPA_URL: "http://localhost:8181"

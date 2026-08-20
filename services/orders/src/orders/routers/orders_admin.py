@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from orders.auth import InternalClaims, require_admin, require_admin_or_assistant
 from orders.db import get_session
 from orders.models import Order, OrderStatus
 from orders.payment_service import OrderNotPayableError, mark_order_paid
@@ -19,6 +18,13 @@ from orders.schemas import OrderAdminRead, OrderRead
 # "/admin", not "/orders/admin". Customer-facing orders.py's "/orders"
 # prefix looks doubled for the same reason: the frontend calls
 # `orders/orders` (see public/orders.ts).
+#
+# No role checks in this router anymore: GET /admin is admin-or-assistant,
+# everything else here is admin-only -- both enforced ahead of this app
+# entirely by orders-gate (nginx, auth_request) + orders-verify
+# (OPA-backed, policies/orders.rego). See docker-compose.yml's
+# orders-gate/orders-verify and nginx/internal-gate/orders.conf's
+# $orders_auth_tier map.
 router = APIRouter(prefix="/admin", tags=["orders-admin"])
 
 
@@ -28,7 +34,6 @@ def _to_admin_read(order: Order) -> OrderAdminRead:
 
 @router.get("", response_model=list[OrderAdminRead])
 async def list_orders_admin(
-    claims: Annotated[InternalClaims, Depends(require_admin_or_assistant)],
     session: Annotated[AsyncSession, Depends(get_session)],
     owner_id: str | None = None,
 ) -> list[OrderAdminRead]:
@@ -45,7 +50,6 @@ async def list_orders_admin(
 @router.get("/{order_id}", response_model=OrderAdminRead)
 async def get_order_admin(
     order_id: uuid.UUID,
-    claims: Annotated[InternalClaims, Depends(require_admin)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OrderAdminRead:
     result = await session.execute(
@@ -60,7 +64,6 @@ async def get_order_admin(
 @router.post("/{order_id}/pay", response_model=OrderAdminRead)
 async def pay_order_admin(
     order_id: uuid.UUID,
-    claims: Annotated[InternalClaims, Depends(require_admin)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OrderAdminRead:
     # Card orders go through Stripe (POST /orders/{id}/payment-intent +
@@ -90,7 +93,6 @@ async def pay_order_admin(
 @router.post("/{order_id}/ship", response_model=OrderAdminRead)
 async def ship_order_admin(
     order_id: uuid.UUID,
-    claims: Annotated[InternalClaims, Depends(require_admin)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OrderAdminRead:
     result = await session.execute(

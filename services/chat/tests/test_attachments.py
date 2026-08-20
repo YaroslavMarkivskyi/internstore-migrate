@@ -16,7 +16,7 @@ async def test_upload_happy_path(app, client, fake_minio_client, customer_token)
     response = await client.post(
         f"/rooms/{ROOM_ID}/attachments",
         files={"file": ("photo.jpg", b"fake-jpeg-bytes", "image/jpeg")},
-        headers={"x-internal-token": customer_token},
+        headers=customer_token,
     )
     assert response.status_code == 200
     assert response.json()["attachment_url"].endswith(".jpg")
@@ -28,7 +28,7 @@ async def test_admin_can_upload_to_any_room(app, client, fake_minio_client, admi
     response = await client.post(
         f"/rooms/{ROOM_ID}/attachments",
         files={"file": ("photo.png", b"fake-png-bytes", "image/png")},
-        headers={"x-internal-token": admin_token},
+        headers=admin_token,
     )
     assert response.status_code == 200
 
@@ -41,7 +41,7 @@ async def test_other_customer_cannot_upload_to_someone_elses_room(app, client):
     response = await client.post(
         f"/rooms/{ROOM_ID}/attachments",
         files={"file": ("photo.jpg", b"bytes", "image/jpeg")},
-        headers={"x-internal-token": intruder_token},
+        headers=intruder_token,
     )
     assert response.status_code == 403
 
@@ -51,7 +51,7 @@ async def test_rejects_disallowed_content_type(app, client, customer_token):
     response = await client.post(
         f"/rooms/{ROOM_ID}/attachments",
         files={"file": ("notes.txt", b"hello", "text/plain")},
-        headers={"x-internal-token": customer_token},
+        headers=customer_token,
     )
     assert response.status_code == 422
 
@@ -62,6 +62,6 @@ async def test_rejects_oversized_upload(app, client, customer_token):
     response = await client.post(
         f"/rooms/{ROOM_ID}/attachments",
         files={"file": ("big.jpg", oversized, "image/jpeg")},
-        headers={"x-internal-token": customer_token},
+        headers=customer_token,
     )
     assert response.status_code == 422

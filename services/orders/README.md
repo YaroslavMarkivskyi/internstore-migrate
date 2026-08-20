@@ -95,16 +95,49 @@ to evaluate Temporal as an orchestrator before any cutover decision. See
 
 ## Auth
 
-Every endpoint validates `X-Internal-Token` locally (HMAC HS256, `iss`,
-`exp`) against the shared secret, same as catalog/inventory — see
-[src/orders/auth.py](src/orders/auth.py). Unlike catalog/inventory, the
-valid roles include `guest`: cart and checkout treat `customer`, `admin`,
-and `guest` identically, keyed only by the token's `sub`.
+Orders is a **hybrid** case, unlike catalog/security/payments/inventory
+(which moved *all* authorization into their sidecar chain). **orders-gate**
+(nginx, `auth_request`) sits in front of it, occupying the network-facing
+port (`:8000`) the external Gateway and stripe-cli still call, and handles
+the coarse, route-level tier:
+
+- **public** — `/health`, `POST /webhooks/stripe` (Stripe's own signature,
+  verified in [routers/payments.py](src/orders/routers/payments.py), is
+  the only auth this one gets — Stripe has no internal token to send).
+- **admin-or-assistant** — `GET /admin` (the AI Assistant's `owner_id`-scoped
+  order lookup, see routers/orders_admin.py's docstring).
+- **admin** — every other `/admin/*` route, and
+  `/internal/checkout-workflow/*` (checkout-workflow's own internal token).
+- **any authenticated caller** — everything else (cart, checkout,
+  checkout/v2, `/orders` list/single, payment-intent, pay) — customer,
+  guest, and admin alike.
+
+See [nginx/internal-gate/orders.conf](../../nginx/internal-gate/orders.conf)'s
+`$orders_auth_tier` map, **orders-verify**
+([services/internal-gate](../internal-gate)) and **orders-opa**'s policy
+([policies/orders.rego](../../policies/orders.rego)).
+
+What does **not** move to the gate: `GET /orders/{id}`'s "is this my
+order" check. `order.owner_id` lives in this service's own database, which
+the gate has no access to — [src/orders/routers/orders.py](src/orders/routers/orders.py)'s
+`get_order` still calls the orders-opa sidecar directly (via
+[src/orders/authz.py](src/orders/authz.py)) for that one resource-level
+decision, same as before.
+
+The app no longer verifies the internal token itself either way — it
+trusts `X-User-Id`/`X-User-Role`, forwarded by orders-gate once *it* has
+verified them (see [src/orders/auth.py](src/orders/auth.py)). This is
+identity *extraction*, not verification: safe only because this app is
+unreachable on any path except through orders-gate (`HOST=127.0.0.1`, see
+docker-compose.yml). The valid roles still include `guest`: cart and
+checkout treat `customer`, `admin`, and `guest` identically, keyed only by
+the forwarded `X-User-Id`.
+
+Live verification: [scripts/verify-orders-gate.sh](../../scripts/verify-orders-gate.sh).
 
 ### Guest checkout
 
-There's no admin-only distinction anywhere in this service, but cart/
-checkout do need to work for people who haven't logged in. That identity
+Cart/checkout need to work for people who haven't logged in. That identity
 comes entirely from **auth-backend**, not from anything in this service —
 see [services/auth-backend/README.md](../auth-backend/README.md#guest-sessions)
 for the full mechanism (Redis-backed `guest_id`, `is_guest_id` cookie,
@@ -119,13 +152,16 @@ in to see past orders.
 
 ### Internal-token forwarding to Inventory
 
-Inventory's `check-availability` endpoint validates `X-Internal-Token` just
-like any other Inventory route (any role — customer/admin/guest — since any
-of them can check out). Orders forwards the *caller's own* token on the
-outbound call rather than minting a new one, so Inventory sees the actual
-checking-out user's identity, not a synthetic Orders-service identity. This
-closes a defense-in-depth gap: `check-availability` previously had no auth
-check at all.
+Inventory's `check-availability` route accepts any authenticated identity
+(customer/admin/guest — since any of them can check out; see
+[policies/inventory.rego](../../policies/inventory.rego)'s `required_role`).
+Orders forwards the *caller's own* raw `X-Internal-Token` on the outbound
+call rather than minting a new one, so Inventory sees the actual
+checking-out user's identity, not a synthetic Orders-service identity —
+[routers/checkout.py](src/orders/routers/checkout.py) reads it straight
+off the incoming request headers. orders-gate doesn't touch or strip this
+header on the way in; it only *adds* `X-User-Id`/`X-User-Role` on top (see
+the Auth section above).
 
 ## Local dev without Docker
 
@@ -149,7 +185,7 @@ uv run pytest
 ## Via docker compose
 
 ```bash
-docker compose up -d orders-db orders
+docker compose up -d --build orders orders-opa orders-verify orders-gate orders-db
 ```
 
 Reachable through nginx at `/api/orders/*` (see

@@ -21,6 +21,13 @@ from orders.schemas import (
 
 router = APIRouter(tags=["checkout"])
 
+# claims here come from orders-gate's forwarded X-User-Id/X-User-Role (see
+# orders/auth.py) -- already-verified identity, not this service's own
+# jwt.decode() anymore. No admin/customer/guest role check needed on this
+# route itself: orders-gate's default tier is "any authenticated caller",
+# which is exactly this route's own access rule (see
+# nginx/internal-gate/orders.conf).
+
 
 @router.post("/checkout", response_model=OrderRead, status_code=201)
 async def checkout(

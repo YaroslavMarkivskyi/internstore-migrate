@@ -1,14 +1,20 @@
 import httpx
 from fastapi import Request
 
-# STR-140: thin wrapper around the OPA sidecar running alongside this
-# service (see docker-compose.yml's orders-opa, and policies/orders.rego /
-# policies/checkout.rego for the policies themselves) -- a localhost call,
-# not a network hop to a centralized authorization service. Per-service
-# duplication (not a shared pip package), same convention as this repo's
-# kafka.py/outbox.py. Orders queries two packages (orders' own order
-# view/update, and checkout's checkout-workflow actions), so `package` is a
-# per-call argument here rather than a fixed default.
+# Thin wrapper around the OPA sidecar running alongside this service (see
+# docker-compose.yml's orders-opa, and policies/orders.rego) -- a
+# localhost call, not a network hop to a centralized authorization
+# service. Per-service duplication (not a shared pip package), same
+# convention as this repo's kafka.py/outbox.py.
+#
+# The only call site left is routers/orders.py's get_order -- a
+# resource-ownership check (owner_id lives in this service's own DB,
+# unreachable from orders-gate) -- everything else (route-level
+# admin-only/admin-or-assistant/any-authenticated tiers, previously
+# policies/checkout.rego) moved to orders-gate + orders-verify ahead of
+# this app entirely. `package` stays a per-call argument (not hardcoded
+# inline) purely so this client stays reusable if a second call site ever
+# needs it.
 DEFAULT_PACKAGE = "orders"
 
 
