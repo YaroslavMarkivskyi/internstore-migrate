@@ -1,35 +1,25 @@
-# Same content as nginx/internal-gate/orders.conf (compose's source of
+# Same content as nginx/internal-gate/telemetry.conf (compose's source of
 # truth for this) -- kept in sync by hand, same treatment as
 # k8s/base/catalog/nginx-gate-configmap.yaml.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: orders-gate-config
+  name: telemetry-gate-config
   labels:
-    app: orders
+    app: telemetry
 data:
-  orders.conf: |
+  telemetry.conf: |
     worker_processes 1;
     events {
       worker_connections 128;
     }
 
     http {
-      map "$request_method:$uri" $orders_auth_tier {
-        default                                                     any;
-
-        "GET:/health"                                                public;
-        # Stripe has no internal token to send -- its own signature (verified
-        # in routers/payments.py) is the only auth this route gets.
-        "POST:/webhooks/stripe"                                      public;
-
-        "GET:/admin"                                                 admin_or_assistant;
-        "~^GET:/admin/[^/]+$"                                        admin;
-        "~^POST:/admin/[^/]+/pay$"                                    admin;
-        "~^POST:/admin/[^/]+/ship$"                                   admin;
-
-        "POST:/internal/checkout-workflow/orders"                    admin;
-        "~^PATCH:/internal/checkout-workflow/orders/[^/]+/status$"   admin;
+      map $uri $telemetry_needs_auth {
+        default        1;
+        "/health"       0;
+        "/measurements" 0;
+        "/stores"       0;
       }
 
       server {
@@ -42,12 +32,11 @@ data:
           proxy_set_header Content-Length "";
           proxy_set_header X-Internal-Token $http_x_internal_token;
           proxy_set_header X-Original-Method $request_method;
-          proxy_set_header X-Required-Role $orders_auth_tier;
         }
 
         location / {
           error_page 418 = @gated;
-          if ($orders_auth_tier != public) {
+          if ($telemetry_needs_auth) {
             return 418;
           }
           proxy_pass http://127.0.0.1:8010;

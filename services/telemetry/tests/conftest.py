@@ -1,4 +1,3 @@
-import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -6,23 +5,11 @@ from telemetry.config import Settings
 from telemetry.db import Base, make_session_factory
 from telemetry.main import create_app
 
-INTERNAL_TOKEN_SECRET = "test-secret"
-ISSUER = "internstore-gateway"
-
-
-def mint_internal_token(sub: str, role: str) -> str:
-    return jwt.encode(
-        {"sub": sub, "role": role, "iss": ISSUER},
-        INTERNAL_TOKEN_SECRET,
-        algorithm="HS256",
-    )
-
 
 @pytest.fixture
 async def client():
     settings = Settings(
         database_url="sqlite+aiosqlite:///:memory:",
-        internal_token_secret=INTERNAL_TOKEN_SECRET,
         kafka_bootstrap_servers="kafka.invalid:9092",
     )
     session_factory = make_session_factory(settings.database_url)
@@ -42,11 +29,18 @@ async def client():
     await engine.dispose()
 
 
+# telemetry no longer checks the internal token or its role at all --
+# admin-only enforcement moved to telemetry-gate/internal-gate ahead of
+# this app (see docker-compose.yml, nginx/internal-gate/telemetry.conf,
+# and scripts/verify-telemetry-gate.sh for the tests that actually
+# exercise that). These fixtures just supply *some* X-Internal-Token
+# value for the call sites in this suite that still send one -- the value
+# itself is never validated by anything here.
 @pytest.fixture
 def admin_token() -> str:
-    return mint_internal_token(sub="admin-1", role="admin")
+    return "test-token-admin-1"
 
 
 @pytest.fixture
 def customer_token() -> str:
-    return mint_internal_token(sub="customer-1", role="customer")
+    return "test-token-customer-1"

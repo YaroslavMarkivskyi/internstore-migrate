@@ -38,9 +38,10 @@ test_no_verified_subject_denied if {
 	not allow with input as {"action": "create", "resource": {"type": "product"}}
 }
 
-# `subject` (exported alongside `allow`) is what AuthzClient.check reads
-# to tell "no valid token" (401) apart from "valid token, wrong role"
-# (403) in one round trip -- see services/catalog/src/catalog/authz.py.
+# `subject` (exported alongside `allow`) is what catalog-verify
+# (internal-gate) reads to tell "no valid token" (401) apart from
+# "valid token, wrong role" (403) in one round trip -- see
+# services/internal-gate and nginx/internal-gate/catalog.conf.
 test_subject_present_when_verified if {
 	subject == {"role": "admin", "sub": "admin-1"}
 		with data.common.subject as {"role": "admin", "sub": "admin-1"}

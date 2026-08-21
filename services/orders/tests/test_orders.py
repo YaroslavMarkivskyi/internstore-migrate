@@ -43,19 +43,16 @@ async def test_get_order_belonging_to_someone_else_404(client, customer_token, f
     headers = customer_token
     order = await _checkout(client, headers, fake_inventory_client, str(uuid.uuid4()))
 
-    # STR-140: OPA's owner-check (policies/orders.rego) replaces the
-    # previous inline `order.owner_id != claims.sub` comparison -- a
-    # different customer is still denied, still surfaced as 404 (not 403)
-    # so the response doesn't leak that the order exists at all.
+    # A different customer is denied, still surfaced as 404 (not 403) so
+    # the response doesn't leak that the order exists at all.
     other_customer_token = mint_internal_token(sub="customer-2", role="customer")
     resp = await client.get(f"/orders/{order['id']}", headers=other_customer_token)
     assert resp.status_code == 404
 
 
 async def test_get_order_admin_can_view_any_order(client, customer_token, admin_token, fake_inventory_client):
-    # STR-140: policies/orders.rego's admin-can-do-anything rule now
-    # applies here too -- previously this endpoint had no admin bypass at
-    # all (only the separate GET /orders/admin/{id} route did).
+    # Admin bypasses ownership -- previously this endpoint had no admin
+    # bypass at all (only the separate GET /orders/admin/{id} route did).
     headers = customer_token
     order = await _checkout(client, headers, fake_inventory_client, str(uuid.uuid4()))
 

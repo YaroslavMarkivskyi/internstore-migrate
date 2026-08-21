@@ -20,8 +20,3 @@ data:
   TEMPORAL_HOST: "temporal:7233"
   TEMPORAL_TASK_QUEUE: "checkout-workflow"
   CHECKOUT_V2_WAIT_SECONDS: "10.0"
-  # Only used for routers/orders.py's get_order resource-ownership check
-  # -- a direct call this service's own code still makes to the orders-opa
-  # sidecar below (owner_id lives in this service's own DB, unreachable
-  # from orders-gate). See orders/authz.py.
-  OPA_URL: "http://localhost:8181"

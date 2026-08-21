@@ -8,8 +8,9 @@ on `telemetry-events` when one is confirmed.
 
 Same stack as [services/inventory](../inventory):
 Python/FastAPI/SQLAlchemy(async)/Alembic, its own Postgres database with
-zero shared tables, and the same internal-token verification pattern (see
-[src/telemetry/auth.py](src/telemetry/auth.py)).
+zero shared tables. See the Auth section below for how internal-token
+verification works here now (moved out of this service's own code
+entirely, unlike when this paragraph was first written).
 
 ## Data model
 
@@ -102,11 +103,20 @@ Inventory/Orders.
 
 ## Auth
 
-Every admin endpoint validates the `X-Internal-Token` header locally — same
-HMAC (HS256) verification as every other domain service (see
-[src/telemetry/auth.py](src/telemetry/auth.py)). `POST /measurements` is
-the one exception — it's the simulator's ingestion path, not an
-admin-facing endpoint.
+None of this is enforced in this service's own Python anymore (there is
+no `src/telemetry/auth.py` — deleted entirely, this service never minted
+its own outbound token either): **telemetry-gate** (nginx, `auth_request`)
+sits in front of it, occupying the network-facing port (`:8000`) the
+external Gateway and `telemetry-simulator` still call. Simplest split in
+this repo: every gated route is admin-only (store threshold updates,
+readings, incidents) — `GET /stores` (the storefront's public store
+list), `POST /measurements` (the simulator's ingestion path, no
+logged-in session at all), and `/health` are the only exemptions. See
+[nginx/internal-gate/telemetry.conf](../../nginx/internal-gate/telemetry.conf),
+**telemetry-verify** ([services/internal-gate](../internal-gate)) and
+**telemetry-opa**'s policy
+([policies/telemetry.rego](../../policies/telemetry.rego)). Live
+verification: [scripts/verify-telemetry-gate.sh](../../scripts/verify-telemetry-gate.sh).
 
 ## Local dev without Docker
 
@@ -127,7 +137,7 @@ uv run pytest
 ## Via docker compose
 
 ```bash
-docker compose up -d telemetry-db telemetry telemetry-simulator
+docker compose up -d --build telemetry telemetry-opa telemetry-verify telemetry-gate telemetry-db telemetry-simulator
 ```
 
 Reachable through nginx at `/api/telemetry/*` (see

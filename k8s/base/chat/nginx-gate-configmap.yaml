@@ -54,6 +54,9 @@ data:
           proxy_set_header X-User-Id $user_id;
           proxy_set_header X-User-Role $user_role;
 
+          # WebSocket upgrade support -- harmless no-op for plain REST calls
+          # through this same location (they don't send an Upgrade header, so
+          # nginx just proxies them normally).
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection "upgrade";

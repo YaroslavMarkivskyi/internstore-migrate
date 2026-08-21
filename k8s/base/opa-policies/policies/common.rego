@@ -34,11 +34,3 @@ subject := input.subject if {
 is_admin if {
 	subject.role == "admin"
 }
-
-# True when the resource being acted on is owned by the calling subject
-# (e.g. an order's owner_id matching the customer's own sub). Domain
-# policies combine this with their own action/resource.type checks —
-# this rule only knows about the ownership relationship itself.
-is_resource_owner if {
-	input.resource.owner == subject.sub
-}

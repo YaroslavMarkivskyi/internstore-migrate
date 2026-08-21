@@ -16,16 +16,74 @@ spec:
     spec:
       enableServiceLinks: false
       containers:
+      # No readiness/liveness probes or :8000 here anymore -- telemetry-gate
+      # below owns the network-facing port and health checks. This
+      # container isn't reachable at all outside this pod (HOST=127.0.0.1
+      # in telemetry-config) -- only telemetry-gate/telemetry-verify/
+      # telemetry-opa share its network namespace.
       - name: telemetry
         image: internstore/telemetry:local
         imagePullPolicy: IfNotPresent
-        ports:
-        - containerPort: 8000
         envFrom:
           - configMapRef:
               name: telemetry-config
           - secretRef:
               name: telemetry-secret
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      - name: telemetry-opa
+        image: openpolicyagent/opa:latest
+        imagePullPolicy: IfNotPresent
+        args: ["run", "--server", "--addr=:8181", "/policies/telemetry.rego", "/policies/common.rego"]
+        env:
+          - name: INTERNAL_TOKEN_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: telemetry-secret
+                key: INTERNAL_TOKEN_SECRET
+        volumeMounts:
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      - name: telemetry-verify
+        image: internstore/internal-gate:local
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: PORT
+            value: "8090"
+          - name: OPA_URL
+            value: "http://localhost:8181"
+          - name: OPA_PACKAGE
+            value: "telemetry"
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      - name: telemetry-gate
+        image: nginx:1.27-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["nginx", "-c", "/etc/nginx-src/telemetry.conf", "-g", "daemon off;"]
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: telemetry-gate-config
+          mountPath: /etc/nginx-src
+          readOnly: true
         readinessProbe:
           httpGet:
             path: /health
@@ -40,21 +98,6 @@ spec:
           periodSeconds: 10
         resources:
           requests:
-            cpu: "100m"
-            memory: "256Mi"
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
-      - name: telemetry-opa
-        image: openpolicyagent/opa:latest
-        imagePullPolicy: IfNotPresent
-        args: ["run", "--server", "--addr=:8181", "/policies/telemetry.rego", "/policies/common.rego"]
-        volumeMounts:
-        - name: policies
-          mountPath: /policies
-          readOnly: true
-        resources:
-          requests:
             cpu: "50m"
             memory: "64Mi"
           limits:
@@ -64,3 +107,6 @@ spec:
       - name: policies
         configMap:
           name: opa-policies
+      - name: telemetry-gate-config
+        configMap:
+          name: telemetry-gate-config

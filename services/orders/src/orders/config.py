@@ -31,9 +31,6 @@ class Settings(BaseSettings):
     # poll (see routers/checkout_v2.py) — the ticket's confirmed answer to
     # its own "does the Gateway wait synchronously" open question.
     checkout_v2_wait_seconds: float = 10.0
-    # STR-140: OPA sidecar, same pod/network namespace on GKE (see
-    # docker-compose.yml's orders-opa for the local dev equivalent).
-    opa_url: str = "http://localhost:8181"
 
 
 def load_settings() -> Settings:

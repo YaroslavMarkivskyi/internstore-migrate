@@ -39,18 +39,6 @@ test_is_admin_false_for_customer if {
 	not is_admin with input as {"token": token} with opa.runtime as mock_runtime
 }
 
-test_is_resource_owner_true_when_matching if {
-	is_resource_owner
-		with input as {"token": valid_token, "resource": {"owner": "admin-1"}}
-		with opa.runtime as mock_runtime
-}
-
-test_is_resource_owner_false_when_mismatched if {
-	not is_resource_owner
-		with input as {"token": valid_token, "resource": {"owner": "someone-else"}}
-		with opa.runtime as mock_runtime
-}
-
 # Services not yet migrated onto input.token (see common.rego's own
 # comment) still send an already-decoded input.subject -- must keep
 # working exactly as before until every service migrates.

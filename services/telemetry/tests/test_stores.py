@@ -21,18 +21,6 @@ async def test_list_stores_reflects_latest_reading(client):
     assert body[0]["has_open_violation"] is False
 
 
-async def test_update_store_requires_admin(client, customer_token):
-    store_id = str(uuid.uuid4())
-    await client.post("/measurements", json={"store_id": store_id, "temperature": 4.0})
-
-    resp = await client.patch(
-        f"/stores/{store_id}",
-        json={"threshold_temp": 8},
-        headers={"x-internal-token": customer_token},
-    )
-    assert resp.status_code == 403
-
-
 async def test_update_store_not_found(client, admin_token):
     resp = await client.patch(
         f"/stores/{uuid.uuid4()}",
@@ -60,14 +48,6 @@ async def test_update_store_sets_name_and_threshold(client, admin_token):
 async def test_list_readings_not_found(client, admin_token):
     resp = await client.get(f"/stores/{uuid.uuid4()}/readings", headers={"x-internal-token": admin_token})
     assert resp.status_code == 404
-
-
-async def test_list_readings_requires_admin(client, customer_token):
-    store_id = str(uuid.uuid4())
-    await client.post("/measurements", json={"store_id": store_id, "temperature": 4.0})
-
-    resp = await client.get(f"/stores/{store_id}/readings", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
 
 
 async def test_list_readings_returns_all_by_default(client, admin_token):

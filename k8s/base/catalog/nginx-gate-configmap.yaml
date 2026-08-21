@@ -23,7 +23,7 @@ data:
 
       server {
         listen 8000;
-        client_max_body_size 25m;
+        client_max_body_size 25m; # product image uploads (20MB limit + margin)
 
         location = /internal/verify {
           internal;
@@ -35,6 +35,10 @@ data:
         }
 
         location / {
+          # error_page trick to conditionally require auth_request only for
+          # non-GET methods -- auth_request itself can't be made conditional
+          # directly (no `if` support for it), so GET falls straight through
+          # here and everything else redirects to the @gated named location.
           error_page 418 = @gated;
           if ($catalog_needs_auth) {
             return 418;

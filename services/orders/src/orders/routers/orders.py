@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from orders.auth import InternalClaims, get_internal_claims
-from orders.authz import AuthzClient, get_authz_client
 from orders.db import get_session
 from orders.models import Order
 from orders.schemas import OrderRead
@@ -17,9 +16,9 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 # claims here come from orders-gate's forwarded X-User-Id/X-User-Role
 # (see orders/auth.py) -- already-verified identity, not this service's
 # own jwt.decode() anymore. get_order's per-order ownership check below
-# still needs a direct OPA call (owner_id lives in this service's own DB,
-# unreachable from the gate) -- see policies/orders.rego's resource-level
-# rules.
+# is a plain comparison against the row it just SELECTed -- no OPA
+# round-trip needed for that (owner_id lives in this service's own DB
+# either way, so OPA couldn't have made that decision on its own).
 
 
 @router.get("", response_model=list[OrderRead])
@@ -41,7 +40,6 @@ async def get_order(
     order_id: uuid.UUID,
     claims: Annotated[InternalClaims, Depends(get_internal_claims)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    authz: Annotated[AuthzClient, Depends(get_authz_client)],
 ) -> Order:
     result = await session.execute(
         select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
@@ -50,15 +48,9 @@ async def get_order(
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # STR-140: OPA replaces the previous inline `order.owner_id !=
-    # claims.sub` check (see policies/orders.rego's customer-owns-resource
-    # rule) -- still 404, not 403, for a denied check: don't leak the
-    # existence of other users' orders via a 403-vs-404 status difference.
-    allowed = await authz.check(
-        subject={"role": claims.role, "sub": claims.sub},
-        action="view",
-        resource={"type": "order", "owner": order.owner_id},
-    )
-    if not allowed:
+    # Admin bypasses ownership; everyone else may only see their own order.
+    # Still 404, not 403, for a denied check: don't leak the existence of
+    # other users' orders via a 403-vs-404 status difference.
+    if claims.role != "admin" and order.owner_id != claims.sub:
         raise HTTPException(status_code=404, detail="Order not found")
     return order

@@ -6,7 +6,6 @@ class Settings(BaseSettings):
 
     port: int = 8000
     database_url: str
-    internal_token_secret: str
     kafka_bootstrap_servers: str
     outbox_poll_interval_seconds: float = 5
     # Matches the simulator's 5-min transmission cadence — see docs/EVENT_BROKER.md.

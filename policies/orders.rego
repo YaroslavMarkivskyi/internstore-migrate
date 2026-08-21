@@ -11,7 +11,7 @@ default allow := false
 # services/internal-gate and nginx/internal-gate/orders.conf.
 subject := common.subject
 
-# --- Route-level gate tiers -- queried by orders-verify/internal-gate via
+# Route-level gate tiers -- queried by orders-verify/internal-gate via
 # input.token + input.required_role (no input.action/input.resource at
 # all -- see nginx/internal-gate/orders.conf's $orders_auth_tier map).
 # Admin can always do everything, so it needs no explicit required_role
@@ -29,31 +29,12 @@ allow if {
 
 # Every other gated route (cart, checkout, checkout/v2, /orders list/
 # single, payment-intent, pay) just needs *some* authenticated identity --
-# customer/guest/assistant/admin alike. The resource-ownership rules below
-# (GET /orders/{id}, and previously checkout's create_order/
-# update_order_status) still apply on top of this for the routes that
-# need them, via a *separate* direct call orders' own code makes to this
-# same OPA sidecar (see routers/orders.py's get_order) -- this rule only
-# covers the coarse "is this caller authenticated at all" gate check.
+# customer/guest/assistant/admin alike. GET /orders/{id}'s own
+# resource-ownership check (order.owner_id == caller's sub) is a plain
+# comparison of two values orders' own code already has in hand (the
+# forwarded X-User-Id and the row it just SELECTed) -- no OPA round-trip
+# needed for that, see routers/orders.py's get_order.
 allow if {
 	input.required_role == "any"
 	subject
-}
-
-# --- Resource-level checks -- called directly by orders' own code
-# (routers/orders.py's get_order), since owner_id lives in Orders' own DB
-# and is unreachable from the gate. These queries carry input.subject/
-# input.action/input.resource, never input.required_role, so they never
-# collide with the route-level tiers above.
-allow if {
-	input.action in ["view", "update"]
-	input.resource.type == "order"
-	input.subject.role == "customer"
-	common.is_resource_owner
-}
-
-allow if {
-	input.action == "create"
-	input.resource.type == "order"
-	input.subject.role == "guest"
 }

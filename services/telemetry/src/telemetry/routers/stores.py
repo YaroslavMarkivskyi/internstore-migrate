@@ -6,12 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from telemetry.auth import require_admin
 from telemetry.db import get_session
 from telemetry.models import Incident, Store, TemperatureReading
 from telemetry.schemas import IncidentRead, MeasurementRead, StoreRead, StoreUpdate
 
 router = APIRouter(prefix="/stores", tags=["stores"])
+
+# No role checks in this router anymore: GET /stores (the list route) is
+# public, every other route here is admin-only -- both enforced ahead of
+# this app entirely by telemetry-gate (nginx, auth_request) +
+# telemetry-verify (OPA-backed, policies/telemetry.rego). See
+# docker-compose.yml's telemetry-gate/telemetry-verify.
 
 Period = Literal["week", "month", "3months", "all"]
 
@@ -68,7 +73,7 @@ async def list_stores(session: Annotated[AsyncSession, Depends(get_session)]) ->
     return results
 
 
-@router.patch("/{store_id}", response_model=StoreRead, dependencies=[Depends(require_admin)])
+@router.patch("/{store_id}", response_model=StoreRead)
 async def update_store(
     store_id: uuid.UUID,
     payload: StoreUpdate,
@@ -85,7 +90,7 @@ async def update_store(
     return StoreRead(id=store.id, name=store.name, threshold_temp=store.threshold_temp)
 
 
-@router.get("/{store_id}/readings", response_model=list[MeasurementRead], dependencies=[Depends(require_admin)])
+@router.get("/{store_id}/readings", response_model=list[MeasurementRead])
 async def list_readings(
     store_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -103,7 +108,7 @@ async def list_readings(
     return list(result.scalars().all())
 
 
-@router.delete("/{store_id}/readings", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{store_id}/readings", status_code=204)
 async def delete_readings(
     store_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -113,7 +118,7 @@ async def delete_readings(
     await session.commit()
 
 
-@router.get("/{store_id}/incidents", response_model=list[IncidentRead], dependencies=[Depends(require_admin)])
+@router.get("/{store_id}/incidents", response_model=list[IncidentRead])
 async def list_incidents(
     store_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -125,7 +130,7 @@ async def list_incidents(
     return list(result.scalars().all())
 
 
-@router.delete("/{store_id}/incidents/last", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{store_id}/incidents/last", status_code=204)
 async def delete_last_incident(
     store_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -141,7 +146,7 @@ async def delete_last_incident(
         await session.commit()
 
 
-@router.delete("/{store_id}/incidents", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{store_id}/incidents", status_code=204)
 async def delete_incidents(
     store_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],

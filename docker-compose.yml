@@ -324,11 +324,6 @@ services:
       TEMPORAL_HOST: temporal:7233
       TEMPORAL_TASK_QUEUE: checkout-workflow
       CHECKOUT_V2_WAIT_SECONDS: "10.0"
-      # Only used for routers/orders.py's get_order resource-ownership
-      # check -- a direct call this service's own code still makes to the
-      # orders-opa sidecar below (owner_id lives in this service's own DB,
-      # unreachable from orders-gate). See orders/authz.py.
-      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/orders/src:/app/src
@@ -355,12 +350,13 @@ services:
     # catalog/inventory.
 
   # OPA policy sidecar for Orders — see catalog-opa above for the
-  # sidecar-vs-central-service rationale and the network_mode note. A
-  # single package (orders.rego) covers both orders-verify's route-level
-  # gate tiers (admin-only/admin-or-assistant/any-authenticated) *and*
-  # the resource-ownership check orders' own code queries directly (see
-  # orders/authz.py) -- policies/checkout.rego was merged into it when
-  # that route-level gating moved out of the app.
+  # sidecar-vs-central-service rationale and the network_mode note. Wires
+  # orders-verify's route-level gate tiers (admin-only/admin-or-assistant/
+  # any-authenticated) -- policies/checkout.rego was merged into this one
+  # package when that route-level gating moved out of the app. The
+  # GET /orders/{id} resource-ownership check (order.owner_id == caller's
+  # sub) is a plain comparison orders' own code makes inline, not an OPA
+  # query -- see routers/orders.py's get_order.
   orders-opa:
     image: openpolicyagent/opa:latest
     command: ["run", "--server", "--addr=:8181", "/policies/orders.rego", "/policies/common.rego"]
@@ -624,10 +620,15 @@ services:
   telemetry:
     build: ./services/telemetry
     environment:
-      PORT: "8000"
+      # Not the network-facing port anymore -- telemetry-gate (nginx)
+      # below occupies :8000 (what the external Gateway and
+      # telemetry-simulator below still call, unchanged) and proxies
+      # here. HOST=127.0.0.1 means this is unreachable from outside this
+      # pod's shared network namespace even if something guesses the
+      # port.
+      PORT: "8010"
+      HOST: "127.0.0.1"
       DATABASE_URL: postgresql+asyncpg://telemetry:telemetry@telemetry-db:5432/telemetry
-      # Must match auth-backend's INTERNAL_TOKEN_SECRET, same as catalog/inventory.
-      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # Short dev/test values so test-telemetry-saga.sh doesn't have to wait
       # a full 5 minutes for a detection cycle or a real hour for the
@@ -637,12 +638,6 @@ services:
       # anywhere else this service runs.
       VIOLATION_CHECK_INTERVAL_SECONDS: "5"
       VIOLATION_WINDOW_SECONDS: "20"
-      # STR-140: sidecar, same pod/network namespace — see telemetry-opa
-      # below. Not yet consumed by this service's own code (no Telemetry
-      # endpoint is in this ticket's initial rollout scope) — wired through
-      # now so the sidecar and a future call site are both one less thing
-      # to add later.
-      OPA_URL: http://localhost:8181
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/telemetry/src:/app/src
@@ -656,19 +651,52 @@ services:
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory/orders.
 
-  # STR-140: OPA policy sidecar for Telemetry — see catalog-opa above for
-  # the sidecar-vs-central-service rationale and the network_mode note. No
-  # Telemetry endpoint calls it yet (see policies/telemetry.rego) — this
-  # establishes the sidecar ahead of a follow-up ticket's incremental
-  # rollout.
+  # OPA policy sidecar for Telemetry — see catalog-opa above for the
+  # sidecar-vs-central-service rationale and the network_mode note. Wires
+  # the admin-only baseline every gated route here uses (see
+  # policies/telemetry.rego).
   telemetry-opa:
     image: openpolicyagent/opa:latest
     command: ["run", "--server", "--addr=:8181", "/policies/telemetry.rego", "/policies/common.rego"]
+    environment:
+      # common.rego's `subject` rule verifies X-Internal-Token itself
+      # (io.jwt.decode_verify) — must match auth-backend's
+      # INTERNAL_TOKEN_SECRET. Telemetry itself no longer has its own copy
+      # (removed along with jwt.decode() -- see the now-deleted
+      # telemetry/auth.py).
+      INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
     volumes:
       - ./policies:/policies:ro
     network_mode: "service:telemetry"
     depends_on:
       - telemetry
+
+  # Translates OPA's JSON decision into the HTTP status/headers
+  # telemetry-gate's auth_request needs — same generic image as every
+  # other domain service's *-verify, parameterized by OPA_PACKAGE.
+  telemetry-verify:
+    build: ./services/internal-gate
+    environment:
+      PORT: "8090"
+      OPA_URL: http://localhost:8181
+      OPA_PACKAGE: telemetry
+    network_mode: "service:telemetry"
+    depends_on:
+      - telemetry-opa
+
+  # Occupies :8000 -- what the external Gateway and telemetry-simulator
+  # below still call. Simplest split in this repo: everything is
+  # admin-only except GET /stores, POST /measurements, and /health. See
+  # nginx/internal-gate/telemetry.conf.
+  telemetry-gate:
+    image: nginx:1.27-alpine
+    command: ["nginx", "-c", "/etc/nginx-src/telemetry.conf", "-g", "daemon off;"]
+    volumes:
+      - ./nginx/internal-gate:/etc/nginx-src:ro
+    network_mode: "service:telemetry"
+    depends_on:
+      - telemetry
+      - telemetry-verify
 
   telemetry-simulator:
     build: ./services/telemetry/simulator
@@ -679,7 +707,10 @@ services:
       TEMP_VARIANCE: "0.5"
       INTERVAL_SECONDS: "300"
     depends_on:
-      telemetry:
+      # telemetry-gate (not telemetry itself, see above) is what actually
+      # owns :8000 now. It has no compose healthcheck of its own, so
+      # service_started is all there is to depend on.
+      telemetry-gate:
         condition: service_started
     # Dev-only synthetic data source — not a real DHT22 sensor. See
     # docs/EVENT_BROKER.md's accepted-gaps section.

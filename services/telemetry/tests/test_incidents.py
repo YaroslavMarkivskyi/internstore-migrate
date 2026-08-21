@@ -30,12 +30,6 @@ async def test_list_incidents_not_found(client, admin_token):
     assert resp.status_code == 404
 
 
-async def test_list_incidents_requires_admin(client, customer_token):
-    store_id, _ = await _seed_store_and_incidents(client, 1)
-    resp = await client.get(f"/stores/{store_id}/incidents", headers={"x-internal-token": customer_token})
-    assert resp.status_code == 403
-
-
 async def test_list_incidents_returns_all_for_store(client, admin_token):
     store_id, ids = await _seed_store_and_incidents(client, 3)
     resp = await client.get(f"/stores/{store_id}/incidents", headers={"x-internal-token": admin_token})

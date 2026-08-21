@@ -120,9 +120,10 @@ See [nginx/internal-gate/orders.conf](../../nginx/internal-gate/orders.conf)'s
 What does **not** move to the gate: `GET /orders/{id}`'s "is this my
 order" check. `order.owner_id` lives in this service's own database, which
 the gate has no access to — [src/orders/routers/orders.py](src/orders/routers/orders.py)'s
-`get_order` still calls the orders-opa sidecar directly (via
-[src/orders/authz.py](src/orders/authz.py)) for that one resource-level
-decision, same as before.
+`get_order` does a plain inline comparison (`order.owner_id != claims.sub`,
+admin bypasses it) against the row it just `SELECT`ed, no OPA round-trip
+needed for that: both values (the forwarded `X-User-Id` and the row) are
+already in hand by the time the check runs.
 
 The app no longer verifies the internal token itself either way — it
 trusts `X-User-Id`/`X-User-Role`, forwarded by orders-gate once *it* has
