@@ -1,0 +1,41 @@
+# loki.source.kubernetes (configmap.yaml) reads container logs through
+# the Kubernetes API server (the same path `kubectl logs` uses), and
+# discovery.kubernetes needs to watch every Pod in the cluster to find
+# them -- both need this ServiceAccount to carry cluster-wide read-only
+# access. No mutating verbs anywhere, no access to Secrets/ConfigMaps/
+# anything but Pods and their logs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy-logs
+  labels:
+    app: alloy-logs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy-logs
+  labels:
+    app: alloy-logs
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy-logs
+  labels:
+    app: alloy-logs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy-logs
+subjects:
+- kind: ServiceAccount
+  name: alloy-logs
+  namespace: default

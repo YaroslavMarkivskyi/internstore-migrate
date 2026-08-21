@@ -13,8 +13,26 @@ observability/
   tempo/       # trace storage — filesystem-backed, single-binary mode
   mimir/       # metrics storage — filesystem-backed, monolithic mode
   grafana/     # dashboards + datasources (Loki/Tempo/Mimir pre-wired with correlation)
-  alloy/       # OTLP collector — grpc :4317, http :4318
+  alloy/       # OTLP collector (traces/metrics) — grpc :4317, http :4318
+  alloy-logs/  # log collector — DaemonSet, see its own section below
 ```
+
+## Logs: a separate collector, not the OTLP one
+
+`alloy/configmap.yaml`'s pipeline has a `logs = [otelcol.exporter.loki...]` route wired up, but
+nothing ever feeds it: every service's `observability.py` (Phase 2, STR-158b) only ever
+configures a stdout JSON handler, never an OTLP log exporter. Rather than touching all 12+
+services' `observability.py` to add one, `alloy-logs` collects the exact same JSON lines every
+service already writes to stdout, from outside the app entirely — the same way
+`kubectl logs`/`docker logs` already do — via a `DaemonSet` (one collector per node) using
+Alloy's `loki.source.kubernetes` component, which reads container logs through the Kubernetes
+API rather than tailing node-local log files, so it needs no `hostPath` mount or privileged
+access — just a read-only `ClusterRole` scoped to `pods`/`pods/log` (see `alloy-logs/rbac.yaml`).
+
+A `DaemonSet`, not a sidecar added to each of the 12+ domain-service `Deployment`s: one
+collector per node discovers every Pod via the Kubernetes API and reads all of them, instead of
+duplicating a log-shipping container into every service's pod spec — same centralization
+argument the OTLP `alloy` Deployment already makes for traces/metrics.
 
 ## Storage backend: filesystem/PVC, not GCS
 
@@ -152,6 +170,7 @@ sustained demo-session volume, not a 2-minute burst.
 | `loki`    | 3100 (http), 9096 (grpc) | log storage/query |
 | `mimir`   | 9009 (http) | metrics storage/query, `/prometheus` sub-path for PromQL |
 | `grafana` | 3000 (http), NodePort 30030 → host 3000 via `k8s/kind-config.yaml` | dashboards |
+| `alloy-logs` (DaemonSet) | 12345 (own UI/health) — no OTLP ports, it's a log collector, not a receiver | reads every Pod's stdout via the Kubernetes API, pushes to `loki` |
 
 ## Phase 2 (STR-158b): service instrumentation — delivered as its own ticket
 

@@ -1,0 +1,61 @@
+# DaemonSet, not a per-pod sidecar: one collector per node reads every
+# Pod's logs via the Kubernetes API (configmap.yaml), rather than one
+# extra container added to each of the 12+ domain-service Deployments.
+# Same reasoning ../alloy (the OTLP collector) already established for
+# centralizing traces/metrics collection instead of duplicating exporter
+# config per service -- this just closes the one signal that collector
+# never receives (see configmap.yaml's comment).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy-logs
+  labels:
+    app: alloy-logs
+spec:
+  selector:
+    matchLabels:
+      app: alloy-logs
+  template:
+    metadata:
+      labels:
+        app: alloy-logs
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: alloy-logs
+      containers:
+      - name: alloy-logs
+        image: grafana/alloy:v1.4.3
+        imagePullPolicy: IfNotPresent
+        args:
+        - "run"
+        - "--server.http.listen-addr=0.0.0.0:12345"
+        - "/etc/alloy/config.alloy"
+        ports:
+        - containerPort: 12345
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alloy
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 12345
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /-/ready
+            port: 12345
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+      volumes:
+      - name: config
+        configMap:
+          name: alloy-logs-config

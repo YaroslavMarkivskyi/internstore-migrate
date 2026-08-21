@@ -1,0 +1,65 @@
+# Log collection is the one signal the existing `alloy` Deployment
+# (../alloy) never actually receives: every service's observability.py
+# only ever configures a stdout JSON handler, never an OTLP log exporter
+# -- so ../alloy/configmap.yaml's `logs = [otelcol.exporter.loki...]`
+# pipeline sits wired up but fed by nothing. Rather than touching all 12+
+# services' observability.py to add OTLP log export, this collects the
+# same JSON lines every service already writes to stdout -- from outside
+# the app entirely, the same way `kubectl logs`/`docker logs` already do
+# -- via the Kubernetes API (`loki.source.kubernetes`, not a hostPath
+# tail of node-local log files, so no privileged access to the node
+# filesystem is needed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-logs-config
+  labels:
+    app: alloy-logs
+data:
+  config.alloy: |
+    // Every Pod in this cluster, refreshed continuously via the
+    // Kubernetes API (watch, not poll).
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    // Kubernetes' own pod/container metadata becomes Loki labels --
+    // namespace/pod/container/app are what Grafana's Explore view and
+    // the existing dashboards (../grafana/configmap-dashboards.yaml)
+    // already filter and correlate logs by, matching the same
+    // service_name field observability.py's JSON formatter puts in the
+    // log line itself.
+    discovery.relabel "pods" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "app"
+      }
+    }
+
+    // Reads each matched container's logs via the Kubernetes API (the
+    // same path `kubectl logs` uses) -- requires the RBAC grant in
+    // rbac.yaml (pods/log: get).
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.pods.output
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+      }
+    }
