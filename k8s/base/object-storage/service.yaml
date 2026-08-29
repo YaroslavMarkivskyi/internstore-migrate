@@ -1,0 +1,25 @@
+# NodePort on 9000: like compose, browsers load attachment_url/product
+# image URLs pointed straight at MinIO (MINIO_PUBLIC_BASE_URL=
+# http://localhost:9000), a documented dev gap (see services/chat/README.md)
+# — not the ClusterIP-only norm, same deliberate exception as nginx. 9001
+# (console) is exposed the same way, for manual inspection only, matching
+# compose.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  labels:
+    app: minio
+spec:
+  selector:
+    app: minio
+  ports:
+  - name: api
+    port: 9000
+    targetPort: 9000
+    nodePort: 30900
+  - name: console
+    port: 9001
+    targetPort: 9001
+    nodePort: 30901
+  type: NodePort
