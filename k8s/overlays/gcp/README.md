@@ -50,7 +50,7 @@ live GCP project.
 
 - `kustomization.yaml` — glues everything together
 - `components/delete-infra/` — a Kustomize Component that drops base's
-  in-cluster `postgres-*`, `redis`, `minio`/`minio-init`,
+  in-cluster `postgres-*`, `redis`, `object-storage`/`object-storage-init`,
   `kafka`/`kafka-topic-init` (replaced by Cloud SQL, Memorystore, GCS,
   Managed Kafka respectively)
 - `temporal-patch.yaml` — special-cased: reads its DB config from inline
@@ -97,10 +97,29 @@ Secret already points at `127.0.0.1:5432` (set by Terraform in
 `environments/demo/secrets.tf`), so base's Deployment YAML doesn't change —
 only the new sidecar and the Secret Manager-backed DB password do.
 
-## GCS instead of MinIO
+## GCS instead of self-hosted object storage
 
-`catalog` and `chat`'s `MINIO_ENDPOINT` config value becomes the GCS
-S3-compatible XML endpoint, and their `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`
-secrets become the HMAC key pair Terraform's `storage` module creates —
+`catalog` and `chat`'s `OBJECT_STORAGE_ENDPOINT` config value becomes the
+GCS S3-compatible XML endpoint, and their
+`OBJECT_STORAGE_ACCESS_KEY`/`OBJECT_STORAGE_SECRET_KEY` secrets become the
+HMAC key pair Terraform's `storage` module creates. Both services also get
+a generated ConfigMap patch (`generated/<service>-configmap-patch.yaml`,
+built by `generate-overlay.py`'s `object_storage_configmap_patch_yaml`)
+overriding `OBJECT_STORAGE_BUCKET` to the one real GCS bucket Terraform
+creates (base points each service at its own separate in-cluster MinIO
+bucket instead) and setting `OBJECT_STORAGE_KEY_PREFIX`
+(`catalog-product-images/` / `chat-attachments/`) so the two services'
+objects stay apart within that single shared bucket —
 `services/catalog` and `services/chat`'s boto3 client
-(`minio_client.py`) needs no code change, per its own docstring.
+(`object_storage_client.py`) needs no *other* code change, per its own
+docstring.
+
+The bucket itself is always private (`public_access_prevention = "enforced"`
+in `terraform/gcp/modules/storage` — enforced, not just "no public grant
+made", so a future accidental `allUsers` IAM binding can't make it public
+either). Neither service stores a durable public link: `catalog`'s
+`ProductImage.object_key` and `chat`'s `Message.attachment_key` are the
+only thing persisted, and every response that needs an image/attachment
+URL signs a short-lived presigned GET from that key at read time
+(`ObjectStorageClient.generate_presigned_url`) — this holds the same way
+in local dev and on GCP alike, it's not GCP-specific behavior.

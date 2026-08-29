@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from chat.auth import InternalClaims, get_internal_claims_ws
 from chat.models import Message, Room, RoomMember, SenderType
+from chat.object_storage_dep import resolve_attachment_url
 from chat.outbox import add_outbox_event
 
 router = APIRouter()
@@ -66,6 +67,7 @@ async def _send_history(websocket: WebSocket, session, room_id: str, limit: int)
         select(Message).where(Message.room_id == room_id).order_by(Message.created_at.desc()).limit(limit)
     )
     messages = list(reversed(result.scalars().all()))
+    object_storage_client = websocket.app.state.object_storage_client
     await websocket.send_text(
         json.dumps(
             {
@@ -76,7 +78,7 @@ async def _send_history(websocket: WebSocket, session, room_id: str, limit: int)
                         "sender_type": message.sender_type.value,
                         "sender_id": message.sender_id,
                         "content": message.content,
-                        "attachment_url": message.attachment_url,
+                        "attachment_url": await resolve_attachment_url(object_storage_client, message.attachment_key),
                         "created_at": message.created_at.isoformat(),
                     }
                     for message in messages
@@ -150,7 +152,13 @@ async def room_websocket(
                 continue
 
             content = data.get("content")
-            attachment_url = data.get("attachment_url")
+            # References an object this same caller already uploaded via
+            # POST /rooms/{room_id}/attachments (see routers/attachments.py)
+            # -- not a URL. Resolved to a fresh presigned attachment_url
+            # below, right before this message is published/persisted-for
+            # -read, never stored as a URL itself (see Message.attachment_key's
+            # docstring).
+            attachment_key = data.get("attachment_key")
             sender_type = SenderType.ADMIN if claims.role == "admin" else SenderType.CUSTOMER
 
             async with session_factory() as session:
@@ -161,7 +169,7 @@ async def room_websocket(
                             sender_type=sender_type,
                             sender_id=claims.sub,
                             content=content,
-                            attachment_url=attachment_url,
+                            attachment_key=attachment_key,
                             created_at=now,
                         )
                     )
@@ -229,7 +237,7 @@ async def room_websocket(
                     "sender_type": sender_type.value,
                     "sender_id": claims.sub,
                     "content": content,
-                    "attachment_url": attachment_url,
+                    "attachment_url": await resolve_attachment_url(app.state.object_storage_client, attachment_key),
                     "created_at": now.isoformat(),
                 },
             )

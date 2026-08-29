@@ -24,9 +24,6 @@ output "load_balancer_ip" {
   value = module.networking.lb_ip_address
 }
 
-output "cloud_armor_policy_name" {
-  value = module.networking.cloud_armor_policy_name
-}
 
 output "kafka_bootstrap_address" {
   value = module.kafka.bootstrap_address

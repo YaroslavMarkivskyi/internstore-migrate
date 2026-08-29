@@ -10,7 +10,7 @@ from chat.ai_assistant_client import AIAssistantClient
 from chat.config import Settings, load_settings
 from chat.db import make_session_factory
 from chat.kafka import KafkaEventProducer
-from chat.minio_client import MinioClient
+from chat.object_storage_client import ObjectStorageClient
 from chat.observability import setup_observability
 from chat.outbox_worker import run_outbox_worker
 from chat.pubsub import PubSubRouter
@@ -53,12 +53,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.redis = make_redis_client(settings.redis_url)
     app.state.ws_manager = WebSocketManager()
     app.state.pubsub = PubSubRouter(app.state.redis, app.state.ws_manager)
-    app.state.minio_client = MinioClient(
-        endpoint=settings.minio_endpoint,
-        public_base_url=settings.minio_public_base_url,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
-        bucket=settings.minio_bucket,
+    app.state.object_storage_client = ObjectStorageClient(
+        endpoint=settings.object_storage_endpoint,
+        public_base_url=settings.object_storage_public_base_url,
+        access_key=settings.object_storage_access_key,
+        secret_key=settings.object_storage_secret_key,
+        bucket=settings.object_storage_bucket,
+        key_prefix=settings.object_storage_key_prefix,
+        presigned_url_ttl_seconds=settings.object_storage_presigned_url_ttl_seconds,
     )
     # One id per process, used as the member value in the
     # chat:{room_id}:connections presence set — not tied to any external

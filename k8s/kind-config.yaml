@@ -1,6 +1,6 @@
 # Optional: `kind create cluster --config k8s/kind-config.yaml --name internstore`
 # maps the NodePorts this manifest set uses straight onto the host, so
-# nginx/minio/temporal-ui are reachable at localhost without a
+# nginx/object-storage/temporal-ui are reachable at localhost without a
 # separate `kubectl port-forward`. Without this file, `kind create cluster`
 # still works fine — just use port-forward instead (see k8s/README.md).
 #
@@ -15,9 +15,9 @@ nodes:
     hostPort: 8443
   - containerPort: 30082   # nginx http
     hostPort: 8082
-  - containerPort: 30900   # minio api
+  - containerPort: 30900   # object-storage api
     hostPort: 9000
-  - containerPort: 30901   # minio console
+  - containerPort: 30901   # object-storage console
     hostPort: 9001
   - containerPort: 30088   # temporal-ui
     hostPort: 8088

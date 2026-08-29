@@ -28,8 +28,8 @@ locals {
       "gcs-hmac-access-id", "gcs-hmac-secret",
     ]
     payments       = ["internal-token-secret", "payments-database-url"]
-    "ai-assistant" = ["internal-token-secret", "ai-assistant-database-url", "openai-api-key"]
-    "mcp-gateway"  = ["internal-token-secret", "mcp-gateway-database-url", "openai-api-key"]
+    "ai-assistant" = ["internal-token-secret", "ai-assistant-database-url"]
+    "mcp-gateway"  = ["internal-token-secret", "mcp-gateway-database-url"]
     # FIREBASE_PROJECT_ID isn't a Secret Manager secret (not sensitive) and
     # wiring the real GCP Firebase project id into auth-backend's config is
     # a separate follow-up — see generate-overlay.py's matching comment.
@@ -49,11 +49,12 @@ locals {
 resource "google_service_account" "workload" {
   for_each     = local.service_secrets
   project      = var.project_id
-  account_id   = "${var.name_prefix}-${each.key}"
+  account_id   = substr("${var.name_prefix}-${each.key}", 0, 30)
   display_name = "Workload Identity GSA for the ${each.key} k8s service (STR-154)"
 }
 
 resource "google_service_account_iam_member" "workload_identity_binding" {
+  depends_on         = [module.gke]
   for_each           = local.service_secrets
   service_account_id = google_service_account.workload[each.key].name
   role               = "roles/iam.workloadIdentityUser"
@@ -90,5 +91,13 @@ resource "google_project_iam_member" "cloudsql_client" {
   for_each = local.service_db_keys
   project  = var.project_id
   role     = "roles/cloudsql.client"
+  member   = "serviceAccount:${google_service_account.workload[each.key].email}"
+}
+
+# Grant Vertex AI user role for Gemini access (STR-161b)
+resource "google_project_iam_member" "aiplatform_user" {
+  for_each = toset(["ai-assistant", "mcp-gateway"])
+  project  = var.project_id
+  role     = "roles/aiplatform.user"
   member   = "serviceAccount:${google_service_account.workload[each.key].email}"
 }

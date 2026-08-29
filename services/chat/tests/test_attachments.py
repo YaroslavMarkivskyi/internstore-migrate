@@ -11,7 +11,7 @@ async def _seed_room(app) -> None:
         await session.commit()
 
 
-async def test_upload_happy_path(app, client, fake_minio_client, customer_token):
+async def test_upload_happy_path(app, client, fake_object_storage_client, customer_token):
     await _seed_room(app)
     response = await client.post(
         f"/rooms/{ROOM_ID}/attachments",
@@ -19,11 +19,13 @@ async def test_upload_happy_path(app, client, fake_minio_client, customer_token)
         headers=customer_token,
     )
     assert response.status_code == 200
-    assert response.json()["attachment_url"].endswith(".jpg")
-    assert len(fake_minio_client.uploads) == 1
+    body = response.json()
+    assert ".jpg" in body["attachment_key"]
+    assert ".jpg" in body["attachment_url"]
+    assert len(fake_object_storage_client.uploads) == 1
 
 
-async def test_admin_can_upload_to_any_room(app, client, fake_minio_client, admin_token):
+async def test_admin_can_upload_to_any_room(app, client, fake_object_storage_client, admin_token):
     await _seed_room(app)
     response = await client.post(
         f"/rooms/{ROOM_ID}/attachments",

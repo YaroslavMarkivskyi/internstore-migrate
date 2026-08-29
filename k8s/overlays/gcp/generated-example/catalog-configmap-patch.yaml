@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-config
+data:
+  OBJECT_STORAGE_ENDPOINT: "https://storage.googleapis.com"
+  OBJECT_STORAGE_PUBLIC_BASE_URL: "https://storage.googleapis.com"
+  OBJECT_STORAGE_BUCKET: "example-project-123-internstore-demo-assets"
+  OBJECT_STORAGE_KEY_PREFIX: "catalog-product-images/"

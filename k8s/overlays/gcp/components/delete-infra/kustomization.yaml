@@ -1,7 +1,8 @@
 # Drops base's in-cluster stateful infra now provisioned as managed GCP
 # services instead: postgres-* (-> Cloud SQL), redis (-> Memorystore),
-# minio/minio-init (-> GCS), kafka/kafka-topic-init (-> Managed Kafka,
-# topics created by terraform/gcp/modules/kafka instead of the init Job).
+# object-storage/object-storage-init (-> GCS), kafka/kafka-topic-init
+# (-> Managed Kafka, topics created by terraform/gcp/modules/kafka instead
+# of the init Job).
 # Also drops the 12 app-level plaintext secret.yaml Secrets that
 # generate-overlay.py's SecretProviderClasses replace (same Secret
 # name/keys, Secret Manager-backed) — without this delete, base's plaintext
@@ -27,7 +28,7 @@ patches:
       name: placeholder
   target:
     kind: StatefulSet
-    name: "^(postgres-.*|redis|minio|kafka)$"
+    name: "^(postgres-.*|redis|object-storage|kafka)$"
 
 - patch: |-
     $patch: delete
@@ -47,7 +48,7 @@ patches:
       name: placeholder
   target:
     kind: Service
-    name: "^(postgres-.*|redis|minio|kafka)$"
+    name: "^(postgres-.*|redis|object-storage|kafka)$"
 
 - patch: |-
     $patch: delete
@@ -80,7 +81,7 @@ patches:
       name: placeholder
   target:
     kind: PersistentVolumeClaim
-    name: "^(postgres-.*-data|minio-data|kafka-data)$"
+    name: "^(postgres-.*-data|object-storage-data|kafka-data)$"
 
 - patch: |-
     $patch: delete
@@ -90,4 +91,4 @@ patches:
       name: placeholder
   target:
     kind: Job
-    name: "^(kafka-topic-init|minio-init)$"
+    name: "^(kafka-topic-init|object-storage-init)$"

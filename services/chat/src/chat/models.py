@@ -64,7 +64,13 @@ class Message(Base):
     # kept), so sender_type is never "guest" here.
     sender_id: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str | None] = mapped_column(nullable=True)
-    attachment_url: Mapped[str | None] = mapped_column(nullable=True)
+    # The object-storage object key (e.g. "{room_id}/{uuid}.jpg"), not a
+    # URL -- the bucket is private (see ObjectStorageClient's docstring), so
+    # there's no durable public link to store. Every response that includes
+    # an attachment_url signs one from this key on the spot (short TTL,
+    # never persisted) -- see routers/rooms.py's get_messages and
+    # ws/room.py's _send_history/live publish.
+    attachment_key: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     room: Mapped["Room"] = relationship(back_populates="messages")

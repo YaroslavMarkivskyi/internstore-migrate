@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Same build matrix as build-images.sh, but tags + pushes to the
-# Terraform-provisioned Artifact Registry repo instead of loading into a
-# local kind cluster. Usage:
-#   ./k8s/build-push-gcp.sh <artifact-registry-repository-url> [tag]
-# repository-url is terraform/gcp/environments/demo's
-# artifact_registry_repository_url output, e.g.
-#   us-central1-docker.pkg.dev/my-project/internstore
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -14,9 +7,6 @@ TAG="${2:-latest}"
 
 gcloud auth configure-docker "$(echo "$REPO_URL" | cut -d/ -f1)" --quiet
 
-# name -> build context — identical to build-images.sh's map, kept in sync
-# by hand (same reasoning as k8s/overlays/gcp/generate-overlay.py's tables:
-# small enough not to be worth a shared source of truth for this ticket).
 declare -A IMAGES=(
   [auth-backend]="services/auth-backend"
   [catalog]="services/catalog"
@@ -38,11 +28,8 @@ declare -A IMAGES=(
 for name in "${!IMAGES[@]}"; do
   ctx="${IMAGES[$name]}"
   tag="${REPO_URL}/${name}:${TAG}"
-  echo "==> Building ${tag} from ${ctx}"
-  docker build -t "${tag}" "${ctx}"
-  echo "==> Pushing ${tag}"
-  docker push "${tag}"
+  echo "==> Building and Pushing ${tag} from ${ctx}"
+  docker buildx build --platform linux/amd64 -t "${tag}" --push "${ctx}"
 done
 
 echo "Done. Every internstore/* image is pushed to ${REPO_URL} at tag :${TAG}."
-echo "Point k8s/overlays/gcp/kustomization.yaml's images[].newTag at '${TAG}' if it isn't already."

@@ -1,7 +1,7 @@
 from fastapi import Request
 
-from catalog.minio_client import MinioClient
+from catalog.object_storage_client import ObjectStorageClient
 
 
-def get_minio_client(request: Request) -> MinioClient:
-    return request.app.state.minio_client
+def get_object_storage_client(request: Request) -> ObjectStorageClient:
+    return request.app.state.object_storage_client

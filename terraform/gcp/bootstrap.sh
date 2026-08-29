@@ -22,7 +22,8 @@ gcloud services enable \
   secretmanager.googleapis.com \
   artifactregistry.googleapis.com \
   servicenetworking.googleapis.com \
-  iam.googleapis.com
+  iam.googleapis.com \
+  aiplatform.googleapis.com
 
 if ! gcloud storage buckets describe "gs://${STATE_BUCKET}" >/dev/null 2>&1; then
   gcloud storage buckets create "gs://${STATE_BUCKET}" \

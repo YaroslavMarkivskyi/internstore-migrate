@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from catalog.db import get_session
-from catalog.minio_client import MinioClient
-from catalog.minio_dep import get_minio_client
+from catalog.object_storage_client import ObjectStorageClient
+from catalog.object_storage_dep import get_object_storage_client
 from catalog.models import Product, ProductImage
 from catalog.schemas import ProductImageRead
 
@@ -37,12 +37,19 @@ async def _get_product_or_404(session: AsyncSession, product_id: uuid.UUID) -> P
 async def list_product_images(
     product_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> list[ProductImage]:
+    object_storage_client: Annotated[ObjectStorageClient, Depends(get_object_storage_client)],
+) -> list[ProductImageRead]:
     await _get_product_or_404(session, product_id)
     result = await session.execute(
         select(ProductImage).where(ProductImage.product_id == product_id).order_by(ProductImage.created_at)
     )
-    return list(result.scalars().all())
+    images = result.scalars().all()
+    # Signed fresh on every read, never persisted -- see
+    # ObjectStorageClient's docstring and models.ProductImage's comment.
+    return [
+        ProductImageRead(id=image.id, image=await object_storage_client.generate_presigned_url(image.object_key))
+        for image in images
+    ]
 
 
 @router.post(
@@ -54,8 +61,8 @@ async def add_product_image(
     product_id: uuid.UUID,
     file: UploadFile,
     session: Annotated[AsyncSession, Depends(get_session)],
-    minio_client: Annotated[MinioClient, Depends(get_minio_client)],
-) -> ProductImage:
+    object_storage_client: Annotated[ObjectStorageClient, Depends(get_object_storage_client)],
+) -> ProductImageRead:
     await _get_product_or_404(session, product_id)
 
     extension = ALLOWED_CONTENT_TYPES.get(file.content_type or "")
@@ -67,13 +74,13 @@ async def add_product_image(
         raise HTTPException(status_code=422, detail="Image exceeds the 20MB limit")
 
     key = f"{product_id}/{uuid.uuid4()}.{extension}"
-    image_url = await minio_client.put_object(key, body, file.content_type)
+    await object_storage_client.put_object(key, body, file.content_type)
 
-    image = ProductImage(product_id=product_id, image=image_url, object_key=key)
+    image = ProductImage(product_id=product_id, object_key=key)
     session.add(image)
     await session.commit()
     await session.refresh(image)
-    return image
+    return ProductImageRead(id=image.id, image=await object_storage_client.generate_presigned_url(key))
 
 
 @router.delete("/{product_id}/images/{image_id}", status_code=204)
@@ -81,12 +88,12 @@ async def delete_product_image(
     product_id: uuid.UUID,
     image_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
-    minio_client: Annotated[MinioClient, Depends(get_minio_client)],
+    object_storage_client: Annotated[ObjectStorageClient, Depends(get_object_storage_client)],
 ) -> None:
     image = await session.get(ProductImage, image_id)
     if image is None or image.product_id != product_id:
         raise HTTPException(status_code=404, detail="Image not found")
 
-    await minio_client.delete_object(image.object_key)
+    await object_storage_client.delete_object(image.object_key)
     await session.delete(image)
     await session.commit()

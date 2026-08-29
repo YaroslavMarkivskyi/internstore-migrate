@@ -21,8 +21,8 @@ resources:
 - redis
 - temporal
 - temporal-ui
-- minio
-- minio-init
+- object-storage
+- object-storage-init
 - mock-camera
 - observability
 

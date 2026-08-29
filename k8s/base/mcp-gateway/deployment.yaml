@@ -22,26 +22,27 @@ spec:
         ports:
         - containerPort: 8000
         envFrom:
-          - configMapRef:
-              name: mcp-gateway-config
-          - secretRef:
-              name: mcp-gateway-secret
+        - configMapRef:
+            name: mcp-gateway-config
+        - secretRef:
+            name: mcp-gateway-secret
+            optional: true
         readinessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 5
+          initialDelaySeconds: 30
           periodSeconds: 5
         livenessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 15
+          initialDelaySeconds: 60
           periodSeconds: 10
         resources:
           requests:
-            cpu: "100m"
-            memory: "256Mi"
+            cpu: 100m
+            memory: 256Mi
           limits:
-            cpu: "500m"
-            memory: "512Mi"
+            cpu: 500m
+            memory: 512Mi

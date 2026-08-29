@@ -8,8 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from catalog.db import get_session
 from catalog.inventory_client import InventoryClient, InventoryUnavailableError, get_inventory_client
-from catalog.minio_client import MinioClient
-from catalog.minio_dep import get_minio_client
+from catalog.object_storage_client import ObjectStorageClient
+from catalog.object_storage_dep import get_object_storage_client
 from catalog.models import Category, Product
 from catalog.outbox import add_outbox_event
 from catalog.schemas import ProductCreate, ProductRead, ProductUpdate
@@ -149,7 +149,7 @@ async def update_product(
 async def delete_product(
     product_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
-    minio_client: Annotated[MinioClient, Depends(get_minio_client)],
+    object_storage_client: Annotated[ObjectStorageClient, Depends(get_object_storage_client)],
 ) -> None:
     result = await session.execute(
         select(Product).options(selectinload(Product.images)).where(Product.id == product_id)
@@ -171,11 +171,11 @@ async def delete_product(
     # permanently 409-blocking that stock's deletion with no way for an
     # admin to even see why. Orders' historical pricing (catalog_client.py)
     # also still needs GET /products/{id} to resolve for old orders.
-    # Images are still actually removed (DB rows + MinIO blobs) --
+    # Images are still actually removed (DB rows + object-storage blobs) --
     # there's no reason to keep serving/storing those for a delisted
     # product.
     for image in product.images:
-        await minio_client.delete_object(image.object_key)
+        await object_storage_client.delete_object(image.object_key)
         await session.delete(image)
 
     product.is_deleted = True

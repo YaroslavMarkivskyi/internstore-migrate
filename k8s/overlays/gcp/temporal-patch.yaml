@@ -15,6 +15,7 @@ spec:
         - name: POSTGRES_SEEDS
           value: "127.0.0.1"
         - name: POSTGRES_PWD
+          $patch: replace
           valueFrom:
             secretKeyRef:
               name: temporal-secret
@@ -39,7 +40,7 @@ spec:
       volumes:
       - name: secrets-store
         csi:
-          driver: secrets-store.csi.k8s.io
+          driver: secrets-store-gke.csi.k8s.io
           readOnly: true
           volumeAttributes:
             secretProviderClass: temporal-secrets

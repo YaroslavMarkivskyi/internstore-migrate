@@ -11,6 +11,7 @@ kind: Kustomization
 namespace: default
 
 resources:
+- csi-rbac.yaml
 - ../../base
 - ingress.yaml
 - backendconfig.yaml
@@ -54,6 +55,8 @@ patches:
     name: "^temporal$"
 - path: generated/catalog-deployment-patch.yaml
   target: { kind: Deployment, name: "^catalog$" }
+- path: generated/catalog-configmap-patch.yaml
+  target: { kind: ConfigMap, name: "^catalog-config$" }
 - path: generated/inventory-deployment-patch.yaml
   target: { kind: Deployment, name: "^inventory$" }
 - path: generated/orders-deployment-patch.yaml
@@ -66,6 +69,8 @@ patches:
   target: { kind: Deployment, name: "^security$" }
 - path: generated/chat-deployment-patch.yaml
   target: { kind: Deployment, name: "^chat$" }
+- path: generated/chat-configmap-patch.yaml
+  target: { kind: ConfigMap, name: "^chat-config$" }
 - path: generated/payments-deployment-patch.yaml
   target: { kind: Deployment, name: "^payments$" }
 - path: generated/ai-assistant-deployment-patch.yaml
@@ -82,47 +87,57 @@ patches:
 # k8s/build-push-gcp.sh produces.
 images:
 - name: internstore/catalog
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/catalog
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/catalog
   newTag: latest
 - name: internstore/inventory
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/inventory
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/inventory
   newTag: latest
 - name: internstore/orders
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/orders
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/orders
   newTag: latest
 - name: internstore/telemetry
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/telemetry
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/telemetry
   newTag: latest
 - name: internstore/telemetry-aggregates
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/telemetry-aggregates
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/telemetry-aggregates
   newTag: latest
 - name: internstore/security
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/security
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/security
   newTag: latest
 - name: internstore/chat
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/chat
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/chat
   newTag: latest
 - name: internstore/payments
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/payments
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/payments
   newTag: latest
 - name: internstore/ai-assistant
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/ai-assistant
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/ai-assistant
   newTag: latest
 - name: internstore/mcp-gateway
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/mcp-gateway
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/mcp-gateway
   newTag: latest
 - name: internstore/auth-backend
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/auth-backend
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/auth-backend
   newTag: latest
 - name: internstore/checkout-workflow-worker
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/checkout-workflow-worker
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/checkout-workflow-worker
   newTag: latest
 - name: internstore/notifications
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/notifications
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/notifications
   newTag: latest
 - name: internstore/mock-camera
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/mock-camera
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/mock-camera
   newTag: latest
 - name: internstore/nginx
-  newName: us-central1-docker.pkg.dev/PROJECT/internstore/nginx
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/nginx
   newTag: latest
+- name: internstore/internal-gate
+  newName: us-central1-docker.pkg.dev/internstore-taij26/internstore/internal-gate
+  newTag: latest
+configMapGenerator:
+- name: nginx-config
+  files:
+  - nginx.conf=nginx-gke.conf
+patchesStrategicMerge:
+- nginx-patch.yaml
+- redis-patch.yaml

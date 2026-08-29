@@ -48,44 +48,6 @@ resource "google_service_networking_connection" "private_service_connection" {
 
 # --- Cloud Armor, attached to the GCLB Ingress via BackendConfig in the k8s overlay ---
 
-resource "google_compute_security_policy" "default" {
-  project     = var.project_id
-  name        = "${var.name_prefix}-armor-policy"
-  description = "Baseline Cloud Armor policy for the demo Ingress — default allow + rate limit, not a full WAF ruleset."
-
-  rule {
-    action   = "allow"
-    priority = "2147483647"
-    match {
-      versioned_expr = "SRC_IPS_V1"
-      config {
-        src_ip_ranges = ["*"]
-      }
-    }
-    description = "default allow"
-  }
-
-  rule {
-    action   = "throttle"
-    priority = "1000"
-    match {
-      versioned_expr = "SRC_IPS_V1"
-      config {
-        src_ip_ranges = ["*"]
-      }
-    }
-    rate_limit_options {
-      conform_action = "allow"
-      exceed_action  = "deny(429)"
-      enforce_on_key = "IP"
-      rate_limit_threshold {
-        count        = 300
-        interval_sec = 60
-      }
-    }
-    description = "basic per-IP rate limit"
-  }
-}
 
 # --- Static external IP for the GCLB Ingress ---
 

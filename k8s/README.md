@@ -19,7 +19,7 @@ kubectl apply -k k8s/overlays/local
 kubectl get pods -w                 # wait for everything to reach Running/Ready
 ```
 
-`k8s/kind-config.yaml` maps nginx (8443/8082), MinIO (9000/9001), and
+`k8s/kind-config.yaml` maps nginx (8443/8082), object-storage (9000/9001), and
 temporal-ui (8088) NodePorts straight onto those same host ports. Skip `--config` and use
 `kubectl port-forward svc/nginx 8443:8443` (etc.) instead if you'd rather not reserve those
 host ports.
@@ -115,7 +115,7 @@ cluster while building these manifests** (see Verification below) — not just a
 
 Every `secret.yaml` in `k8s/base/*/` is a plain `stringData` manifest with the **same
 dev-only values** already committed in `docker-compose.yml` (`dev-only-internal-secret-change-me`,
-`minioadmin`/`minioadmin`, etc.) — not a new exposure, the same non-production credentials this
+`minioadmin`/`minioadmin` for `object-storage`'s `OBJECT_STORAGE_ACCESS_KEY`/`OBJECT_STORAGE_SECRET_KEY`, etc.) — not a new exposure, the same non-production credentials this
 repo already ships. **Do not do this once a GCP overlay exists** — that's when GCP Secret
 Manager + Workload Identity replaces plain `Secret` manifests, not before.
 
@@ -159,7 +159,7 @@ of thing that only shows up against a real cluster, not from reading the compose
 ## Resource requests on a small local node
 
 Validating against a real single-node `kind` cluster on a 4-core dev host, the 10 Postgres
-StatefulSets + Kafka + Redis + Temporal + temporal-ui + MinIO alone already reserve
+StatefulSets + Kafka + Redis + Temporal + temporal-ui + object-storage alone already reserve
 ~98% of that node's allocatable CPU before a single domain service Deployment is scheduled —
 some domain service pods sat `Pending` (`Insufficient cpu`) as a direct result, not because of
 a manifest defect. On a small local machine, either give `kind`/`minikube` more CPU (a
@@ -419,7 +419,7 @@ assumption — this ticket answers it: **pass**.
 ### Teardown: no orphaned PVCs
 
 `kubectl delete -k k8s/overlays/local/` removed all 11 PVCs
-(`kafka-data`, `minio-data`, 9× `postgres-*-data`) along with every other resource — they're
+(`kafka-data`, `object-storage-data`, 9× `postgres-*-data`) along with every other resource — they're
 declared as ordinary standalone `PersistentVolumeClaim` resources inside this kustomization
 (not StatefulSet `volumeClaimTemplates`, which `kubectl delete -k` would leave behind by
 design), so they're deleted the same as any other resource the kustomization owns. `kubectl get

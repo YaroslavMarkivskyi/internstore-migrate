@@ -16,85 +16,75 @@ spec:
     spec:
       enableServiceLinks: false
       containers:
-      # No readiness/liveness probes or :8000 here anymore -- catalog-gate
-      # below owns the network-facing port and health checks (GET /health
-      # passes straight through, same as every other GET, see
-      # nginx-gate-configmap.yaml). This container isn't reachable at all
-      # outside this pod (HOST=127.0.0.1 in catalog-config) -- only
-      # catalog-gate/catalog-verify/catalog-opa share its network
-      # namespace.
       - name: catalog
         image: internstore/catalog:local
         imagePullPolicy: IfNotPresent
         envFrom:
-          - configMapRef:
-              name: catalog-config
-          - secretRef:
-              name: catalog-secret
+        - configMapRef:
+            name: catalog-config
+        - secretRef:
+            name: catalog-secret
+            optional: true
         resources:
           requests:
-            cpu: "100m"
-            memory: "256Mi"
+            cpu: 100m
+            memory: 256Mi
           limits:
-            cpu: "500m"
-            memory: "512Mi"
+            cpu: 500m
+            memory: 512Mi
       - name: catalog-opa
         image: openpolicyagent/opa:latest
         imagePullPolicy: IfNotPresent
-        args: ["run", "--server", "--addr=:8181", "/policies/catalog.rego", "/policies/common.rego"]
+        args:
+        - run
+        - --server
+        - --addr=:8181
+        - /policies/catalog.rego
+        - /policies/common.rego
         env:
-          # common.rego's `subject` rule verifies X-Internal-Token itself
-          # (io.jwt.decode_verify) -- same secret as the catalog
-          # container's own INTERNAL_TOKEN_SECRET, referenced by key
-          # rather than the whole envFrom (this sidecar has no business
-          # seeing catalog-secret's DATABASE_URL/MinIO keys too).
-          - name: INTERNAL_TOKEN_SECRET
-            valueFrom:
-              secretKeyRef:
-                name: catalog-secret
-                key: INTERNAL_TOKEN_SECRET
+        - name: INTERNAL_TOKEN_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: catalog-secret
+              key: INTERNAL_TOKEN_SECRET
+              optional: true
         volumeMounts:
         - name: policies
           mountPath: /policies
           readOnly: true
         resources:
           requests:
-            cpu: "50m"
-            memory: "64Mi"
+            cpu: 50m
+            memory: 64Mi
           limits:
-            cpu: "200m"
-            memory: "128Mi"
-      # Translates OPA's JSON decision into the HTTP status/headers
-      # catalog-gate's auth_request needs -- see
-      # services/internal-gate/src/internal_gate/main.py's own comment for
-      # why this can't just be nginx config. Generic (no catalog-specific
-      # code), parameterized by OPA_PACKAGE.
+            cpu: 200m
+            memory: 128Mi
       - name: catalog-verify
         image: internstore/internal-gate:local
         imagePullPolicy: IfNotPresent
         env:
-          - name: PORT
-            value: "8090"
-          - name: OPA_URL
-            value: "http://localhost:8181"
-          - name: OPA_PACKAGE
-            value: "catalog"
+        - name: PORT
+          value: '8090'
+        - name: OPA_URL
+          value: http://localhost:8181
+        - name: OPA_PACKAGE
+          value: catalog
         resources:
           requests:
-            cpu: "50m"
-            memory: "64Mi"
+            cpu: 50m
+            memory: 64Mi
           limits:
-            cpu: "200m"
-            memory: "128Mi"
-      # Occupies :8000 -- what the Service (and every other service
-      # calling catalog:8000) still targets, unchanged. GET (catalog's
-      # public read paths) passes straight through; everything else goes
-      # through catalog-verify's OPA-backed check first. See
-      # nginx-gate-configmap.yaml for the full auth_request wiring.
+            cpu: 200m
+            memory: 128Mi
       - name: catalog-gate
         image: nginx:1.27-alpine
         imagePullPolicy: IfNotPresent
-        command: ["nginx", "-c", "/etc/nginx-src/catalog.conf", "-g", "daemon off;"]
+        command:
+        - nginx
+        - -c
+        - /etc/nginx-src/catalog.conf
+        - -g
+        - daemon off;
         ports:
         - containerPort: 8000
         volumeMounts:
@@ -105,21 +95,21 @@ spec:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 5
+          initialDelaySeconds: 30
           periodSeconds: 5
         livenessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 15
+          initialDelaySeconds: 60
           periodSeconds: 10
         resources:
           requests:
-            cpu: "50m"
-            memory: "64Mi"
+            cpu: 50m
+            memory: 64Mi
           limits:
-            cpu: "200m"
-            memory: "128Mi"
+            cpu: 200m
+            memory: 128Mi
       volumes:
       - name: policies
         configMap:

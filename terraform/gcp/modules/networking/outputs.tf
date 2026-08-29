@@ -27,9 +27,6 @@ output "private_service_connection" {
   value       = google_service_networking_connection.private_service_connection.network
 }
 
-output "cloud_armor_policy_name" {
-  value = google_compute_security_policy.default.name
-}
 
 output "lb_ip_address" {
   value = google_compute_global_address.lb_ip.address

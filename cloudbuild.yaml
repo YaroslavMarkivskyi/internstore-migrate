@@ -1,0 +1,123 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-auth-backend'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/auth-backend:latest', 'services/auth-backend']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-auth-backend'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/auth-backend:latest']
+  waitFor: ['build-auth-backend']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-catalog'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/catalog:latest', 'services/catalog']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-catalog'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/catalog:latest']
+  waitFor: ['build-catalog']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-inventory'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/inventory:latest', 'services/inventory']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-inventory'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/inventory:latest']
+  waitFor: ['build-inventory']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-orders'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/orders:latest', 'services/orders']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-orders'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/orders:latest']
+  waitFor: ['build-orders']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-payments'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/payments:latest', 'services/payments']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-payments'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/payments:latest']
+  waitFor: ['build-payments']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-checkout-workflow-worker'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/checkout-workflow-worker:latest', 'services/checkout-workflow']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-checkout-workflow-worker'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/checkout-workflow-worker:latest']
+  waitFor: ['build-checkout-workflow-worker']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-telemetry'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/telemetry:latest', 'services/telemetry']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-telemetry'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/telemetry:latest']
+  waitFor: ['build-telemetry']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-telemetry-aggregates'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/telemetry-aggregates:latest', 'services/telemetry-aggregates']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-telemetry-aggregates'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/telemetry-aggregates:latest']
+  waitFor: ['build-telemetry-aggregates']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-mock-camera'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/mock-camera:latest', 'services/security/mock-camera']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-mock-camera'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/mock-camera:latest']
+  waitFor: ['build-mock-camera']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-security'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/security:latest', 'services/security']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-security'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/security:latest']
+  waitFor: ['build-security']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-notifications'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/notifications:latest', 'services/notifications']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-notifications'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/notifications:latest']
+  waitFor: ['build-notifications']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-chat'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/chat:latest', 'services/chat']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-chat'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/chat:latest']
+  waitFor: ['build-chat']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-ai-assistant'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/ai-assistant:latest', 'services/ai-assistant']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-ai-assistant'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/ai-assistant:latest']
+  waitFor: ['build-ai-assistant']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-mcp-gateway'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/mcp-gateway:latest', 'services/mcp-gateway']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-mcp-gateway'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/mcp-gateway:latest']
+  waitFor: ['build-mcp-gateway']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-nginx'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/nginx:latest', 'nginx']
+  waitFor: ['-']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-nginx'
+  args: ['push', 'us-central1-docker.pkg.dev/internstore-taij26/internstore/nginx:latest']
+  waitFor: ['build-nginx']
+options:
+  machineType: 'E2_HIGHCPU_8'

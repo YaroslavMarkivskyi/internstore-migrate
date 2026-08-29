@@ -51,12 +51,12 @@ class ProductImage(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
-    # The MinIO public URL -- named `image` (not `image_url`) so it matches
-    # the frontend's IProductImage {id, image} with no ccApi remapping.
-    image: Mapped[str] = mapped_column(String, nullable=False)
-    # The MinIO object key (e.g. "{product_id}/{uuid}.jpg"), stored
-    # separately from `image` so deletion never has to reverse-parse it
-    # back out of the public URL.
+    # The object-storage object key (e.g. "{product_id}/{uuid}.jpg") -- the
+    # only durable reference to the image this row keeps. There's no
+    # `image`/public-URL column: the bucket is private (see
+    # ObjectStorageClient's docstring), so every response that includes an
+    # `image` URL signs one from this key on the spot (short TTL, never
+    # persisted) rather than storing a link that would eventually 403.
     object_key: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

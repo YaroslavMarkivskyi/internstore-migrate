@@ -118,8 +118,9 @@ On connect:
    messages replayed as a `{"type": "history", "messages": [...]}` frame.
    Guests get nothing here — no persisted history to replay.
 
-On receive: `{"type": "message", "content", "attachment_url"}` is persisted
-(registered users only) and published; `{"type": "typing"}` goes straight
+On receive: `{"type": "message", "content", "attachment_key"}` is persisted
+(registered users only, as `attachment_key` — see "Object storage" below)
+and published; `{"type": "typing"}` goes straight
 to Redis pub/sub with no DB write and no admin-presence bookkeeping — an
 in-memory-only signal, per the ticket's documented dev gap.
 
@@ -180,34 +181,49 @@ event.
 - `POST /rooms/{id}/attachments` — open to any room participant: the admin
   (any room) or the customer/guest whose own `sub` matches the room's
   `customer_id`/`session_id` (403 otherwise). Validates JPEG/PNG, ≤20MB,
-  streams to MinIO, returns `{"attachment_url": "..."}`. The client then
-  sends that URL back in a WebSocket message's `attachment_url` field.
+  streams to object storage, returns `{"attachment_key": "...", "attachment_url": "..."}`.
+  `attachment_key` is what the client sends back in a WebSocket message's
+  `attachment_key` field to actually post it into the room (not the URL —
+  see below); `attachment_url` there is only a short-lived convenience so
+  the client can preview what it just uploaded before sending.
 
-## MinIO — dev gap
+## Object storage — private bucket, signed URLs
 
-`MinioClient` ([src/chat/minio_client.py](src/chat/minio_client.py)) is a
-thin `boto3` S3 client against MinIO's S3-compatible API. Two separate URLs
-matter: `MINIO_ENDPOINT` (`http://minio:9000`, the container-network address
-this service's boto3 client actually talks to) and
-`MINIO_PUBLIC_BASE_URL` (`http://localhost:9000` in dev, host-exposed so a
-browser can load `attachment_url` directly). **Documented gap**: in prod
-this would be a real S3 bucket behind CloudFront/signed URLs, not a
-host-exposed MinIO port — swapping is meant to be a config change
-(`MINIO_ENDPOINT`/`MINIO_PUBLIC_BASE_URL`/credentials), not a code change,
-since `MinioClient` only talks to the S3-compatible API surface.
+`ObjectStorageClient` ([src/chat/object_storage_client.py](src/chat/object_storage_client.py))
+is a thin `boto3` S3 client against MinIO's S3-compatible API in local dev
+(a GCS bucket in GCP, see terraform/gcp/modules/storage — same class, no
+code change). The bucket is always private — no public/anonymous read
+access — so nothing this service returns is a durable public link.
+`Message.attachment_key` (renamed from `attachment_url`) stores only the
+object key; every response that includes an `attachment_url`
+(`GET /rooms/{id}/messages`, the WS `history` frame, the WS live `message`
+publish) signs one fresh from that key on the spot
+(`ObjectStorageClient.generate_presigned_url`, short TTL — see
+`OBJECT_STORAGE_PRESIGNED_URL_TTL_SECONDS`), never storing it.
+
+Two separate URLs still matter for the client construction itself:
+`OBJECT_STORAGE_ENDPOINT` (`http://object-storage:9000`, the
+container-network address this service's boto3 client uses for
+`put_object`) and `OBJECT_STORAGE_PUBLIC_BASE_URL`
+(`http://localhost:9000` in dev, what a browser can actually reach — used
+only to *sign* presigned URLs against, since SigV4 signs the Host itself).
+Swapping environments is meant to be a config change
+(`OBJECT_STORAGE_ENDPOINT`/`OBJECT_STORAGE_PUBLIC_BASE_URL`/credentials),
+not a code change, since `ObjectStorageClient` only talks to the
+S3-compatible API surface.
 
 ## Local dev without Docker
 
 ```bash
 cd services/chat
-cp .env.example .env   # point DATABASE_URL/REDIS_URL/MINIO_* at local instances
+cp .env.example .env   # point DATABASE_URL/REDIS_URL/OBJECT_STORAGE_* at local instances
 uv sync
 uv run alembic upgrade head
 uv run uvicorn chat.main:create_app --factory --reload
 ```
 
 Run tests (self-contained: a temp-file-backed SQLite DB per test,
-`fakeredis` for Redis, a fake MinIO client swapped in via
+`fakeredis` for Redis, a fake object-storage client swapped in via
 `app.dependency_overrides` — no real Postgres/Redis/MinIO/Kafka needed):
 
 ```bash
@@ -217,7 +233,7 @@ uv run pytest
 ## Via docker compose
 
 ```bash
-docker compose up -d --build chat chat-opa chat-verify chat-gate chat-db redis minio minio-init nginx
+docker compose up -d --build chat chat-opa chat-verify chat-gate chat-db redis kafka object-storage object-storage-init nginx
 ```
 
 Reachable through nginx at `wss://localhost:8443/ws/room/{room_id}` and

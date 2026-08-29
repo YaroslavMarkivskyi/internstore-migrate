@@ -9,7 +9,7 @@ from catalog.config import Settings, load_settings
 from catalog.db import make_session_factory
 from catalog.inventory_client import InventoryClient
 from catalog.kafka import KafkaEventProducer
-from catalog.minio_client import MinioClient
+from catalog.object_storage_client import ObjectStorageClient
 from catalog.observability import setup_observability
 from catalog.outbox_worker import run_outbox_worker
 from catalog.routers import categories, product_images, products
@@ -42,12 +42,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
     app.state.session_factory = make_session_factory(settings.database_url)
-    app.state.minio_client = MinioClient(
-        endpoint=settings.minio_endpoint,
-        public_base_url=settings.minio_public_base_url,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
-        bucket=settings.minio_bucket,
+    app.state.object_storage_client = ObjectStorageClient(
+        endpoint=settings.object_storage_endpoint,
+        public_base_url=settings.object_storage_public_base_url,
+        access_key=settings.object_storage_access_key,
+        secret_key=settings.object_storage_secret_key,
+        bucket=settings.object_storage_bucket,
+        key_prefix=settings.object_storage_key_prefix,
+        presigned_url_ttl_seconds=settings.object_storage_presigned_url_ttl_seconds,
     )
     app.state.inventory_client = InventoryClient(settings.inventory_base_url, settings.inventory_timeout_seconds)
 

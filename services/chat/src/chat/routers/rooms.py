@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat.db import get_session
 from chat.models import Message, Room, RoomMember, SenderType
+from chat.object_storage_client import ObjectStorageClient
+from chat.object_storage_dep import get_object_storage_client, resolve_attachment_url
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
@@ -70,6 +72,7 @@ async def list_rooms(
 async def get_messages(
     room_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
+    object_storage_client: Annotated[ObjectStorageClient, Depends(get_object_storage_client)],
     before: str | None = None,
     limit: int = 50,
 ) -> dict:
@@ -96,7 +99,7 @@ async def get_messages(
                 "sender_type": message.sender_type.value,
                 "sender_id": message.sender_id,
                 "content": message.content,
-                "attachment_url": message.attachment_url,
+                "attachment_url": await resolve_attachment_url(object_storage_client, message.attachment_key),
                 "created_at": message.created_at,
             }
             for message in messages

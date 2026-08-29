@@ -9,11 +9,20 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str
     outbox_poll_interval_seconds: float = 1.0
     redis_url: str
-    minio_endpoint: str
-    minio_public_base_url: str
-    minio_access_key: str
-    minio_secret_key: str
-    minio_bucket: str = "chat-attachments"
+    object_storage_endpoint: str
+    object_storage_public_base_url: str
+    object_storage_access_key: str
+    object_storage_secret_key: str
+    object_storage_bucket: str = "chat-attachments"
+    # Empty locally (chat has its own real MinIO bucket there) -- set on
+    # GCP where catalog/chat share one physical GCS bucket, see
+    # ObjectStorageClient's docstring.
+    object_storage_key_prefix: str = ""
+    # How long a presigned GET URL (see ObjectStorageClient.generate_presigned_url)
+    # stays valid -- generated fresh on every history read (REST or WS), never
+    # stored, so this only bounds how long a client can sit on a response
+    # before the attachment link in it goes stale.
+    object_storage_presigned_url_ttl_seconds: int = 900
     history_replay_limit: int = 50
     # STR-146: called synchronously for registered customers' messages, to
     # forward their internal-token into the shopping agent's ReAct loop

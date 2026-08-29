@@ -95,13 +95,14 @@ services:
       # case a future call site needs it again.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      # Product image storage — same MinIO instance as Chat's attachments,
-      # its own bucket. See services/catalog/src/catalog/minio_client.py.
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_PUBLIC_BASE_URL: http://localhost:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: catalog-product-images
+      # Product image storage — same object-storage instance as Chat's
+      # attachments, its own bucket. See
+      # services/catalog/src/catalog/object_storage_client.py.
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_PUBLIC_BASE_URL: http://localhost:9000
+      OBJECT_STORAGE_ACCESS_KEY: minioadmin
+      OBJECT_STORAGE_SECRET_KEY: minioadmin
+      OBJECT_STORAGE_BUCKET: catalog-product-images
       # For checking a product's cross-stock quantity before letting it be
       # (re)published — see catalog/inventory_client.py. Deliberately no
       # `depends_on: inventory` for this, same reasoning as Orders' own
@@ -119,7 +120,7 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      minio:
+      object-storage:
         condition: service_healthy
     # Not exposed on the host — only reachable through catalog-gate/nginx,
     # same as any other real domain service.
@@ -903,46 +904,53 @@ services:
       timeout: 5s
       retries: 10
 
-  minio:
+  # MinIO is the actual product backing this locally -- GCP replaces this
+  # whole service with a GCS bucket instead (see terraform/gcp/modules/
+  # storage), which is why the service/env var names are generic
+  # ("object-storage", not "minio") even though the image below is a real
+  # vendor image.
+  object-storage:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      # Both exposed to the host: 9000 is the S3 API — chat's
-      # MINIO_PUBLIC_BASE_URL points a browser at this directly so it can
-      # load attachment_url images (documented dev gap, see
-      # services/chat/README.md — a real S3/CloudFront/signed-URL setup
-      # replaces this in prod). 9001 is the web console, for manual
-      # inspection only.
+      # Both exposed to the host: 9000 is the S3 API -- a browser needs to
+      # reach it directly to load the presigned image/attachment URLs
+      # catalog/chat generate (ObjectStorageClient.generate_presigned_url,
+      # signed against OBJECT_STORAGE_PUBLIC_BASE_URL=http://localhost:9000).
+      # The bucket itself stays private -- see object-storage-init below,
+      # it's the signed query string that grants access, not the bucket.
+      # 9001 is the web console, for manual inspection only.
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_data:/data
+      - object_storage_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  minio-init:
+  object-storage-init:
     image: minio/mc:latest
     depends_on:
-      minio:
+      object-storage:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc alias set local http://object-storage:9000 minioadmin minioadmin &&
         mc mb --ignore-existing local/chat-attachments &&
-        mc anonymous set download local/chat-attachments &&
-        mc mb --ignore-existing local/catalog-product-images &&
-        mc anonymous set download local/catalog-product-images
+        mc mb --ignore-existing local/catalog-product-images
     # One-shot: creates the chat-attachments and catalog-product-images
-    # buckets and makes them public-read within the docker network (per
-    # the ticket) — mirrors kafka-topic-init's one-shot-provisioning-sidecar
-    # pattern.
+    # buckets -- mirrors kafka-topic-init's one-shot-provisioning-sidecar
+    # pattern. Deliberately no `mc anonymous set download` here anymore:
+    # both buckets stay private, same as the real GCS bucket on GCP --
+    # catalog/chat serve every image/attachment via a short-lived presigned
+    # URL instead (see ObjectStorageClient.generate_presigned_url), so
+    # nothing needs anonymous read access.
 
   chat:
     build: ./services/chat
@@ -961,11 +969,11 @@ services:
       # a chat:-prefixed key namespace, isolated from auth-backend's
       # guest_session: keys on the same instance.
       REDIS_URL: redis://redis:6379
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_PUBLIC_BASE_URL: http://localhost:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: chat-attachments
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_PUBLIC_BASE_URL: http://localhost:9000
+      OBJECT_STORAGE_ACCESS_KEY: minioadmin
+      OBJECT_STORAGE_SECRET_KEY: minioadmin
+      OBJECT_STORAGE_BUCKET: chat-attachments
       # STR-146: forwards a registered customer's own internal-token here on
       # every message, synchronously, so the shopping agent's ReAct loop has
       # a real per-customer identity to propagate into cart-mutating tool
@@ -984,7 +992,7 @@ services:
         condition: service_started
       kafka:
         condition: service_healthy
-      minio:
+      object-storage:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory/orders/telemetry/security. nginx's /ws/ and
@@ -1278,6 +1286,6 @@ volumes:
   ai_db_data:
   payments_db_data:
   temporal_db_data:
-  minio_data:
+  object_storage_data:
   kafka_data:
   nginx_certs:

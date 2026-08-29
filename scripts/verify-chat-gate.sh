@@ -22,8 +22,8 @@
 # host port.
 #
 # Requires: curl, openssl, docker compose. Run after `docker compose up -d
-# --build chat chat-opa chat-verify chat-gate chat-db redis kafka minio
-# minio-init`.
+# --build chat chat-opa chat-verify chat-gate chat-db redis kafka
+# object-storage object-storage-init`.
 set -euo pipefail
 
 NETWORK="internstore-migrate_default"

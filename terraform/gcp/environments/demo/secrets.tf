@@ -11,7 +11,6 @@ locals {
   secrets = merge(
     {
       "internal-token-secret" = var.internal_token_secret
-      "openai-api-key"        = var.openai_api_key
       "stripe-secret-key"     = var.stripe_secret_key
       "stripe-webhook-secret" = var.stripe_webhook_secret
       "temporal-db-password"  = random_password.db["temporal"].result

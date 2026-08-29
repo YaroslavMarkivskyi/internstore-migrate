@@ -9,9 +9,6 @@ metadata:
   labels:
     app: nginx
 spec:
-  securityPolicy:
-    # TF: networking module's cloud_armor_policy_name output
-    name: "internstore-demo-armor-policy"
   healthCheck:
     checkIntervalSec: 15
     timeoutSec: 5
@@ -24,5 +21,5 @@ spec:
     # dedicated `location = /healthz { return 200; }` added to nginx.conf
     # for that, which is out of this ticket's scope (no app/gateway config
     # changes).
-    requestPath: /api/catalog/health
+    requestPath: /health
 

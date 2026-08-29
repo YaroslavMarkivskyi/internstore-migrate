@@ -3,7 +3,7 @@ output "bucket_name" {
 }
 
 output "s3_compatible_endpoint" {
-  description = "MINIO_ENDPOINT equivalent for the boto3 client"
+  description = "OBJECT_STORAGE_ENDPOINT equivalent for the boto3 client"
   value       = "https://storage.googleapis.com"
 }
 

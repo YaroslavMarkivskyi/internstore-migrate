@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat.auth import InternalClaims, get_internal_claims
 from chat.db import get_session
-from chat.minio_client import MinioClient
-from chat.minio_dep import get_minio_client
+from chat.object_storage_client import ObjectStorageClient
+from chat.object_storage_dep import get_object_storage_client
 from chat.models import Room
 
 router = APIRouter(prefix="/rooms", tags=["attachments"])
@@ -31,7 +31,7 @@ async def upload_attachment(
     file: UploadFile,
     claims: Annotated[InternalClaims, Depends(get_internal_claims)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    minio_client: Annotated[MinioClient, Depends(get_minio_client)],
+    object_storage_client: Annotated[ObjectStorageClient, Depends(get_object_storage_client)],
 ) -> dict:
     room = await session.get(Room, room_id)
     if room is None:
@@ -47,5 +47,12 @@ async def upload_attachment(
         raise HTTPException(status_code=422, detail="Attachment exceeds the 20MB limit")
 
     key = f"{room_id}/{uuid.uuid4()}.{extension}"
-    attachment_url = await minio_client.put_object(key, body, file.content_type)
-    return {"attachment_url": attachment_url}
+    await object_storage_client.put_object(key, body, file.content_type)
+    # attachment_key is what the client sends back over the WS message that
+    # actually posts this into a room (see ws/room.py) -- attachment_url
+    # here is only a short-lived convenience so the client can show a
+    # preview of what it just uploaded before sending; it's never stored.
+    return {
+        "attachment_key": key,
+        "attachment_url": await object_storage_client.generate_presigned_url(key),
+    }

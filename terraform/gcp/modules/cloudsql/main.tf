@@ -13,6 +13,7 @@ resource "google_sql_database_instance" "this" {
   deletion_protection = false # mandatory for a stack that must `terraform destroy` cleanly
 
   settings {
+    edition = "ENTERPRISE"
     tier              = var.tier
     availability_type = "ZONAL" # no HA — demo only, halves the (already tiny) cost
     disk_size         = var.disk_size_gb

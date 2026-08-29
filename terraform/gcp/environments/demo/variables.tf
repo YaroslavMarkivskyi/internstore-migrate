@@ -19,11 +19,6 @@ variable "internal_token_secret" {
   sensitive   = true
 }
 
-variable "openai_api_key" {
-  type      = string
-  sensitive = true
-  default   = "" # empty crash-loops ai-assistant/mcp-gateway on purpose, matching base's own placeholder behavior — set a real key before apply
-}
 
 variable "stripe_secret_key" {
   type      = string

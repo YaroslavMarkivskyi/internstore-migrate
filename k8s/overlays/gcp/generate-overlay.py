@@ -32,8 +32,8 @@ SERVICE_SECRET_KEYS = {
     "catalog": [
         ("INTERNAL_TOKEN_SECRET", "internal-token-secret"),
         ("DATABASE_URL", "catalog-database-url"),
-        ("MINIO_ACCESS_KEY", "gcs-hmac-access-id"),
-        ("MINIO_SECRET_KEY", "gcs-hmac-secret"),
+        ("OBJECT_STORAGE_ACCESS_KEY", "gcs-hmac-access-id"),
+        ("OBJECT_STORAGE_SECRET_KEY", "gcs-hmac-secret"),
     ],
     "inventory": [
         ("INTERNAL_TOKEN_SECRET", "internal-token-secret"),
@@ -61,8 +61,8 @@ SERVICE_SECRET_KEYS = {
     "chat": [
         ("INTERNAL_TOKEN_SECRET", "internal-token-secret"),
         ("DATABASE_URL", "chat-database-url"),
-        ("MINIO_ACCESS_KEY", "gcs-hmac-access-id"),
-        ("MINIO_SECRET_KEY", "gcs-hmac-secret"),
+        ("OBJECT_STORAGE_ACCESS_KEY", "gcs-hmac-access-id"),
+        ("OBJECT_STORAGE_SECRET_KEY", "gcs-hmac-secret"),
     ],
     "payments": [
         ("INTERNAL_TOKEN_SECRET", "internal-token-secret"),
@@ -71,12 +71,10 @@ SERVICE_SECRET_KEYS = {
     "ai-assistant": [
         ("INTERNAL_TOKEN_SECRET", "internal-token-secret"),
         ("DATABASE_URL", "ai-assistant-database-url"),
-        ("OPENAI_API_KEY", "openai-api-key"),
     ],
     "mcp-gateway": [
         ("INTERNAL_TOKEN_SECRET", "internal-token-secret"),
         ("AI_DB_URL", "mcp-gateway-database-url"),
-        ("OPENAI_API_KEY", "openai-api-key"),
     ],
     # FIREBASE_PROJECT_ID isn't here either -- it's not a Secret Manager
     # secret (not sensitive), and wiring the real GCP Firebase project id
@@ -88,6 +86,19 @@ SERVICE_SECRET_KEYS = {
     "checkout-workflow-worker": [
         ("INTERNAL_TOKEN_SECRET", "internal-token-secret"),
     ],
+}
+
+# Services whose base ConfigMap points OBJECT_STORAGE_* at the in-cluster
+# object-storage Service (MinIO, one real bucket per service there) -- on
+# GCP both share a single physical GCS bucket (gcs_bucket_name terraform
+# output, see terraform/gcp/modules/storage's comment), so OBJECT_STORAGE_BUCKET
+# gets overwritten to that one shared name and OBJECT_STORAGE_KEY_PREFIX
+# (empty in base) gets set instead, to keep the two services' objects apart
+# within it -- see ObjectStorageClient's docstring in both services. Every
+# other ConfigMap key these two services have is untouched by this patch.
+SERVICE_OBJECT_STORAGE_KEY_PREFIX = {
+    "catalog": "catalog-product-images/",
+    "chat": "chat-attachments/",
 }
 
 # service -> [(db key, local proxy port), ...]. db key indexes into
@@ -130,9 +141,10 @@ def secretproviderclass_yaml(service: str, project_id: str, secret_ids: dict, ke
     return f"""apiVersion: secrets-store.csi.x-k8s.io/v1
 kind: SecretProviderClass
 metadata:
-  name: {service}-secrets
+  name: {service}-secret
+              optional: trues
 spec:
-  provider: gcp
+  provider: gcpsm
   parameters:
     secrets: |
 {secrets_lines}
@@ -141,6 +153,25 @@ spec:
     type: Opaque
     data:
 {data_lines}
+"""
+
+
+def object_storage_configmap_patch_yaml(service: str, bucket: str, key_prefix: str, gcs_endpoint: str) -> str:
+    # OBJECT_STORAGE_PUBLIC_BASE_URL == OBJECT_STORAGE_ENDPOINT here (both
+    # "https://storage.googleapis.com") -- ObjectStorageClient builds the
+    # public URL as f"{public_base_url}/{bucket}/{key_prefix}{key}", which is
+    # exactly GCS's public object URL shape too, so no separate CDN/public
+    # host exists yet. Only a strategic-merge patch, not a full ConfigMap:
+    # base's PORT/HOST/etc. keys for this service are untouched.
+    return f"""apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {service}-config
+data:
+  OBJECT_STORAGE_ENDPOINT: "{gcs_endpoint}"
+  OBJECT_STORAGE_PUBLIC_BASE_URL: "{gcs_endpoint}"
+  OBJECT_STORAGE_BUCKET: "{bucket}"
+  OBJECT_STORAGE_KEY_PREFIX: "{key_prefix}"
 """
 
 
@@ -187,7 +218,7 @@ spec:
 {sidecar}      volumes:
       - name: secrets-store
         csi:
-          driver: secrets-store.csi.k8s.io
+          driver: secrets-store-gke.csi.k8s.io
           readOnly: true
           volumeAttributes:
             secretProviderClass: {service}-secrets
@@ -205,6 +236,8 @@ def main():
     secret_ids = outputs["secret_manager_secret_ids"]["value"]
     gsa_emails = outputs["workload_identity_gsa_emails"]["value"]
     connection_names = outputs["cloudsql_connection_names"]["value"]
+    gcs_bucket_name = outputs["gcs_bucket_name"]["value"]
+    gcs_s3_compatible_endpoint = outputs["gcs_s3_compatible_endpoint"]["value"]
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -224,6 +257,14 @@ def main():
         patch_path = out_dir / f"{service}-deployment-patch.yaml"
         patch_path.write_text(deployment_patch_yaml(service, SERVICE_DB_KEYS.get(service, []), connection_names))
         generated_patches.append(patch_path.name)
+
+        key_prefix = SERVICE_OBJECT_STORAGE_KEY_PREFIX.get(service)
+        if key_prefix is not None:
+            cm_patch_path = out_dir / f"{service}-configmap-patch.yaml"
+            cm_patch_path.write_text(
+                object_storage_configmap_patch_yaml(service, gcs_bucket_name, key_prefix, gcs_s3_compatible_endpoint)
+            )
+            generated_patches.append(cm_patch_path.name)
 
     # manifest.json isn't consumed by kustomization.yaml (Kustomize has no
     # way to read a file list at build time) — kustomization.yaml's

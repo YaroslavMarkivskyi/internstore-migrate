@@ -20,25 +20,28 @@ def mint_internal_token(sub: str, role: str) -> dict[str, str]:
     return {"X-User-Id": sub, "X-User-Role": role}
 
 
-class FakeMinioClient:
+class FakeObjectStorageClient:
     """Swapped in via app.dependency_overrides — no real MinIO/S3 call is
-    made. Returns a deterministic URL and records what was uploaded."""
+    made. Returns a deterministic signed URL and records what was
+    uploaded."""
 
     def __init__(self) -> None:
         self.uploads: list[tuple[str, bytes, str]] = []
 
-    async def put_object(self, key: str, body: bytes, content_type: str) -> str:
+    async def put_object(self, key: str, body: bytes, content_type: str) -> None:
         self.uploads.append((key, body, content_type))
-        return f"http://minio.invalid/chat-attachments/{key}"
+
+    async def generate_presigned_url(self, key: str) -> str:
+        return f"http://object-storage.invalid/chat-attachments/{key}?X-Amz-Signature=fake"
 
 
 @pytest.fixture
-def fake_minio_client() -> FakeMinioClient:
-    return FakeMinioClient()
+def fake_object_storage_client() -> FakeObjectStorageClient:
+    return FakeObjectStorageClient()
 
 
 @pytest.fixture
-async def app_and_client(fake_minio_client: FakeMinioClient, tmp_path):
+async def app_and_client(fake_object_storage_client: FakeObjectStorageClient, tmp_path):
     # A file-backed DB, not sqlite+aiosqlite:///:memory: — an in-memory
     # sqlite DB forces SQLAlchemy to use StaticPool (a single shared
     # connection), which breaks the moment two different asyncio event
@@ -52,10 +55,10 @@ async def app_and_client(fake_minio_client: FakeMinioClient, tmp_path):
         database_url=f"sqlite+aiosqlite:///{tmp_path}/test.db",
         kafka_bootstrap_servers="kafka.invalid:9092",
         redis_url="redis://redis.invalid:6379",
-        minio_endpoint="http://minio.invalid:9000",
-        minio_public_base_url="http://minio.invalid:9000",
-        minio_access_key="test",
-        minio_secret_key="test",
+        object_storage_endpoint="http://object-storage.invalid:9000",
+        object_storage_public_base_url="http://object-storage.invalid:9000",
+        object_storage_access_key="test",
+        object_storage_secret_key="test",
         ai_assistant_service_url="http://ai-assistant.invalid",
     )
     session_factory = make_session_factory(settings.database_url)
@@ -90,7 +93,7 @@ async def app_and_client(fake_minio_client: FakeMinioClient, tmp_path):
     from chat.pubsub import PubSubRouter
 
     app.state.pubsub = PubSubRouter(app.state.redis, app.state.ws_manager)
-    app.state.minio_client = fake_minio_client
+    app.state.object_storage_client = fake_object_storage_client
     # STR-146: real AIAssistantClient does a live httpx call to
     # ai_assistant_service_url — swapped for a mock so WS tests that send a
     # customer message don't attempt real network I/O (or block on a DNS
@@ -100,9 +103,9 @@ async def app_and_client(fake_minio_client: FakeMinioClient, tmp_path):
 
     app.state.ai_assistant_client = AsyncMock()
 
-    from chat.minio_dep import get_minio_client
+    from chat.object_storage_dep import get_object_storage_client
 
-    app.dependency_overrides[get_minio_client] = lambda: fake_minio_client
+    app.dependency_overrides[get_object_storage_client] = lambda: fake_object_storage_client
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
