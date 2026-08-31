@@ -1,3 +1,5 @@
+import html
+import re
 import uuid
 from typing import Annotated
 
@@ -15,6 +17,20 @@ from catalog.outbox import add_outbox_event
 from catalog.schemas import ProductCreate, ProductRead, ProductUpdate
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _plain_description(description: str | None) -> str | None:
+    """`description` is stored as-is (rich text from the admin form's Quill
+    editor, i.e. HTML). The ProductUpdated payload feeds AI Assistant's
+    embedding text and the shopping agent's own replies, both of which want
+    plain prose — strip the markup here so the event carries clean text
+    while Catalog's own column keeps the HTML the edit form reloads."""
+    if not description:
+        return description
+    text = _TAG_RE.sub(" ", description)
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 # No role checks in this router: POST/PATCH/DELETE (admin-only) is
 # enforced ahead of this app entirely -- catalog-gate (nginx,
@@ -60,6 +76,29 @@ async def create_product(
     session.add(product)
     await session.commit()
     await session.refresh(product)
+
+    # Embed the product straight away instead of waiting for the first
+    # PATCH — same ProductUpdated payload AI Assistant's catalog-events
+    # consumer already upserts a product_embeddings row from (see
+    # services/ai-assistant/src/ai_assistant/consumers/catalog_events.py).
+    # Products are created published (Product.is_published defaults to
+    # True) and search_products applies no publish filter, so there's no
+    # draft-leakage concern here.
+    add_outbox_event(
+        session,
+        "ProductUpdated",
+        {
+            "product_id": str(product.id),
+            "name": product.name,
+            "description": _plain_description(product.description),
+            "price": float(product.price),
+            "min_temperature": float(product.min_temperature) if product.min_temperature is not None else None,
+            "max_temperature": float(product.max_temperature) if product.max_temperature is not None else None,
+            "category_name": category.name,
+        },
+    )
+    await session.commit()
+
     return product
 
 
@@ -128,7 +167,7 @@ async def update_product(
             {
                 "product_id": str(product.id),
                 "name": product.name,
-                "description": product.description,
+                "description": _plain_description(product.description),
                 # STR-146: price wasn't previously part of this payload —
                 # added so the shopping agent's search_products filters
                 # (price_min/price_max) have something to filter on (see

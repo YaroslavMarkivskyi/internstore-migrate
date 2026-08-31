@@ -2,15 +2,15 @@
 
 Real-time WebSocket chat between customers (registered and guest) and admins.
 Seventh and final domain service. Technically the most complex: WebSocket
-proxying through nginx, Redis pub/sub for horizontal scaling, MinIO for image
-attachments, PostgreSQL for chat history.
+proxying through nginx, Redis pub/sub for horizontal scaling, a GCS bucket
+for image attachments, PostgreSQL for chat history.
 
 Same stack as every other domain service: Python/FastAPI/SQLAlchemy
 (async)/Alembic, its own Postgres database with zero shared tables, and the
 same internal-token verification pattern (see
 [src/chat/auth.py](src/chat/auth.py)). New here: `redis` (pub/sub +
-presence) and `boto3` (S3-compatible client against MinIO) — no other
-service in this repo uses either yet.
+presence) and `boto3` (S3-compatible client against a GCS bucket) — no
+other service in this repo uses either yet.
 
 ## Data model
 
@@ -190,10 +190,14 @@ event.
 ## Object storage — private bucket, signed URLs
 
 `ObjectStorageClient` ([src/chat/object_storage_client.py](src/chat/object_storage_client.py))
-is a thin `boto3` S3 client against MinIO's S3-compatible API in local dev
-(a GCS bucket in GCP, see terraform/gcp/modules/storage — same class, no
-code change). The bucket is always private — no public/anonymous read
-access — so nothing this service returns is a durable public link.
+is a thin `boto3` client against a GCS bucket over its S3-compatible XML
+API + an HMAC key, in every environment including local dev (see
+terraform/gcp/modules/storage, or the provisioning `gcloud` commands in
+docker-compose.yml). catalog and chat share one bucket, isolated by the
+`chat/` vs `catalog/` key prefix (`OBJECT_STORAGE_KEY_PREFIX`). The bucket
+is always private (`public_access_prevention = enforced`) — no
+public/anonymous read access — so nothing this service returns is a
+durable public link.
 `Message.attachment_key` (renamed from `attachment_url`) stores only the
 object key; every response that includes an `attachment_url`
 (`GET /rooms/{id}/messages`, the WS `history` frame, the WS live `message`
@@ -201,16 +205,14 @@ publish) signs one fresh from that key on the spot
 (`ObjectStorageClient.generate_presigned_url`, short TTL — see
 `OBJECT_STORAGE_PRESIGNED_URL_TTL_SECONDS`), never storing it.
 
-Two separate URLs still matter for the client construction itself:
-`OBJECT_STORAGE_ENDPOINT` (`http://object-storage:9000`, the
-container-network address this service's boto3 client uses for
-`put_object`) and `OBJECT_STORAGE_PUBLIC_BASE_URL`
-(`http://localhost:9000` in dev, what a browser can actually reach — used
-only to *sign* presigned URLs against, since SigV4 signs the Host itself).
-Swapping environments is meant to be a config change
-(`OBJECT_STORAGE_ENDPOINT`/`OBJECT_STORAGE_PUBLIC_BASE_URL`/credentials),
-not a code change, since `ObjectStorageClient` only talks to the
-S3-compatible API surface.
+`OBJECT_STORAGE_ENDPOINT` and `OBJECT_STORAGE_PUBLIC_BASE_URL` are both
+`https://storage.googleapis.com` here (they can differ — the first is what
+this service's boto3 client reaches for `put_object`, the second is what a
+browser reaches and is used only to *sign* presigned URLs against, since
+SigV4 signs the Host itself). Swapping environments is a config change
+(`OBJECT_STORAGE_BUCKET`/`OBJECT_STORAGE_KEY_PREFIX`/HMAC credentials), not
+a code change, since `ObjectStorageClient` only talks to the S3-compatible
+API surface.
 
 ## Local dev without Docker
 
@@ -224,7 +226,7 @@ uv run uvicorn chat.main:create_app --factory --reload
 
 Run tests (self-contained: a temp-file-backed SQLite DB per test,
 `fakeredis` for Redis, a fake object-storage client swapped in via
-`app.dependency_overrides` — no real Postgres/Redis/MinIO/Kafka needed):
+`app.dependency_overrides` — no real Postgres/Redis/GCS/Kafka needed):
 
 ```bash
 uv run pytest
@@ -233,7 +235,7 @@ uv run pytest
 ## Via docker compose
 
 ```bash
-docker compose up -d --build chat chat-opa chat-verify chat-gate chat-db redis kafka object-storage object-storage-init nginx
+docker compose up -d --build chat chat-opa chat-verify chat-gate chat-db redis kafka nginx
 ```
 
 Reachable through nginx at `wss://localhost:8443/ws/room/{room_id}` and

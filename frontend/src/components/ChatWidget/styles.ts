@@ -73,6 +73,11 @@ export const Bubble = styled(Box, {
   backgroundColor: mine ? colors.secondary.accent100 : '#FFFFFF',
   color: mine ? '#FFFFFF' : colors.text100,
   border: mine ? 'none' : `1px solid ${colors.border}`,
+  '& a': {
+    color: mine ? '#FFFFFF' : colors.secondary.accent100,
+    fontWeight: 600,
+    textDecoration: 'underline',
+  },
 }));
 
 export const SenderTag = styled(Box)({

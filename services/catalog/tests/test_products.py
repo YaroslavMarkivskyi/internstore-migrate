@@ -47,6 +47,39 @@ async def test_create_product_non_positive_price_rejected(client, admin_token):
     assert resp.status_code == 422
 
 
+async def test_create_product_stages_product_updated_event(client, admin_token):
+    category_id = await create_category(client, admin_token)
+    resp = await client.post(
+        "/products",
+        json={
+            "name": "Cola",
+            "price": 1.5,
+            "category_id": category_id,
+            "description": "Fizzy drink",
+            "min_temperature": 2,
+            "max_temperature": 8,
+        },
+        headers={"x-internal-token": admin_token},
+    )
+    assert resp.status_code == 201
+    product_id = resp.json()["id"]
+
+    from sqlalchemy import select
+
+    from catalog.models import OutboxEvent
+
+    async with client.app.state.session_factory() as session:
+        events = list((await session.execute(select(OutboxEvent))).scalars().all())
+
+    assert len(events) == 1
+    assert events[0].event_type == "ProductUpdated"
+    assert events[0].payload["product_id"] == product_id
+    assert events[0].payload["name"] == "Cola"
+    assert events[0].payload["price"] == 1.5
+    assert events[0].payload["category_name"] == "Drinks"
+    assert events[0].payload["max_temperature"] == 8
+
+
 async def test_list_and_get_product(client, admin_token):
     category_id = await create_category(client, admin_token)
     created = await client.post(
@@ -74,6 +107,16 @@ async def create_product(client, admin_token, category_id, **overrides) -> str:
     payload = {"name": "Cola", "price": 1.5, "category_id": category_id, **overrides}
     resp = await client.post("/products", json=payload, headers={"x-internal-token": admin_token})
     assert resp.status_code == 201
+    # POST /products stages its own ProductUpdated (initial embed) — clear
+    # it so tests that count outbox events see only the operation they're
+    # exercising. Tests asserting the creation event itself post directly.
+    from sqlalchemy import delete
+
+    from catalog.models import OutboxEvent
+
+    async with client.app.state.session_factory() as session:
+        await session.execute(delete(OutboxEvent))
+        await session.commit()
     return resp.json()["id"]
 
 

@@ -18,6 +18,7 @@ import { useSelector } from '@store/store';
 import { useChatRoom } from '../../hooks/useChatRoom';
 import { ChatSenderType } from '../../types/chat/interfaces';
 
+import { renderMessageContent } from './messageContent';
 import {
   Body,
   Bubble,
@@ -86,7 +87,7 @@ const ChatWidget: FC = () => {
         return (
           <Bubble key={message.id} mine={mine}>
             {!mine && <SenderTag>{SENDER_LABEL[message.senderType]}</SenderTag>}
-            {message.content}
+            {renderMessageContent(message.content)}
           </Bubble>
         );
       }),

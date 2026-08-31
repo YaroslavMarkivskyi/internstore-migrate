@@ -98,14 +98,18 @@ services:
       # case a future call site needs it again.
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      # Product image storage — same object-storage instance as Chat's
-      # attachments, its own bucket. See
-      # services/catalog/src/catalog/object_storage_client.py.
-      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
-      OBJECT_STORAGE_PUBLIC_BASE_URL: http://localhost:9000
-      OBJECT_STORAGE_ACCESS_KEY: minioadmin
-      OBJECT_STORAGE_SECRET_KEY: minioadmin
-      OBJECT_STORAGE_BUCKET: catalog-product-images
+      # Product image storage — a real GCS bucket over its S3-compatible
+      # XML API + an HMAC key (see object_storage_client.py). Shares one
+      # bucket with Chat's attachments, isolated by the catalog/ key
+      # prefix. Set GCS_BUCKET / GCS_HMAC_ACCESS_KEY / GCS_HMAC_SECRET in
+      # the root .env (see .env.example). Same bucket/keys as k8s on GCP —
+      # local dev is no longer a MinIO stand-in.
+      OBJECT_STORAGE_ENDPOINT: https://storage.googleapis.com
+      OBJECT_STORAGE_PUBLIC_BASE_URL: https://storage.googleapis.com
+      OBJECT_STORAGE_ACCESS_KEY: ${GCS_HMAC_ACCESS_KEY:?set GCS_HMAC_ACCESS_KEY in .env}
+      OBJECT_STORAGE_SECRET_KEY: ${GCS_HMAC_SECRET:?set GCS_HMAC_SECRET in .env}
+      OBJECT_STORAGE_BUCKET: ${GCS_BUCKET:?set GCS_BUCKET in .env}
+      OBJECT_STORAGE_KEY_PREFIX: catalog/
       # For checking a product's cross-stock quantity before letting it be
       # (re)published — see catalog/inventory_client.py. Deliberately no
       # `depends_on: inventory` for this, same reasoning as Orders' own
@@ -122,8 +126,6 @@ services:
       catalog-db:
         condition: service_healthy
       kafka:
-        condition: service_healthy
-      object-storage:
         condition: service_healthy
     # Not exposed on the host — only reachable through catalog-gate/nginx,
     # same as any other real domain service.
@@ -907,53 +909,18 @@ services:
       timeout: 5s
       retries: 10
 
-  # MinIO is the actual product backing this locally -- GCP replaces this
-  # whole service with a GCS bucket instead (see terraform/gcp/modules/
-  # storage), which is why the service/env var names are generic
-  # ("object-storage", not "minio") even though the image below is a real
-  # vendor image.
-  object-storage:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      # Both exposed to the host: 9000 is the S3 API -- a browser needs to
-      # reach it directly to load the presigned image/attachment URLs
-      # catalog/chat generate (ObjectStorageClient.generate_presigned_url,
-      # signed against OBJECT_STORAGE_PUBLIC_BASE_URL=http://localhost:9000).
-      # The bucket itself stays private -- see object-storage-init below,
-      # it's the signed query string that grants access, not the bucket.
-      # 9001 is the web console, for manual inspection only.
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - object_storage_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  object-storage-init:
-    image: minio/mc:latest
-    depends_on:
-      object-storage:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        mc alias set local http://object-storage:9000 minioadmin minioadmin &&
-        mc mb --ignore-existing local/chat-attachments &&
-        mc mb --ignore-existing local/catalog-product-images
-    # One-shot: creates the chat-attachments and catalog-product-images
-    # buckets -- mirrors kafka-topic-init's one-shot-provisioning-sidecar
-    # pattern. Deliberately no `mc anonymous set download` here anymore:
-    # both buckets stay private, same as the real GCS bucket on GCP --
-    # catalog/chat serve every image/attachment via a short-lived presigned
-    # URL instead (see ObjectStorageClient.generate_presigned_url), so
-    # nothing needs anonymous read access.
+  # Object storage is a real GCS bucket over its S3-compatible XML API in
+  # every environment now, local dev included (there is no MinIO stand-in
+  # anymore). catalog and chat share one bucket, isolated by the catalog/
+  # and chat/ key prefixes. Provision with:
+  #   gcloud storage buckets create gs://<name> --uniform-bucket-level-access \
+  #     --public-access-prevention
+  #   gcloud iam service-accounts create <sa>
+  #   gcloud storage buckets add-iam-policy-binding gs://<name> \
+  #     --member=serviceAccount:<sa-email> --role=roles/storage.objectAdmin
+  #   gcloud storage hmac create <sa-email>
+  # then put GCS_BUCKET / GCS_HMAC_ACCESS_KEY / GCS_HMAC_SECRET in the root
+  # .env. Terraform equivalent: terraform/gcp/modules/storage.
 
   chat:
     build: ./services/chat
@@ -972,11 +939,14 @@ services:
       # a chat:-prefixed key namespace, isolated from auth-backend's
       # guest_session: keys on the same instance.
       REDIS_URL: redis://redis:6379
-      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
-      OBJECT_STORAGE_PUBLIC_BASE_URL: http://localhost:9000
-      OBJECT_STORAGE_ACCESS_KEY: minioadmin
-      OBJECT_STORAGE_SECRET_KEY: minioadmin
-      OBJECT_STORAGE_BUCKET: chat-attachments
+      # Same GCS bucket as catalog, isolated by the chat/ key prefix — see
+      # the comment above the (removed) object-storage service.
+      OBJECT_STORAGE_ENDPOINT: https://storage.googleapis.com
+      OBJECT_STORAGE_PUBLIC_BASE_URL: https://storage.googleapis.com
+      OBJECT_STORAGE_ACCESS_KEY: ${GCS_HMAC_ACCESS_KEY:?set GCS_HMAC_ACCESS_KEY in .env}
+      OBJECT_STORAGE_SECRET_KEY: ${GCS_HMAC_SECRET:?set GCS_HMAC_SECRET in .env}
+      OBJECT_STORAGE_BUCKET: ${GCS_BUCKET:?set GCS_BUCKET in .env}
+      OBJECT_STORAGE_KEY_PREFIX: chat/
       # STR-146: forwards a registered customer's own internal-token here on
       # every message, synchronously, so the shopping agent's ReAct loop has
       # a real per-customer identity to propagate into cart-mutating tool
@@ -994,8 +964,6 @@ services:
       redis:
         condition: service_started
       kafka:
-        condition: service_healthy
-      object-storage:
         condition: service_healthy
     # Not exposed on the host — only reachable through nginx, same as
     # catalog/inventory/orders/telemetry/security. nginx's /ws/ and
@@ -1304,6 +1272,5 @@ volumes:
   ai_db_data:
   payments_db_data:
   temporal_db_data:
-  object_storage_data:
   kafka_data:
   nginx_certs:

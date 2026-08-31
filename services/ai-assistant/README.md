@@ -145,11 +145,12 @@ target regardless of the rebrand.
   see `docker-compose.yml`'s comment on this service's block. Same class of
   trade-off as Notifications' Mailpit stub (previously: a real
   `OPENAI_API_KEY`).
-- **Embeddings are built lazily.** `product_embeddings` is empty until
-  Catalog publishes `ProductUpdated` for a product (on any `PATCH
-  /products/{id}`) — a fresh stack has no RAG context until then. Run
-  [scripts/seed-embeddings.sh](../../scripts/seed-embeddings.sh) to trigger
-  an initial embed for every existing product.
+- **Embeddings track Catalog events.** `product_embeddings` is populated
+  from `ProductUpdated`, fired on both `POST /products` (creation) and
+  `PATCH /products/{id}`. A product is therefore embedded as soon as an
+  admin creates it. Only products created *before* the POST-side event
+  existed need [scripts/seed-embeddings.sh](../../scripts/seed-embeddings.sh)
+  (a no-op PATCH per product) to backfill.
 
 ## Local dev without Docker
 

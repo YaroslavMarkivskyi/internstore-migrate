@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Triggers an initial embedding build for every existing product.
 #
-# AI Assistant's product_embeddings table is populated lazily — only by
-# Catalog's ProductUpdated event, fired from PATCH /products/{id} (see
-# services/catalog/src/catalog/routers/products.py). A fresh stack has no
-# products embedded yet, so this re-sends each product's own current name
-# unchanged, just to trigger that event — see docs/EVENT_BROKER.md's
-# AI Assistant dev-gaps note.
+# AI Assistant's product_embeddings table is populated from Catalog's
+# ProductUpdated event, now fired on both POST /products (creation) and
+# PATCH /products/{id} (see services/catalog/src/catalog/routers/products.py).
+# So this script is only needed for products that were created *before*
+# that POST-side event existed: it re-sends each product's own current
+# name unchanged via PATCH, just to trigger a re-embed — see
+# docs/EVENT_BROKER.md's AI Assistant dev-gaps note.
 #
 # Requires: curl, jq, docker compose. Run after `docker compose up -d`
-# with at least one product already created (e.g. via the frontend/admin
-# UI or scripts/verify-gateway.sh).
+# with at least one such legacy product present (e.g. from an older
+# scripts/verify-gateway.sh run).
 set -euo pipefail
 
 FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"

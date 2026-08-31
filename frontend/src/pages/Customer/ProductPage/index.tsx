@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ShoppingCartOutlinedIcon from '@mui/icons-material/ShoppingCartOutlined';
 import { Box, Button, Container, Paper, Typography } from '@mui/material';
+import DOMPurify from 'dompurify';
 
 import { getProduct as getProductAdmin } from '@services/http/admin/products';
 import { getCartItem } from '@services/http/public/cart';
@@ -196,9 +197,27 @@ const ProductPage: FC<ProductPageProps> = ({ area }) => {
             <Typography variant="h6" gutterBottom>
               Description
             </Typography>
-            <Typography variant="body1" sx={{ mb: 2 }}>
-              {product.description}
-            </Typography>
+            {/* Description is rich text authored in the admin form's Quill
+                editor. Render the structure (paragraphs, lists, links,
+                emphasis) but strip the editor's inline style/class — its
+                dark-theme "code" formatting sets white text, which is
+                invisible on this light page. The description inherits the
+                page's own typography instead. */}
+            <Typography
+              variant="body1"
+              component="div"
+              sx={{
+                mb: 2,
+                '& p': { m: 0 },
+                '& a': { color: 'primary.main' },
+              }}
+              dangerouslySetInnerHTML={{
+                __html: DOMPurify.sanitize(product.description ?? '', {
+                  FORBID_ATTR: ['style', 'class'],
+                  FORBID_TAGS: ['style'],
+                }),
+              }}
+            />
           </Box>
         </Box>
       </Paper>

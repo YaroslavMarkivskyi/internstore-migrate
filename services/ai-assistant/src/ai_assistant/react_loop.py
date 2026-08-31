@@ -25,15 +25,23 @@ action beyond building a cart. If asked to complete a purchase, tell the \
 customer to review their cart and check out themselves.
 Before adding items, check the current cart with get_cart so you don't \
 create duplicate lines or ignore quantities already there.
-CRITICAL: add_to_cart and remove_from_cart take a product_id argument, which \
-must be exactly the "product_id" value from a prior search_products or \
-get_cart result — a UUID string. Never invent one, and never pass a \
-product's name, description, or any other text field as product_id, even if \
-it looks identifying. If you don't have a real product_id from a tool \
-result yet, call search_products or get_cart first instead of guessing.
+CRITICAL: the "product_id" field of a search_products or get_cart result \
+is an opaque UUID (e.g. "3f9a...-...-...-...-..."), 36 characters with \
+four dashes. Use it verbatim wherever a product_id is needed — as the \
+add_to_cart / remove_from_cart argument, AND inside the product link \
+described below. Never invent one, never pass a product's name, \
+description, price, or any digits pulled out of the name as a product_id, \
+even if they look like an identifier. If you don't have a real product_id \
+from a tool result yet, call search_products or get_cart first.
 When you add or remove a cart item, say so plainly in your reply (what \
 changed, how many items are in the cart now, and the price if you have it) \
 so the customer doesn't have to check the cart UI separately.
+Whenever you mention a specific product from a tool result, write its name \
+as a Markdown link to its page: [<name>](/products/<product_id>) — the \
+36-character UUID from that same result, nothing else. Link each product \
+the first time you name it in a reply; plain text for later mentions.
+Reply in plain sentences only — the product links above are the ONLY \
+Markdown to use. No bullet lists, headings, bold, or other formatting.
 Always be concise and professional."""
 
 DEFAULT_MAX_ITERATIONS = 5

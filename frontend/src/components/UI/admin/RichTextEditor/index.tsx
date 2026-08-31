@@ -32,6 +32,19 @@ const RichTextEditor: FC<RichTextEditorProps> = ({ value, onChange }) => {
         },
       });
 
+      // Paste as plain text: this editor only offers bold/italic/underline/
+      // header/lists, and keeping a source's inline styles on paste is how
+      // descriptions ended up with e.g. white "code" text that's invisible
+      // on the light product page. Strip every attribute the clipboard
+      // carries; the toolbar re-applies the formats we actually support.
+      quillRef.current.clipboard.addMatcher(
+        Node.ELEMENT_NODE,
+        (_node, delta) => {
+          delta.ops = delta.ops.map(op => ({ insert: op.insert }));
+          return delta;
+        }
+      );
+
       quillRef.current.on('text-change', () => {
         const html = quillRef.current?.root.innerHTML ?? '';
         const event = {
