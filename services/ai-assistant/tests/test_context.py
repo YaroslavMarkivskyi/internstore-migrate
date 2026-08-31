@@ -86,6 +86,36 @@ async def test_build_messages_assembles_history_orders_and_products():
     orders_client.get_recent_orders.assert_awaited_once_with(REGISTERED_CUSTOMER_ID, 5)
 
 
+async def test_build_messages_includes_help_context_for_a_policy_question():
+    # search_similar_products and search_help both call session.execute in
+    # order — feed products first, then a help chunk.
+    session = AsyncMock()
+    help_row = SimpleNamespace(
+        source="faq.md", heading="Returns and refunds", content="Perishables can't be returned for change of mind."
+    )
+    session.execute = AsyncMock(side_effect=[iter([]), iter([help_row])])
+    genai_client = _fake_genai_client()
+
+    system_instruction, _ = await build_messages(
+        session=session,
+        genai_client=genai_client,
+        embedding_model="gemini-embedding-001",
+        embedding_dimensions=1536,
+        chat_client=_chat_client([]),
+        orders_client=_orders_client([]),
+        room_id=f"room_{GUEST_ID}",
+        sender_id=GUEST_ID,
+        sender_role="guest",
+        customer_message="can I return cheese?",
+        conversation_history_limit=20,
+        order_history_limit=5,
+        product_context_limit=5,
+    )
+
+    assert "Returns and refunds" in system_instruction
+    assert "change of mind" in system_instruction
+
+
 async def test_build_messages_skips_order_history_for_guest():
     session = await _fake_session_returning([])
     genai_client = _fake_genai_client()

@@ -59,6 +59,7 @@ async def test_guest_message_over_kafka_never_reaches_the_tool_calling_loop(monk
         conversation_history_limit = 20
         order_history_limit = 5
         product_context_limit = 5
+        help_context_limit = 2
 
     import fakeredis
 

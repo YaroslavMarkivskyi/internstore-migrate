@@ -3,13 +3,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_assistant.chat_client import ChatClient
 from ai_assistant.embeddings import search_similar_products
+from ai_assistant.help import search_help
 from ai_assistant.orders_client import OrdersClient
 
 SYSTEM_PROMPT = """\
 You are a helpful customer support assistant for InternStore, a warehouse management platform.
-You can see the customer's order history and relevant product information.
-You help with: order status, product information, temperature requirements, availability.
-You CANNOT: modify orders, process refunds, change inventory.
+You can see the customer's order history, relevant product information, and
+relevant help / policy articles (delivery, returns, refunds, payment, the
+cold chain, accounts).
+You help with: order status, product information, temperature requirements,
+availability, and store-policy questions.
+Answer any policy question strictly from the help articles below — do not
+guess a policy. If none of them cover the question, say you're not sure and
+suggest human support.
+You CANNOT: modify orders, process refunds, change inventory, or add things
+to a cart.
 If you cannot help, suggest the customer switch to human support.
 Write the whole reply in ONE language — either English or Ukrainian,
 matching the customer's latest message; never mix the two in one reply. If
@@ -45,6 +53,15 @@ def _format_product_context(products: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_help_context(chunks: list[dict]) -> str:
+    if not chunks:
+        return "Relevant help / policy articles: none found."
+    lines = ["Relevant help / policy articles (answer policy questions only from these):"]
+    for chunk in chunks:
+        lines.append(f"- {chunk['heading']}: {chunk['content']}")
+    return "\n".join(lines)
+
+
 async def build_messages(
     *,
     session: AsyncSession,
@@ -60,6 +77,7 @@ async def build_messages(
     conversation_history_limit: int,
     order_history_limit: int,
     product_context_limit: int,
+    help_context_limit: int = 2,
 ) -> tuple[str, list[dict]]:
     """Returns (system_instruction, contents) rather than a single OpenAI-
     style messages list — Gemini takes the system prompt as its own
@@ -90,6 +108,15 @@ async def build_messages(
         session, genai_client, embedding_model, customer_message, embedding_dimensions, product_context_limit
     )
     context_sections.append(_format_product_context(products))
+
+    # STR-XXX: guests get no MCP tools (they're not the shopping agent), so
+    # give the non-agentic loop the same FAQ / policy corpus the shopping
+    # agent reaches via search_help — retrieved and stuffed into the prompt
+    # here, the same way product context is.
+    help_chunks = await search_help(
+        session, genai_client, embedding_model, embedding_dimensions, customer_message, help_context_limit
+    )
+    context_sections.append(_format_help_context(help_chunks))
 
     system_instruction = SYSTEM_PROMPT + "\n\n" + "\n\n".join(context_sections)
 

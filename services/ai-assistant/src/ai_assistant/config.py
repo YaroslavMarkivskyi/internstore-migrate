@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     conversation_history_limit: int = 20
     order_history_limit: int = 5
     product_context_limit: int = 5
+    help_context_limit: int = 2
     max_response_tokens: int = 500
     # STR-146: reuses STR-137's ReAct loop cap — a shopping conversation
     # shouldn't need more than a few search/add cycles.

@@ -81,6 +81,7 @@ async def handle_customer_message_sent(
             conversation_history_limit=settings.conversation_history_limit,
             order_history_limit=settings.order_history_limit,
             product_context_limit=settings.product_context_limit,
+            help_context_limit=settings.help_context_limit,
         )
 
     reply = await generate_reply(
