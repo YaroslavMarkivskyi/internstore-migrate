@@ -1082,6 +1082,7 @@ services:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/ai-assistant/src:/app/src
       - ./services/ai-assistant/migrations:/app/migrations
+      - ./services/ai-assistant/help:/app/help
       - ./services/ai-assistant/alembic.ini:/app/alembic.ini
       # Host ADC for Vertex auth (local dev only) — see GOOGLE_APPLICATION_CREDENTIALS above.
       - ${HOME}/.config/gcloud:/gcloud:ro

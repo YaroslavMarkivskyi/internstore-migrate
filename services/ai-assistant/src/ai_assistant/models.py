@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, String, func
+from sqlalchemy import DateTime, Float, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_assistant.db import Base
@@ -35,6 +35,24 @@ class ProductEmbedding(Base):
     # table read-only) — not used for embedding text or RAG matching itself.
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     category_name: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class HelpChunk(Base):
+    """One retrievable chunk of customer-facing FAQ / policy text (see
+    help/*.md). Rebuilt in place by ai_assistant.seed_help; read by
+    mcp-gateway's search_help tool (same AI_DB_URL). `chunk_id` is
+    uuid5(source + heading + ordinal) so re-seeding upserts."""
+
+    __tablename__ = "help_chunks"
+
+    chunk_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(200), nullable=False)
+    heading: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

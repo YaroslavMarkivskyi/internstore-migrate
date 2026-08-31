@@ -39,6 +39,30 @@ TOOL_SPECS: list[ToolSpec] = [
         },
     },
     {
+        "name": "get_my_orders",
+        "description": (
+            "List the current customer's own recent orders (id, status, items, timestamps). "
+            "Scoped to the caller — takes no customer id."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 5}},
+            "required": [],
+        },
+    },
+    {
+        "name": "get_my_order",
+        "description": (
+            "Get one of the current customer's own orders by id (status, items, timestamps). "
+            "Only the caller's own orders are visible."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string", "description": "Order UUID from a get_my_orders result"}},
+            "required": ["order_id"],
+        },
+    },
+    {
         "name": "get_pending_orders",
         "description": "Get orders stuck in Pending status for admin review.",
         "input_schema": {
@@ -116,6 +140,39 @@ TOOL_SPECS: list[ToolSpec] = [
                         "category": {"type": "string"},
                     },
                 },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_similar_products",
+        "description": (
+            "Find products similar to a given one (by name/description/category), for suggesting "
+            "alternatives when something is unavailable or the customer wants options. Takes the "
+            "product_id from a prior search_products / get_cart result."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "product_id": {"type": "string", "description": "Product UUID to find alternatives to"},
+                "limit": {"type": "integer", "default": 3},
+            },
+            "required": ["product_id"],
+        },
+    },
+    {
+        "name": "search_help",
+        "description": (
+            "Search the customer-facing FAQ / policy corpus (delivery, shipping, returns, refunds, "
+            "payment, product safety / the cold chain, accounts). Use for any question about how the "
+            "store works rather than about a specific product. Returns the most relevant help "
+            "sections as {source, heading, content}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The customer's question, in their own words"},
+                "limit": {"type": "integer", "default": 3},
             },
             "required": ["query"],
         },

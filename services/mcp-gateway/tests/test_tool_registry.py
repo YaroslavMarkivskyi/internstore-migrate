@@ -17,6 +17,7 @@ def _fake_clients() -> GatewayClients:
         inventory=AsyncMock(),
         catalog=AsyncMock(),
         product_search=AsyncMock(),
+        help_search=AsyncMock(),
         telemetry=AsyncMock(),
         security=AsyncMock(),
         chat=AsyncMock(),

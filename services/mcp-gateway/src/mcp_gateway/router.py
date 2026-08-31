@@ -6,6 +6,7 @@ from opentelemetry import trace
 
 from mcp_gateway.tools.catalog import CatalogToolsClient, ProductSearchClient
 from mcp_gateway.tools.chat import ChatToolsClient
+from mcp_gateway.tools.help import HelpSearchClient
 from mcp_gateway.tools.inventory import InventoryToolsClient
 from mcp_gateway.tools.orders import OrdersToolsClient
 from mcp_gateway.tools.security import SecurityToolsClient
@@ -28,6 +29,7 @@ class GatewayClients:
     inventory: InventoryToolsClient
     catalog: CatalogToolsClient
     product_search: ProductSearchClient
+    help_search: HelpSearchClient
     telemetry: TelemetryToolsClient
     security: SecurityToolsClient
     chat: ChatToolsClient
@@ -42,6 +44,8 @@ def build_tool_registry(clients: GatewayClients) -> dict[str, ToolFunc]:
     return {
         "get_order_status": clients.orders.get_order_status,
         "list_customer_orders": clients.orders.list_customer_orders,
+        "get_my_orders": clients.orders.get_my_orders,
+        "get_my_order": clients.orders.get_my_order,
         "get_pending_orders": clients.orders.get_pending_orders,
         # STR-146: cart write-tools. Deliberately not present here:
         # checkout/charge_payment/finalize-order or anything like them —
@@ -57,6 +61,8 @@ def build_tool_registry(clients: GatewayClients) -> dict[str, ToolFunc]:
         "get_stock_levels": clients.inventory.get_stock_levels,
         "get_unavailable_items": clients.inventory.get_unavailable_items,
         "search_products": clients.product_search.search_products,
+        "get_similar_products": clients.product_search.get_similar_products,
+        "search_help": clients.help_search.search_help,
         "get_product": clients.catalog.get_product,
         "list_categories": clients.catalog.list_categories,
         "get_store_temperature": clients.telemetry.get_store_temperature,

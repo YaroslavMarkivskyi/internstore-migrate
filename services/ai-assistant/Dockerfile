@@ -8,6 +8,7 @@ RUN uv sync --no-dev --no-install-project
 
 COPY alembic.ini ./
 COPY migrations ./migrations
+COPY help ./help
 COPY src ./src
 RUN uv sync --no-dev
 

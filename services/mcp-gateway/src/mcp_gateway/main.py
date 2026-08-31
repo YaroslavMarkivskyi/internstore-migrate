@@ -16,6 +16,7 @@ from mcp_gateway.router import GatewayClients, ToolNotFoundError, build_tool_reg
 from mcp_gateway.schema import TOOL_SPECS
 from mcp_gateway.tools.catalog import CatalogToolsClient, ProductSearchClient
 from mcp_gateway.tools.chat import ChatToolsClient
+from mcp_gateway.tools.help import HelpSearchClient
 from mcp_gateway.tools.inventory import InventoryToolsClient
 from mcp_gateway.tools.orders import OrdersToolsClient
 from mcp_gateway.tools.security import SecurityToolsClient
@@ -44,6 +45,9 @@ def build_clients(settings: Settings) -> GatewayClients:
         inventory=InventoryToolsClient(settings.inventory_service_url, timeout),
         catalog=CatalogToolsClient(settings.catalog_service_url, timeout),
         product_search=ProductSearchClient(
+            session_factory, genai_client, settings.embedding_model, settings.embedding_dimensions
+        ),
+        help_search=HelpSearchClient(
             session_factory, genai_client, settings.embedding_model, settings.embedding_dimensions
         ),
         telemetry=TelemetryToolsClient(settings.telemetry_service_url, timeout),

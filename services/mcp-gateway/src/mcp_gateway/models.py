@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, String, func
+from sqlalchemy import DateTime, Float, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from mcp_gateway.db import Base
@@ -32,5 +32,22 @@ class ProductEmbedding(Base):
     # ai-assistant's embeddings.upsert_product_embedding).
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     category_name: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HelpChunk(Base):
+    """Read-only mirror of ai-assistant's `help_chunks` table (see
+    services/ai-assistant/src/ai_assistant/models.py) — same database
+    (AI_DB_URL), rebuilt in place by `ai_assistant.seed_help` from
+    help/*.md. The Gateway never writes here; `search_help` just reuses the
+    pgvector index, same pattern as ProductEmbedding above."""
+
+    __tablename__ = "help_chunks"
+
+    chunk_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(200), nullable=False)
+    heading: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

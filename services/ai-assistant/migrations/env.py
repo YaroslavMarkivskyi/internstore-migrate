@@ -8,7 +8,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from ai_assistant.db import Base
-from ai_assistant.models import ProcessedEvent, ProductEmbedding  # noqa: F401  (registers models on Base.metadata)
+from ai_assistant.models import (  # noqa: F401  (registers models on Base.metadata)
+    HelpChunk,
+    ProcessedEvent,
+    ProductEmbedding,
+)
 
 config = context.config
 
