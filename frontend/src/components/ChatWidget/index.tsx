@@ -18,6 +18,7 @@ import { IconButton, InputBase } from '@mui/material';
 import { selectCurrentUser } from '@store/reducers/auth';
 import { useSelector } from '@store/store';
 
+import { useCart } from '../../hooks/useCart';
 import { useChatRoom } from '../../hooks/useChatRoom';
 import { ChatSenderType } from '../../types/chat/interfaces';
 
@@ -68,6 +69,25 @@ const ChatWidget: FC = () => {
     sendMessage,
     clearConversation,
   } = useChatRoom(isCustomer && open, viewingProductId);
+
+  // The agent can mutate the cart server-side (add_to_cart / remove_from_cart)
+  // — pull a fresh cart whenever it finishes a reply so the header badge and
+  // the Cart modal reflect it without a page reload. fetchCart/fetchCartItems
+  // aren't memoised in useCart, so key the effect off the reply count only.
+  const cart = useCart();
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
+  const assistantReplyCount = useMemo(
+    () => messages.filter(m => m.senderType === 'assistant').length,
+    [messages]
+  );
+  useEffect(() => {
+    if (assistantReplyCount === 0) {
+      return;
+    }
+    void cartRef.current.fetchCart();
+    void cartRef.current.fetchCartItems({ offset: 0 }, true);
+  }, [assistantReplyCount]);
 
   const bodyRef = useRef<HTMLDivElement>(null);
 

@@ -84,10 +84,14 @@ const Cart: FC<CartProps> = ({ open, onClose }) => {
     setAfterDelete(true);
   };
 
+  // Refetch on open too, not just on login: the shopping assistant can add
+  // or remove items server-side (see ChatWidget) with no other signal to
+  // this context, so an already-mounted cart would otherwise show a stale
+  // view until the next reload.
   useEffect(() => {
     void fetchCartItems({ offset: 0 }, true);
     void fetchCart();
-  }, [currentUser]);
+  }, [currentUser, open]);
 
   useEffect(() => {
     const hasItemsInCart = count > 0;
