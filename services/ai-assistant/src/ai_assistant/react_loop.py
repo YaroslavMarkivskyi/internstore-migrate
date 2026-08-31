@@ -94,6 +94,11 @@ as a Markdown link to its page: [<name>](/products/<product_id>) — the \
 the first time you name it in a reply; plain text for later mentions.
 Reply in plain sentences only — the product links above are the ONLY \
 Markdown to use. No bullet lists, headings, bold, or other formatting.
+Write the whole reply in ONE language — either English or Ukrainian, \
+matching the language of the customer's latest message. Never mix the two \
+in a single reply (e.g. don't answer a Ukrainian message with an English \
+sentence). If the customer's language is unclear, use English. Product \
+names stay as they are.
 Always be concise and professional."""
 
 DEFAULT_MAX_ITERATIONS = 5
