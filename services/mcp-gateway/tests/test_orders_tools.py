@@ -208,6 +208,17 @@ async def test_remove_from_cart_forwards_caller_token_and_rereads_the_cart():
 
 
 @respx.mock
+async def test_add_to_cart_rejects_a_non_positive_or_absurd_quantity():
+    route = respx.post(f"{BASE_URL}/cart")
+
+    for bad in (0, -3, 10_000):
+        with pytest.raises(ValueError):
+            await _client().add_to_cart("customer-alices-token", PRODUCT_ID, bad)
+
+    assert not route.called  # never reaches Orders
+
+
+@respx.mock
 async def test_add_to_cart_rejects_a_non_uuid_product_id():
     route = respx.post(f"{BASE_URL}/cart")
 

@@ -100,10 +100,8 @@ async def post_streamed_message(
     session: Annotated[AsyncSession, Depends(get_session)],
     pubsub: Annotated[PubSubRouter, Depends(get_pubsub)],
 ) -> dict:
-    room = await session.get(Room, room_id)
-    if room is None:
-        raise HTTPException(status_code=404, detail="Room not found")
-
+    # Deltas / reset are pure fan-out — they don't touch the DB, so they
+    # don't need the room to exist. Only the final persist below does.
     if payload.reset:
         await pubsub.publish(
             room_id, {"type": "message_reset", "room_id": room_id, "stream_id": payload.stream_id}
@@ -122,10 +120,11 @@ async def post_streamed_message(
         )
         return {"status": "delta"}
 
+    room = await session.get(Room, room_id)
     content = (payload.content or "").strip()
-    if not content:
-        # Nothing to persist (agent produced no text) — just tell clients the
-        # stream is over so they can clear any "typing" state.
+    if not content or room is None:
+        # Nothing to persist (no text, or the room is gone) — still tell
+        # clients the stream is over so they can clear the "typing" state.
         await pubsub.publish(
             room_id, {"type": "message_done", "room_id": room_id, "stream_id": payload.stream_id, "content": ""}
         )

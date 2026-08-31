@@ -98,10 +98,20 @@ async def test_done_with_empty_content_persists_nothing(app, ws_client, client, 
     assert await _persisted_contents(app) == []
 
 
-async def test_stream_to_unknown_room_is_404(client):
-    resp = await client.post(
-        "/rooms/room_does-not-exist/messages/stream",
+async def test_stream_to_a_missing_room_fans_out_but_persists_nothing(app, client):
+    # A delta needs no room (pure fan-out); a done to a missing room ends
+    # the stream cleanly without a DB write instead of 500-ing the agent.
+    delta = await client.post(
+        "/rooms/room_gone/messages/stream",
         json={"stream_id": "s4", "delta": "hi"},
         headers=_assistant_token(),
     )
-    assert resp.status_code == 404
+    assert delta.status_code == 202 and delta.json()["status"] == "delta"
+
+    done = await client.post(
+        "/rooms/room_gone/messages/stream",
+        json={"stream_id": "s4", "done": True, "content": "the answer"},
+        headers=_assistant_token(),
+    )
+    assert done.status_code == 202 and done.json()["status"] == "empty"
+    assert await _persisted_contents(app) == []

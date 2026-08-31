@@ -31,6 +31,23 @@ def _require_uuid(product_id: str) -> None:
         ) from exc
 
 
+# A cart line the storefront would never let a human create — reject before
+# Orders accumulates it, with a message the ReAct loop can act on.
+_MAX_CART_QUANTITY = 100
+
+
+def _require_sane_quantity(quantity: object) -> int:
+    try:
+        value = int(quantity)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"quantity must be a whole number, got {quantity!r}") from exc
+    if value <= 0:
+        raise ValueError(f"quantity must be positive, got {value} — to remove an item use remove_from_cart.")
+    if value > _MAX_CART_QUANTITY:
+        raise ValueError(f"quantity {value} is unreasonably large (max {_MAX_CART_QUANTITY} per add).")
+    return value
+
+
 class OrdersToolsClient:
     def __init__(
         self,
@@ -174,6 +191,7 @@ class OrdersToolsClient:
 
     async def add_to_cart(self, token: str, product_id: str, quantity: int) -> dict:
         _require_uuid(product_id)
+        quantity = _require_sane_quantity(quantity)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.post(
                 f"{self._base_url}/cart",
