@@ -39,7 +39,37 @@ export interface ChatTypingFrame {
   sender_id: string;
 }
 
+/** A piece of the assistant's reply as the model streams it. */
+export interface ChatMessageDeltaFrame {
+  type: 'message_delta';
+  room_id: string;
+  stream_id: string;
+  delta: string;
+}
+
+/** The model abandoned a partial reply to call a tool — drop what was shown. */
+export interface ChatMessageResetFrame {
+  type: 'message_reset';
+  room_id: string;
+  stream_id: string;
+}
+
+/** End of a streamed reply; `content` is the full, now-persisted message. */
+export interface ChatMessageDoneFrame {
+  type: 'message_done';
+  room_id: string;
+  stream_id: string;
+  sender_type?: ChatSenderType;
+  sender_id?: string;
+  content: string;
+  attachment_url?: string | null;
+  created_at?: string;
+}
+
 export type ChatServerFrame =
   | ChatHistoryFrame
   | ChatMessageFrame
-  | ChatTypingFrame;
+  | ChatTypingFrame
+  | ChatMessageDeltaFrame
+  | ChatMessageResetFrame
+  | ChatMessageDoneFrame;

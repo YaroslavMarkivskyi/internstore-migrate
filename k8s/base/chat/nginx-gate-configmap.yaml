@@ -24,6 +24,7 @@ data:
         "~^GET:/rooms/[^/]+/messages$"       admin_or_assistant;
         "~^DELETE:/rooms/[^/]+$"             admin;
         "~^POST:/rooms/[^/]+/messages$"      assistant;
+        "~^POST:/rooms/[^/]+/messages/stream$" assistant;
       }
 
       server {

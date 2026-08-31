@@ -35,6 +35,31 @@ class ChatClient:
             )
         resp.raise_for_status()
 
+    async def _post_stream(self, room_id: str, body: dict) -> None:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(
+                f"{self._base_url}/rooms/{room_id}/messages/stream",
+                json=body,
+                headers=self._headers(),
+            )
+        resp.raise_for_status()
+
+    async def stream_delta(self, room_id: str, stream_id: str, delta: str) -> None:
+        """A piece of the assistant's reply as the model produces it — Chat
+        fans it out to the room's WebSocket clients as a `message_delta`
+        frame; nothing is persisted until stream_done."""
+        await self._post_stream(room_id, {"stream_id": stream_id, "delta": delta})
+
+    async def stream_reset(self, room_id: str, stream_id: str) -> None:
+        """The model streamed some text then called a tool after all — tells
+        Chat's clients to drop the partial bubble (`message_reset`)."""
+        await self._post_stream(room_id, {"stream_id": stream_id, "reset": True})
+
+    async def stream_done(self, room_id: str, stream_id: str, content: str) -> None:
+        """End of stream: Chat persists `content` as the assistant's message
+        and publishes a final `message_done` frame."""
+        await self._post_stream(room_id, {"stream_id": stream_id, "done": True, "content": content})
+
     async def set_mode(self, room_id: str, mode: str) -> None:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.patch(

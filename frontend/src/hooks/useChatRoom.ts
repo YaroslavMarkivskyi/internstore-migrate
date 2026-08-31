@@ -20,6 +20,23 @@ const buildSocketUrl = (roomId: string, token: string): string => {
   return `${wsBase}/ws/room/${roomId}?token=${encodeURIComponent(token)}`;
 };
 
+interface OutgoingMessageFrame {
+  type: 'message';
+  content: string;
+  viewing_product_id?: string;
+}
+
+const buildMessageFrame = (
+  text: string,
+  viewingProductId: string | null | undefined
+): OutgoingMessageFrame => {
+  const frame: OutgoingMessageFrame = { type: 'message', content: text };
+  if (viewingProductId) {
+    frame.viewing_product_id = viewingProductId;
+  }
+  return frame;
+};
+
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
 // The assistant runs a Gemini ReAct loop (search + cart tools), so its
@@ -34,20 +51,60 @@ const ASSISTANT_REPLY_TIMEOUT_MS = 90000;
 // closes so every send rides a freshly-minted token.
 const TOKEN_STALE_MS = 45000;
 
+// "Clear conversation" (see ChatWidget) is a client-only action: server-side
+// history is deliberately kept (support may pick the thread up), and a
+// reconnect replays the whole `history` frame anyway, so a cleared panel
+// would refill within the token-cycle window. Instead we persist a per-room
+// cutoff timestamp and hide every message at or before it. The shopping
+// agent still receives full server-side history for context — this only
+// changes what the customer sees.
+const clearedStorageKey = (roomId: string): string => `chat:cleared:${roomId}`;
+
+const readClearedAt = (roomId: string): string | null => {
+  try {
+    return globalThis.localStorage?.getItem(clearedStorageKey(roomId)) ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const writeClearedAt = (roomId: string, iso: string): void => {
+  try {
+    globalThis.localStorage?.setItem(clearedStorageKey(roomId), iso);
+  } catch {
+    // Private mode / storage disabled — the clear still holds for this
+    // session via in-memory state, it just won't survive a reconnect.
+  }
+};
+
 interface UseChatRoomResult {
   messages: ChatMessage[];
   status: ChatConnectionStatus;
   assistantThinking: boolean;
+  /** The assistant's reply so far while it streams, or null between replies. */
+  streamingText: string | null;
   sendMessage: (text: string) => void;
+  clearConversation: () => void;
 }
 
-export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
+export const useChatRoom = (
+  enabled: boolean,
+  viewingProductId?: string | null
+): UseChatRoomResult => {
   const currentUser = useSelector(selectCurrentUser);
   const roomId = currentUser ? `room_${currentUser.user_id}` : null;
+
+  // Kept in a ref so a route change (different product page) doesn't churn
+  // the socket — it's only read at send time.
+  const viewingProductIdRef = useRef(viewingProductId);
+  viewingProductIdRef.current = viewingProductId;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatConnectionStatus>('closed');
   const [assistantThinking, setAssistantThinking] = useState(false);
+  const [streamingText, setStreamingText] = useState<string | null>(null);
+  // The stream_id of the reply currently building in streamingText.
+  const streamIdRef = useRef<string | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const connectedAtRef = useRef(0);
@@ -59,6 +116,19 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
   // delivered by connectAndFlush()'s onopen once a fresh socket is up.
   const pendingMessageRef = useRef<string | null>(null);
   const connectRef = useRef<() => void>(() => {});
+  // Messages at or before this ISO timestamp are hidden from the panel —
+  // set by clearConversation, seeded from localStorage per room.
+  const clearedAtRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    clearedAtRef.current = roomId ? readClearedAt(roomId) : null;
+  }, [roomId]);
+
+  const isVisible = useCallback(
+    (createdAt: string): boolean =>
+      !clearedAtRef.current || createdAt > clearedAtRef.current,
+    []
+  );
 
   const clearAssistantTimer = useCallback(() => {
     if (assistantTimerRef.current) {
@@ -86,7 +156,7 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
 
     const sendRaw = (text: string) => {
       socketRef.current?.send(
-        JSON.stringify({ type: 'message', content: text })
+        JSON.stringify(buildMessageFrame(text, viewingProductIdRef.current))
       );
       markAssistantThinking();
     };
@@ -113,6 +183,10 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
         reconnectAttemptsRef.current = 0;
         connectedAtRef.current = Date.now();
         setStatus('open');
+        // A stream in flight can't survive a socket swap — the history
+        // frame that follows carries the persisted final message.
+        streamIdRef.current = null;
+        setStreamingText(null);
         if (pendingMessageRef.current) {
           const queued = pendingMessageRef.current;
           pendingMessageRef.current = null;
@@ -129,9 +203,11 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
         }
 
         if (frame.type === 'history') {
+          streamIdRef.current = null;
+          setStreamingText(null);
           setMessages(
             frame.messages
-              .filter(message => message.content)
+              .filter(message => message.content && isVisible(message.created_at))
               .map(message => ({
                 id: message.id,
                 senderType: message.sender_type,
@@ -143,7 +219,50 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
           return;
         }
 
+        if (frame.type === 'message_delta') {
+          clearAssistantTimer();
+          setAssistantThinking(false);
+          if (streamIdRef.current !== frame.stream_id) {
+            streamIdRef.current = frame.stream_id;
+            setStreamingText(frame.delta);
+          } else {
+            setStreamingText(prev => (prev ?? '') + frame.delta);
+          }
+          return;
+        }
+
+        if (frame.type === 'message_reset') {
+          if (streamIdRef.current === frame.stream_id) {
+            setStreamingText('');
+          }
+          return;
+        }
+
+        if (frame.type === 'message_done') {
+          streamIdRef.current = null;
+          setStreamingText(null);
+          clearAssistantTimer();
+          setAssistantThinking(false);
+          const createdAt = frame.created_at ?? new Date().toISOString();
+          if (frame.content && isVisible(createdAt)) {
+            setMessages(prev => [
+              ...prev,
+              {
+                id: frame.stream_id,
+                senderType: frame.sender_type ?? 'assistant',
+                senderId: frame.sender_id ?? 'ai-assistant',
+                content: frame.content,
+                createdAt,
+              },
+            ]);
+          }
+          return;
+        }
+
         if (frame.type === 'message' && frame.content) {
+          if (!isVisible(frame.created_at)) {
+            return;
+          }
           if (frame.sender_type === 'assistant') {
             clearAssistantTimer();
             setAssistantThinking(false);
@@ -200,8 +319,27 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
       socketRef.current = null;
       setStatus('closed');
       setAssistantThinking(false);
+      streamIdRef.current = null;
+      setStreamingText(null);
     };
-  }, [enabled, roomId, clearAssistantTimer, markAssistantThinking]);
+  }, [enabled, roomId, clearAssistantTimer, markAssistantThinking, isVisible]);
+
+  const clearConversation = useCallback(() => {
+    setMessages(prev => {
+      const cutoff =
+        prev.reduce((max, message) => (message.createdAt > max ? message.createdAt : max), '') ||
+        new Date().toISOString();
+      clearedAtRef.current = cutoff;
+      if (roomId) {
+        writeClearedAt(roomId, cutoff);
+      }
+      return [];
+    });
+    setAssistantThinking(false);
+    clearAssistantTimer();
+    streamIdRef.current = null;
+    setStreamingText(null);
+  }, [roomId, clearAssistantTimer]);
 
   const sendMessage = useCallback(
     (text: string) => {
@@ -215,7 +353,11 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
         isOpen && Date.now() - connectedAtRef.current < TOKEN_STALE_MS;
 
       if (socket && fresh) {
-        socket.send(JSON.stringify({ type: 'message', content: trimmed }));
+        socket.send(
+          JSON.stringify(
+            buildMessageFrame(trimmed, viewingProductIdRef.current)
+          )
+        );
         markAssistantThinking();
         return;
       }
@@ -233,5 +375,12 @@ export const useChatRoom = (enabled: boolean): UseChatRoomResult => {
     [markAssistantThinking]
   );
 
-  return { messages, status, assistantThinking, sendMessage };
+  return {
+    messages,
+    status,
+    assistantThinking,
+    streamingText,
+    sendMessage,
+    clearConversation,
+  };
 };

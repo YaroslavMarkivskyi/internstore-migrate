@@ -7,8 +7,11 @@ import {
   useState,
 } from 'react';
 
+import { useMatch } from 'react-router-dom';
+
 import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
 import CloseIcon from '@mui/icons-material/Close';
+import DeleteSweepOutlinedIcon from '@mui/icons-material/DeleteSweepOutlined';
 import SendIcon from '@mui/icons-material/Send';
 import { IconButton, InputBase } from '@mui/material';
 
@@ -52,9 +55,19 @@ const ChatWidget: FC = () => {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
 
-  const { messages, status, assistantThinking, sendMessage } = useChatRoom(
-    isCustomer && open
-  );
+  // The customer-facing product route (not /admin/products/preview/:id) —
+  // gives the agent an antecedent for "this product" / "it".
+  const productMatch = useMatch('/products/:id');
+  const viewingProductId = productMatch?.params.id ?? null;
+
+  const {
+    messages,
+    status,
+    assistantThinking,
+    streamingText,
+    sendMessage,
+    clearConversation,
+  } = useChatRoom(isCustomer && open, viewingProductId);
 
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -63,7 +76,7 @@ const ChatWidget: FC = () => {
     if (node) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [messages, assistantThinking, open]);
+  }, [messages, assistantThinking, streamingText, open]);
 
   useEffect(() => {
     if (!isCustomer) {
@@ -116,29 +129,52 @@ const ChatWidget: FC = () => {
           <HeaderTitle>Shopping Assistant</HeaderTitle>
           <StatusLine>{STATUS_LABEL[status]}</StatusLine>
         </div>
-        <IconButton
-          size="small"
-          aria-label="Close chat"
-          onClick={() => setOpen(false)}
-          sx={{ color: '#FFFFFF' }}
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
+        <div>
+          <IconButton
+            size="small"
+            aria-label="Clear conversation"
+            title="Clear conversation"
+            disabled={messages.length === 0}
+            onClick={clearConversation}
+            sx={{ color: '#FFFFFF', '&.Mui-disabled': { color: 'rgba(255,255,255,0.35)' } }}
+          >
+            <DeleteSweepOutlinedIcon fontSize="small" />
+          </IconButton>
+          <IconButton
+            size="small"
+            aria-label="Close chat"
+            onClick={() => setOpen(false)}
+            sx={{ color: '#FFFFFF' }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </div>
       </Header>
 
       <Body ref={bodyRef}>
-        {messages.length === 0 && !assistantThinking && (
-          <EmptyState>
-            Ask about products, prices or your cart — e.g. “find me a Gouda
-            under $20”.
-          </EmptyState>
-        )}
+        {messages.length === 0 &&
+          !assistantThinking &&
+          streamingText === null && (
+            <EmptyState>
+              Ask about products, prices or your cart — e.g. “find me a Gouda
+              under $20”.
+            </EmptyState>
+          )}
         {rendered}
-        {assistantThinking && (
+        {streamingText !== null ? (
           <Bubble mine={false}>
             <SenderTag>Assistant</SenderTag>
-            typing…
+            {streamingText
+              ? renderMessageContent(streamingText)
+              : 'typing…'}
           </Bubble>
+        ) : (
+          assistantThinking && (
+            <Bubble mine={false}>
+              <SenderTag>Assistant</SenderTag>
+              typing…
+            </Bubble>
+          )
         )}
       </Body>
 

@@ -5,10 +5,13 @@ refreshes proactively via auth-backend rather than failing partway through
 with a stale-token 401."""
 
 import time
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import jwt
+
+from tests.gemini_fakes import chunk as _response
+from tests.gemini_fakes import function_call
+from tests.gemini_fakes import set_stream as _set_stream
 
 from ai_assistant.react_loop import run_shopping_agent
 from ai_assistant.token_manager import RefreshableToken
@@ -28,13 +31,8 @@ def _mint(sub: str, role: str, *, expires_in: int) -> str:
     )
 
 
-def _response(text: str | None, function_calls: list | None = None) -> SimpleNamespace:
-    content = SimpleNamespace(role="model", parts=[])
-    return SimpleNamespace(text=text, function_calls=function_calls or [], candidates=[SimpleNamespace(content=content)])
-
-
-def _function_call(name: str) -> SimpleNamespace:
-    return SimpleNamespace(name=name, args={})
+def _function_call(name: str):
+    return function_call(name, {})
 
 
 async def test_loop_refreshes_a_soon_to_expire_token_before_the_next_tool_call():
@@ -49,11 +47,10 @@ async def test_loop_refreshes_a_soon_to_expire_token_before_the_next_tool_call()
     auth_backend_client.refresh = AsyncMock(return_value=fresh_token)
 
     genai_client = AsyncMock()
-    genai_client.aio.models.generate_content = AsyncMock(
-        side_effect=[
-            _response(None, function_calls=[_function_call("get_cart")]),
-            _response("Your cart is empty."),
-        ]
+    _set_stream(
+        genai_client,
+        _response(None, function_calls=[_function_call("get_cart")]),
+        _response("Your cart is empty."),
     )
 
     token = RefreshableToken(about_to_expire)
@@ -84,7 +81,7 @@ async def test_loop_does_not_refresh_a_token_with_plenty_of_time_left():
 
     auth_backend_client = AsyncMock()
     genai_client = AsyncMock()
-    genai_client.aio.models.generate_content = AsyncMock(return_value=_response("All good."))
+    _set_stream(genai_client, _response("All good."))
 
     await run_shopping_agent(
         genai_client=genai_client,
@@ -116,12 +113,11 @@ async def test_loop_refreshes_again_across_iterations_if_still_close_to_expiry()
     auth_backend_client.refresh = AsyncMock(side_effect=lambda _t: _mint("customer-1", "customer", expires_in=5))
 
     genai_client = AsyncMock()
-    genai_client.aio.models.generate_content = AsyncMock(
-        side_effect=[
-            _response(None, function_calls=[_function_call("get_cart")]),
-            _response(None, function_calls=[_function_call("get_cart")]),
-            _response("done"),
-        ]
+    _set_stream(
+        genai_client,
+        _response(None, function_calls=[_function_call("get_cart")]),
+        _response(None, function_calls=[_function_call("get_cart")]),
+        _response("done"),
     )
 
     await run_shopping_agent(

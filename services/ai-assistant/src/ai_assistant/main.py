@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -20,7 +21,12 @@ from ai_assistant.kafka import run_consumer_loop
 from ai_assistant.mcp_client import MCPGatewayClient
 from ai_assistant.observability import setup_observability
 from ai_assistant.orders_client import OrdersClient
-from ai_assistant.react_loop import run_shopping_agent
+from ai_assistant.react_loop import Reset, run_shopping_agent_stream
+
+# Batch streamed deltas up to roughly this many characters before pushing
+# one to Chat — Gemini streams word-by-word, and one HTTP round trip per
+# word through Chat's gate is needless chatter for no perceptible UX gain.
+_DELTA_FLUSH_CHARS = 40
 from ai_assistant.redis_client import make_redis_client
 from ai_assistant.token_manager import RefreshableToken
 
@@ -71,6 +77,12 @@ class ShoppingAgentRequest(BaseModel):
     room_id: str
     sender_id: str
     message: str
+    # STR-XXX: the product page the customer had open when they sent this,
+    # if any — lets the agent resolve "this" / "it" without the customer
+    # naming the product. A UUID string; Chat validates the shape before
+    # forwarding (see chat/ws/room.py), so a client can't smuggle prose
+    # into the prompt through this field.
+    viewing_product_id: str | None = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -155,18 +167,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         history = await app.state.chat_client.get_recent_messages(
             payload.room_id, settings.conversation_history_limit
         )
-        reply = await run_shopping_agent(
+
+        # STR-XXX: stream the reply to Chat (and on to the customer's
+        # WebSocket) as the model produces it, rather than posting one
+        # message after a multi-second silence. Deltas are batched (see
+        # _DELTA_FLUSH_CHARS); the full text is persisted once, on
+        # stream_done. A Reset means the model streamed a preamble then
+        # called a tool — drop what was sent so far.
+        chat_client = app.state.chat_client
+        stream_id = str(uuid.uuid4())
+        full: list[str] = []
+        pending: list[str] = []
+
+        async def _flush() -> None:
+            if pending:
+                await chat_client.stream_delta(payload.room_id, stream_id, "".join(pending))
+                pending.clear()
+
+        async for event in run_shopping_agent_stream(
             genai_client=app.state.genai_client,
             mcp_client=app.state.mcp_client,
             auth_backend_client=app.state.auth_backend_client,
             chat_model=settings.chat_model,
             message=payload.message,
+            viewing_product_id=payload.viewing_product_id,
             token=RefreshableToken(token),
             history=history,
             max_iterations=settings.max_react_iterations,
             refresh_margin_seconds=settings.token_refresh_margin_seconds,
-        )
-        await app.state.chat_client.post_message(payload.room_id, reply)
+        ):
+            if isinstance(event, Reset):
+                full.clear()
+                pending.clear()
+                await chat_client.stream_reset(payload.room_id, stream_id)
+                continue
+            full.append(event.text)
+            pending.append(event.text)
+            if sum(len(part) for part in pending) >= _DELTA_FLUSH_CHARS:
+                await _flush()
+
+        await _flush()
+        await chat_client.stream_done(payload.room_id, stream_id, "".join(full))
         return {"status": "ok"}
 
     return app
