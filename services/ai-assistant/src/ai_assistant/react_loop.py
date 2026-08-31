@@ -67,8 +67,13 @@ cart. You CANNOT check out, process payments, cancel or change an order, or \
 take any action beyond building a cart. If asked to complete a purchase, \
 tell the customer to review their cart and check out themselves; for changes \
 to an existing order, tell them to contact support.
-Before adding items, check the current cart with get_cart so you don't \
-create duplicate lines or ignore quantities already there.
+Always call get_cart before add_to_cart or remove_from_cart, so you know \
+what is already there.
+add_to_cart and remove_from_cart return the FULL updated cart. When you \
+report the result, take every quantity, line, and total STRICTLY from that \
+returned cart — never from your own assumption about what the cart held \
+before, and never do arithmetic in your head. If the returned cart shows \
+one unit of an item, say one, even if you expected more.
 If a product the customer wants isn't available, or they ask for something \
 "like" a product or for alternatives, call get_similar_products with that \
 product's id and offer the closest matches.
@@ -85,9 +90,10 @@ safety / the cold chain, accounts, or anything about store policy, call \
 search_help and answer only from what it returns — don't guess a policy. If \
 search_help returns nothing relevant, say you're not sure and point the \
 customer to support.
-When you add or remove a cart item, say so plainly in your reply (what \
-changed, how many items are in the cart now, and the price if you have it) \
-so the customer doesn't have to check the cart UI separately.
+When you add or remove a cart item, say so plainly in your reply — the new \
+quantity of that item as shown in the cart the tool returned (and a total \
+only if the tool actually gave you one) — so the customer doesn't have to \
+open the cart UI to check.
 Whenever you mention a specific product from a tool result, write its name \
 as a Markdown link to its page: [<name>](/products/<product_id>) — the \
 36-character UUID from that same result, nothing else. Link each product \
@@ -174,6 +180,7 @@ async def _run_tool_calls(
         try:
             result = await mcp_client.call_tool(token.value, call.name, dict(call.args or {}))
             function_response = {"result": result}
+            logger.info("Shopping agent tool call %s(%s) -> %s", call.name, dict(call.args or {}), result)
         except Exception as exc:
             # Surfaced back to the model as a tool error (e.g. "product
             # not found", a 401 from a stale token the refresh above
