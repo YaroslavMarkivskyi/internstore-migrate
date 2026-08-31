@@ -77,6 +77,28 @@ class OrdersToolsClient:
         resp.raise_for_status()
         return resp.json()
 
+    # --- Customer-scoped order reads. Unlike get_order_status /
+    # list_customer_orders above (which hit /admin and need an admin-or-
+    # assistant token), these hit Orders' own customer endpoints
+    # (routers/orders.py), scoped entirely to the forwarded token's `sub`:
+    # `list_orders` filters `owner_id == claims.sub`, `get_order` 404s
+    # (not 403 — see its comment) on anyone else's order. So there is no
+    # customer_id / owner_id argument for an LLM to hallucinate — the
+    # caller's own token is whose orders come back, same trust model as
+    # get_cart. Read-only: no status transition, no payment.
+
+    async def get_my_orders(self, token: str, limit: int = 5) -> list[dict]:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(f"{self._base_url}/orders", headers=self._headers(token))
+        resp.raise_for_status()
+        return resp.json()[:limit]
+
+    async def get_my_order(self, token: str, order_id: str) -> dict:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(f"{self._base_url}/orders/{order_id}", headers=self._headers(token))
+        resp.raise_for_status()
+        return resp.json()
+
     async def add_to_cart(self, token: str, product_id: str, quantity: int) -> dict:
         _require_uuid(product_id)
         async with httpx.AsyncClient(timeout=self._timeout) as client:

@@ -41,6 +41,41 @@ async def test_list_customer_orders_passes_owner_id_and_applies_limit():
 
 
 @respx.mock
+async def test_get_my_orders_hits_customer_endpoint_forwards_token_and_limits():
+    orders = [{"id": f"o-{i}", "status": "paid", "created_at": "2026-08-01T00:00:00Z", "items": []} for i in range(10)]
+    route = respx.get(f"{BASE_URL}/orders").mock(return_value=httpx.Response(200, json=orders))
+
+    result = await _client().get_my_orders("customer-token", limit=3)
+
+    assert route.called
+    # No owner_id/customer_id param — Orders scopes to the forwarded token's sub.
+    assert "owner_id" not in route.calls.last.request.url.params
+    assert route.calls.last.request.headers["x-internal-token"] == "customer-token"
+    assert len(result) == 3
+
+
+@respx.mock
+async def test_get_my_order_hits_customer_endpoint_by_id():
+    route = respx.get(f"{BASE_URL}/orders/order-1").mock(
+        return_value=httpx.Response(200, json={"id": "order-1", "status": "shipped", "items": []})
+    )
+
+    result = await _client().get_my_order("customer-token", "order-1")
+
+    assert route.called
+    assert route.calls.last.request.headers["x-internal-token"] == "customer-token"
+    assert result["status"] == "shipped"
+
+
+@respx.mock
+async def test_get_my_order_propagates_404_for_someone_elses_order():
+    respx.get(f"{BASE_URL}/orders/not-mine").mock(return_value=httpx.Response(404, json={"detail": "Order not found"}))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _client().get_my_order("customer-token", "not-mine")
+
+
+@respx.mock
 async def test_get_pending_orders_filters_status_and_age():
     now = datetime.now(timezone.utc)
     old_pending = {"id": "old", "status": "pending", "created_at": (now - timedelta(minutes=120)).isoformat()}

@@ -38,8 +38,9 @@ async def test_list_categories_returns_catalog_response():
 
 
 class _FakeSession:
-    def __init__(self, rows: list) -> None:
+    def __init__(self, rows: list, anchor: object = None) -> None:
         self._rows = rows
+        self._anchor = anchor
 
     async def __aenter__(self) -> "_FakeSession":
         return self
@@ -50,9 +51,12 @@ class _FakeSession:
     async def execute(self, _stmt: object) -> object:
         return iter(self._rows)
 
+    async def get(self, _model: object, _pk: object) -> object:
+        return self._anchor
 
-def _fake_session_factory(rows: list):
-    return lambda: _FakeSession(rows)
+
+def _fake_session_factory(rows: list, anchor: object = None):
+    return lambda: _FakeSession(rows, anchor)
 
 
 def _fake_genai_client() -> AsyncMock:
@@ -82,3 +86,50 @@ async def test_search_products_embeds_query_and_returns_nearest_rows():
     assert result == [
         {"product_id": "prod-1", "name": "Frozen Peas", "description": "1kg bag", "price": 4.5, "category": "Frozen"}
     ]
+
+
+ANCHOR_ID = "11111111-1111-1111-1111-111111111111"
+
+
+async def test_get_similar_products_uses_the_stored_vector_and_makes_no_gemini_call():
+    anchor = SimpleNamespace(embedding=[0.2] * 1536)
+    rows = [
+        SimpleNamespace(
+            product_id="prod-2", name="Frozen Green Beans", description="500g", price=3.9, category_name="Frozen"
+        )
+    ]
+    genai_client = _fake_genai_client()
+    search_client = ProductSearchClient(
+        _fake_session_factory(rows, anchor), genai_client, "gemini-embedding-001", 1536
+    )
+
+    result = await search_client.get_similar_products("caller-token", ANCHOR_ID, limit=3)
+
+    genai_client.aio.models.embed_content.assert_not_awaited()
+    assert result == [
+        {
+            "product_id": "prod-2",
+            "name": "Frozen Green Beans",
+            "description": "500g",
+            "price": 3.9,
+            "category": "Frozen",
+        }
+    ]
+
+
+async def test_get_similar_products_returns_empty_when_the_anchor_is_not_embedded():
+    search_client = ProductSearchClient(
+        _fake_session_factory([], anchor=None), _fake_genai_client(), "gemini-embedding-001", 1536
+    )
+
+    assert await search_client.get_similar_products("caller-token", ANCHOR_ID) == []
+
+
+async def test_get_similar_products_rejects_a_non_uuid_product_id():
+    import pytest
+
+    search_client = ProductSearchClient(
+        _fake_session_factory([]), _fake_genai_client(), "gemini-embedding-001", 1536
+    )
+    with pytest.raises(ValueError):
+        await search_client.get_similar_products("caller-token", "Frozen Peas")

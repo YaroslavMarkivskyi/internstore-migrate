@@ -1,3 +1,5 @@
+import uuid
+
 import httpx
 from google import genai
 from google.genai import types
@@ -89,13 +91,47 @@ class ProductSearchClient:
 
         async with self._session_factory() as session:
             result = await session.execute(stmt)
-            return [
-                {
-                    "product_id": str(row.product_id),
-                    "name": row.name,
-                    "description": row.description,
-                    "price": row.price,
-                    "category": row.category_name,
-                }
-                for row in result
-            ]
+            return [_row_to_dict(row) for row in result]
+
+    async def get_similar_products(self, token: str, product_id: str, limit: int = 3) -> list[dict]:
+        """Nearest neighbours to an existing product by its *stored*
+        embedding — for "no <X>, what's like it?" / substitutions. No
+        Gemini call (the vector is already in the row), and the product
+        itself is excluded from its own results. 404-shaped (empty) if the
+        product isn't embedded."""
+        del token  # unused — see class docstring
+        try:
+            pid = uuid.UUID(product_id)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"product_id must be a UUID from a search_products / get_cart result, got {product_id!r}"
+            ) from exc
+
+        async with self._session_factory() as session:
+            anchor = await session.get(ProductEmbedding, pid)
+            if anchor is None:
+                return []
+            stmt = (
+                select(
+                    ProductEmbedding.product_id,
+                    ProductEmbedding.name,
+                    ProductEmbedding.description,
+                    ProductEmbedding.price,
+                    ProductEmbedding.category_name,
+                )
+                .where(ProductEmbedding.product_id != pid)
+                .order_by(ProductEmbedding.embedding.l2_distance(anchor.embedding))
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            return [_row_to_dict(row) for row in result]
+
+
+def _row_to_dict(row) -> dict:
+    return {
+        "product_id": str(row.product_id),
+        "name": row.name,
+        "description": row.description,
+        "price": row.price,
+        "category": row.category_name,
+    }

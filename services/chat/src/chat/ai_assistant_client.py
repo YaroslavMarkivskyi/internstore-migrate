@@ -19,12 +19,17 @@ class AIAssistantClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
 
-    async def notify_shopping_agent(self, *, room_id: str, sender_id: str, message: str, token: str) -> None:
+    async def notify_shopping_agent(
+        self, *, room_id: str, sender_id: str, message: str, token: str, viewing_product_id: str | None = None
+    ) -> None:
+        body: dict[str, str] = {"room_id": room_id, "sender_id": sender_id, "message": message}
+        if viewing_product_id:
+            body["viewing_product_id"] = viewing_product_id
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(
                     f"{self._base_url}/agent/shopping",
-                    json={"room_id": room_id, "sender_id": sender_id, "message": message},
+                    json=body,
                     headers={"X-Internal-Token": token},
                 )
             resp.raise_for_status()

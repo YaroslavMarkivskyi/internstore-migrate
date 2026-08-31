@@ -39,6 +39,13 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Evals (evals/) call a real Gemini model and cost money — excluded from
+# the default run. Opt in with `uv run pytest -m eval` (needs GCP_PROJECT
+# + ADC). See evals/README.md.
+addopts = "-m 'not eval'"
+markers = [
+    "eval: live shopping-agent behaviour check against a real model (costs money, non-deterministic)",
+]
 
 [build-system]
 requires = ["hatchling"]
