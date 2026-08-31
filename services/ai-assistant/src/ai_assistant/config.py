@@ -27,7 +27,11 @@ class Settings(BaseSettings):
     # the Gemini Enterprise API surface; override per-region if needed.
     gcp_project: str
     gcp_location: str = "global"
-    chat_model: str = "gemini-3-flash"
+    # A current Vertex model id — the earlier "gemini-3-flash" default was
+    # fictional (404 NOT_FOUND on Vertex) and only worked because every
+    # environment overrode it via CHAT_MODEL. Keep this a real id so the
+    # service is usable without the override.
+    chat_model: str = "gemini-2.5-flash"
     embedding_model: str = "gemini-embedding-001"
     # STR-161b: gemini-embedding-001 natively outputs 3072 dimensions:
     # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/embeddings/get-text-embeddings

@@ -51,8 +51,9 @@ tier:
 - **admin-or-assistant** — `GET /rooms/{id}/messages` (the AI Assistant
   reads recent history to build conversation context).
 - **assistant** (not admin-or-assistant — admin does *not* get a bypass
-  here) — `POST /rooms/{id}/messages`, the AI Assistant's only way to
-  inject a message into a room.
+  here) — `POST /rooms/{id}/messages` and `POST /rooms/{id}/messages/stream`,
+  the AI Assistant's only ways to inject a message into a room (the latter
+  streams the reply in as it's generated — see REST endpoints below).
 - **any authenticated caller** — everything else, including the
   `/ws/room/{id}` WebSocket handshake, `GET`/`PATCH /rooms/{id}/mode`,
   and `POST /rooms/{id}/attachments`.
@@ -178,6 +179,14 @@ event.
 - `GET /rooms/{id}/messages?before=<message-id>&limit=50` — admin-only,
   cursor-paginated, newest-first.
 - `DELETE /rooms/{id}` — admin-only, removes the room and its messages.
+- `POST /rooms/{id}/messages` — assistant-only, the AI Assistant's plain
+  (non-streamed) reply injection: one DB write + one `message` pub/sub frame.
+- `POST /rooms/{id}/messages/stream` — assistant-only. Called repeatedly as
+  the shopping agent's model produces its answer: a body with `delta` fans
+  out a `message_delta` frame (nothing persisted); `reset: true` fans out
+  `message_reset` (the model abandoned a partial reply to call a tool);
+  `done: true` with the full `content` persists one `Message` and fans out
+  `message_done`. Same Redis pub/sub fanout as everything else.
 - `POST /rooms/{id}/attachments` — open to any room participant: the admin
   (any room) or the customer/guest whose own `sub` matches the room's
   `customer_id`/`session_id` (403 otherwise). Validates JPEG/PNG, ≤20MB,

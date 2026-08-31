@@ -1066,8 +1066,8 @@ services:
       # read-only below. In GKE this is Workload Identity instead and this
       # var/mount is absent.
       GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
-      # gemini-3-flash (config.py default) is not a real Vertex model id;
-      # override to a current one. Same ${VAR:-} root-.env passthrough.
+      # Matches config.py's default; override per-env via root .env if a
+      # newer Vertex model is preferred. Same ${VAR:-} passthrough.
       CHAT_MODEL: ${CHAT_MODEL:-gemini-2.5-flash}
       AI_MODE_DEFAULT: ai
       AI_RATE_LIMIT: "10"

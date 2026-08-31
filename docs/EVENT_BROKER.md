@@ -153,7 +153,10 @@ an end-to-end run against the real broker. Chat is a producer-only client of
   stays empty until Catalog publishes a `ProductUpdated` event for each
   product, so a
   fresh stack has no RAG context until either an admin edits every product
-  once or `scripts/seed-embeddings.sh` is run to trigger it directly. Rate
+  once or `scripts/seed-embeddings.sh` is run to trigger it directly. The
+  shopping agent's FAQ/policy corpus (`help_chunks`, for the `search_help`
+  tool) has *no* event pipeline at all — it's rebuilt only by
+  `scripts/seed-help-docs.sh`, by design, since policies change rarely. Rate
   limiting (`AI_RATE_LIMIT`, default 10/hour) is per-room, not per-customer —
   a customer with multiple open rooms gets the limit again in each one. See
   [services/ai-assistant/README.md](../services/ai-assistant/README.md).

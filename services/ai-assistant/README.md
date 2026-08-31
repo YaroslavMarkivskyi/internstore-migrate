@@ -30,6 +30,25 @@ Also consumes `catalog-events`' `ProductUpdated` to keep its own
 pgvector extension) in sync — see
 [src/ai_assistant/embeddings.py](src/ai_assistant/embeddings.py).
 
+### Registered customers: the shopping agent (STR-146)
+
+Registered customers don't go through the Kafka path above. Chat calls this
+service's one inbound route, `POST /agent/shopping`, synchronously on each
+message, forwarding the customer's own internal token. That runs a ReAct
+loop ([src/ai_assistant/react_loop.py](src/ai_assistant/react_loop.py)) —
+Gemini function-calling over a fixed allow-list of MCP Gateway tools
+(`search_products`, `get_similar_products`, `get_product`, `check_availability`,
+`get_my_orders`, `get_cart`/`add_to_cart`/`remove_from_cart`, `search_help`) —
+until the model produces an answer with no further tool calls. There is no
+checkout/payment tool anywhere in the Gateway registry, so that boundary is
+structural, not prompt-level.
+
+The reply is **streamed** back: `run_shopping_agent_stream` yields the
+answer in deltas as Gemini generates it, and the loop pushes them to Chat
+via `POST /rooms/{id}/messages/stream` (batched), which fans out
+`message_delta` / `message_done` WebSocket frames over the same Redis
+pub/sub as any other message. Only the final `message_done` persists a row.
+
 ## Permissions: read-only
 
 This service never modifies an order, product, or inventory row. It reads:
@@ -56,7 +75,8 @@ outbound call (`role: "assistant"`) — see
 [src/ai_assistant/auth.py](src/ai_assistant/auth.py). Chat and Orders both
 had to be taught to accept that role on the specific endpoints this service
 calls (`GET /rooms/{id}/messages`, `POST /rooms/{id}/messages`,
-`PATCH /rooms/{id}/mode`, `GET /orders/admin`).
+`POST /rooms/{id}/messages/stream`, `PATCH /rooms/{id}/mode`,
+`GET /orders/admin`).
 
 ## Rate limiting
 
@@ -151,6 +171,14 @@ target regardless of the rebrand.
   admin creates it. Only products created *before* the POST-side event
   existed need [scripts/seed-embeddings.sh](../../scripts/seed-embeddings.sh)
   (a no-op PATCH per product) to backfill.
+- **FAQ / policy corpus has no event pipeline.** The shopping agent's
+  `search_help` tool retrieves from `help_chunks` (same `ai-db`, one row per
+  `##` section of [help/*.md](help/)), which is rebuilt only by running
+  [scripts/seed-help-docs.sh](../../scripts/seed-help-docs.sh)
+  (`python -m ai_assistant.seed_help`) — deliberately, since policies change
+  rarely. Edit the markdown, re-run the script; deterministic `uuid5` chunk
+  ids mean it upserts in place and drops removed sections. mcp-gateway
+  mirrors the table read-only, same pattern as `product_embeddings`.
 
 ## Local dev without Docker
 
