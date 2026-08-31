@@ -102,16 +102,22 @@ class OrdersToolsClient:
             )
         return {"items": enriched, "total": round(total, 2) if priced else None}
 
+    # Orders' admin router is mounted at "/admin", NOT "/orders/admin" (see
+    # services/orders/src/orders/routers/orders_admin.py's own comment) — the
+    # "/orders/*" prefix is the customer router. Hitting "/orders/admin"
+    # matches "/orders/{order_id}" with order_id="admin" and 422s on the
+    # UUID parse, which is what these three tools used to do before anything
+    # actually called them.
     async def get_order_status(self, token: str, order_id: str) -> dict:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.get(f"{self._base_url}/orders/admin/{order_id}", headers=self._headers(token))
+            resp = await client.get(f"{self._base_url}/admin/{order_id}", headers=self._headers(token))
         resp.raise_for_status()
         return resp.json()
 
     async def list_customer_orders(self, token: str, customer_id: str, limit: int = 5) -> list[dict]:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.get(
-                f"{self._base_url}/orders/admin",
+                f"{self._base_url}/admin",
                 params={"owner_id": customer_id},
                 headers=self._headers(token),
             )
@@ -120,12 +126,10 @@ class OrdersToolsClient:
 
     # Orders has no server-side filter for "stuck in Pending" -- this pulls
     # the full admin list and filters client-side, same trade-off as
-    # get_unavailable_items in tools/inventory.py. Fine for a thin,
-    # low-volume admin tool; would need a real query param on GET
-    # /orders/admin if this became a hot path.
+    # get_unavailable_items in tools/inventory.py.
     async def get_pending_orders(self, token: str, older_than_minutes: int = 60) -> list[dict]:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.get(f"{self._base_url}/orders/admin", headers=self._headers(token))
+            resp = await client.get(f"{self._base_url}/admin", headers=self._headers(token))
         resp.raise_for_status()
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
         return [

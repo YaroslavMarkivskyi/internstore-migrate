@@ -43,7 +43,7 @@ _GOUDA_ROW = SimpleNamespace(
 
 @respx.mock
 async def test_get_order_status_calls_admin_endpoint_with_internal_token():
-    route = respx.get(f"{BASE_URL}/orders/admin/order-1").mock(
+    route = respx.get(f"{BASE_URL}/admin/order-1").mock(
         return_value=httpx.Response(200, json={"id": "order-1", "status": "paid", "items": []})
     )
 
@@ -57,7 +57,7 @@ async def test_get_order_status_calls_admin_endpoint_with_internal_token():
 @respx.mock
 async def test_list_customer_orders_passes_owner_id_and_applies_limit():
     orders = [{"id": f"order-{i}", "status": "new", "created_at": "2026-08-01T00:00:00Z", "items": []} for i in range(10)]
-    route = respx.get(f"{BASE_URL}/orders/admin", params={"owner_id": "customer-1"}).mock(
+    route = respx.get(f"{BASE_URL}/admin", params={"owner_id": "customer-1"}).mock(
         return_value=httpx.Response(200, json=orders)
     )
 
@@ -108,7 +108,7 @@ async def test_get_pending_orders_filters_status_and_age():
     old_pending = {"id": "old", "status": "pending", "created_at": (now - timedelta(minutes=120)).isoformat()}
     recent_pending = {"id": "recent", "status": "pending", "created_at": (now - timedelta(minutes=5)).isoformat()}
     paid = {"id": "paid", "status": "paid", "created_at": (now - timedelta(minutes=120)).isoformat()}
-    respx.get(f"{BASE_URL}/orders/admin").mock(
+    respx.get(f"{BASE_URL}/admin").mock(
         return_value=httpx.Response(200, json=[old_pending, recent_pending, paid])
     )
 
