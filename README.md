@@ -13,7 +13,7 @@ uv run scripts/seed-firebase-users.py
 
 This starts the Firebase Auth emulator (`:9099`, local-dev-only — see
 [firebase/README.md](firebase/README.md)), Redis (`:6379`), auth-backend
-(`:3000`, also reachable through nginx), the domain services (Catalog,
+(`:3001` on the host → `:3000` in the container, also reachable through nginx), the domain services (Catalog,
 Inventory, Orders, Telemetry, Security, Chat — each reachable only through
 nginx, e.g. Catalog at `/api/catalog/*`) and their own Postgres DBs, and
 nginx (`:8082` plain → redirects to `:8443` TLS; `:8082` because `:8080` is

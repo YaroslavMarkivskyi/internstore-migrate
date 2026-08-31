@@ -8,6 +8,7 @@ jest.mock('@layouts/CustomerLayout/components/Navbar', () => () => (
 jest.mock('@layouts/CustomerLayout/components/Footer', () => () => (
   <div>Mocked Footer</div>
 ));
+jest.mock('@components/ChatWidget', () => () => <div>Mocked ChatWidget</div>);
 
 describe('CustomerLayout', () => {
   it('renders layout with nested route content and mocks Navbar/Footer', () => {

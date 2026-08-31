@@ -95,7 +95,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # STR-146: this service's first actual MCP Gateway caller, and its first
     # caller of auth-backend's refresh path — both only ever exercised by
     # POST /agent/shopping below.
-    app.state.mcp_client = MCPGatewayClient(settings.mcp_gateway_url, 10.0)
+    # 30s, not 10s: a search_products call makes the Gateway do a Gemini
+    # embedding round-trip, and the first one after a cold start (ADC token
+    # fetch + Vertex cold path) can take ~11s — well past a 10s timeout,
+    # whose httpx.ReadTimeout surfaces to the model as an empty-string error.
+    app.state.mcp_client = MCPGatewayClient(settings.mcp_gateway_url, 30.0)
     app.state.auth_backend_client = AuthBackendClient(settings.auth_backend_url, 10.0)
 
     @app.get("/health")

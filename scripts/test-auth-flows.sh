@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exercises AUTH-02, AUTH-03, AUTH-04, AUTH-05 against a running docker-compose
-# stack (Firebase Auth emulator on :9099, Gateway on :3000), for both the
+# stack (Firebase Auth emulator on :9099, Gateway on :3001), for both the
 # customer and admin seed users from scripts/seed-firebase-users.py.
 #
 # AUTH-01 (self-registration) is a browser form flow, not scripted here --
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
-GATEWAY_URL="http://localhost:3000"
+GATEWAY_URL="http://localhost:3001"
 
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }

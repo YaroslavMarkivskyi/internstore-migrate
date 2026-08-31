@@ -1,5 +1,7 @@
 import { Outlet } from 'react-router-dom';
 
+import ChatWidget from '@components/ChatWidget';
+
 import {
   ContentWrapper,
   LayoutContainer,
@@ -25,6 +27,7 @@ const CustomerLayout = () => {
           </PageContentContainer>
           <Footer />
         </MainContentContainer>
+        <ChatWidget />
       </LayoutContainer>
     </CartProvider>
   );

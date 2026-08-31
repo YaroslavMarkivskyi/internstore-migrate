@@ -36,7 +36,7 @@ set -euo pipefail
 
 FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
 GATEWAY_URL="https://localhost:8443"
-AUTH_BACKEND_URL="http://localhost:3000"
+AUTH_BACKEND_URL="http://localhost:3001"
 CURL="curl -sk"
 
 pass() { echo "PASS: $1"; }

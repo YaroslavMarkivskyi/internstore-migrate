@@ -50,8 +50,11 @@ services:
       REDIS_URL: redis://redis:6379
     ports:
       # Exposed directly too, for testing /me and /auth/verify without
-      # going through nginx (see scripts/test-auth-flows.sh).
-      - "3000:3000"
+      # going through nginx (see scripts/test-auth-flows.sh). Host port is
+      # :3001 (not :3000) because :3000 is a common local conflict
+      # (Grafana etc.); the container still listens on :3000, so nginx's
+      # `auth-backend:3000` upstream is unchanged.
+      - "3001:3000"
     volumes:
       # Live bind mount so source edits take effect via uvicorn --reload
       # without a `docker compose build`/`up` cycle. Only `src` is mounted
@@ -1090,6 +1093,14 @@ services:
       # README's "Dev gaps" (same class of trade-off as the old
       # OPENAI_API_KEY requirement — no local LLM fallback either way).
       GCP_PROJECT: ${GCP_PROJECT:-internstore-dev}
+      # Local dev: authenticate to Vertex with the host's Application
+      # Default Credentials (gcloud auth application-default login), mounted
+      # read-only below. In GKE this is Workload Identity instead and this
+      # var/mount is absent.
+      GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
+      # gemini-3-flash (config.py default) is not a real Vertex model id;
+      # override to a current one. Same ${VAR:-} root-.env passthrough.
+      CHAT_MODEL: ${CHAT_MODEL:-gemini-2.5-flash}
       AI_MODE_DEFAULT: ai
       AI_RATE_LIMIT: "10"
       # STR-146: the shopping ReAct loop's tool calls all go through here
@@ -1104,6 +1115,8 @@ services:
       - ./services/ai-assistant/src:/app/src
       - ./services/ai-assistant/migrations:/app/migrations
       - ./services/ai-assistant/alembic.ini:/app/alembic.ini
+      # Host ADC for Vertex auth (local dev only) — see GOOGLE_APPLICATION_CREDENTIALS above.
+      - ${HOME}/.config/gcloud:/gcloud:ro
     depends_on:
       ai-db:
         condition: service_healthy
@@ -1144,9 +1157,14 @@ services:
       # Identity auth, same local-dev ADC requirement, must match
       # ai-assistant's GCP_PROJECT (both embed into the same pgvector index).
       GCP_PROJECT: ${GCP_PROJECT:-internstore-dev}
+      # Local dev: Vertex auth via the host's ADC, mounted read-only below
+      # (Workload Identity in GKE instead). Must be the same project as
+      # ai-assistant.
+      GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
     volumes:
       # Live bind mount, see auth-backend's for why only this subpath.
       - ./services/mcp-gateway/src:/app/src
+      - ${HOME}/.config/gcloud:/gcloud:ro
     depends_on:
       ai-db:
         condition: service_healthy

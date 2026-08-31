@@ -29,7 +29,7 @@
 set -euo pipefail
 
 FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
-AUTH_BACKEND_URL="http://localhost:3000"
+AUTH_BACKEND_URL="http://localhost:3001"
 MAILPIT_URL="http://localhost:8025"
 FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"

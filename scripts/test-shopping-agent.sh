@@ -23,7 +23,7 @@
 set -euo pipefail
 
 FIREBASE_AUTH_EMULATOR_URL="http://localhost:9099"
-AUTH_BACKEND_URL="http://localhost:3000"
+AUTH_BACKEND_URL="http://localhost:3001"
 GATEWAY_URL="https://localhost:8443/api"
 FIREBASE_PROJECT_ID="internstore-dev"
 CURL="curl -sk"
