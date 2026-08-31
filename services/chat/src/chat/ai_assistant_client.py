@@ -20,11 +20,20 @@ class AIAssistantClient:
         self._timeout = timeout_seconds
 
     async def notify_shopping_agent(
-        self, *, room_id: str, sender_id: str, message: str, token: str, viewing_product_id: str | None = None
+        self,
+        *,
+        room_id: str,
+        sender_id: str,
+        message: str,
+        token: str,
+        viewing_product_id: str | None = None,
+        viewing_category_id: str | None = None,
     ) -> None:
         body: dict[str, str] = {"room_id": room_id, "sender_id": sender_id, "message": message}
         if viewing_product_id:
             body["viewing_product_id"] = viewing_product_id
+        if viewing_category_id:
+            body["viewing_category_id"] = viewing_category_id
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(

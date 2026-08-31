@@ -69,11 +69,21 @@ tell the customer to review their cart and check out themselves; for changes \
 to an existing order, tell them to contact support.
 Always call get_cart before add_to_cart or remove_from_cart, so you know \
 what is already there.
-add_to_cart and remove_from_cart return the FULL updated cart. When you \
-report the result, take every quantity, line, and total STRICTLY from that \
-returned cart — never from your own assumption about what the cart held \
-before, and never do arithmetic in your head. If the returned cart shows \
-one unit of an item, say one, even if you expected more.
+add_to_cart and remove_from_cart return the FULL updated cart — \
+{items: [{product_id, name, quantity, unit_price, line_total}], total}. \
+When you report the result, take every name, quantity, line total and the \
+cart total STRICTLY from that returned object — never from your own \
+assumption about what the cart held before, and never do arithmetic in \
+your head. If the returned cart shows one unit of an item, say one, even \
+if you expected more. Quote the cart total whenever you have just changed \
+the cart.
+If the customer asks to reorder ("the same as last time", "reorder my last \
+order"), call get_my_orders, then add_to_cart for each line of that order \
+with its quantity, and confirm from the returned cart.
+If the customer asks you to put together a selection within a budget \
+("a cheese board for four under $40"), use search_products (with a \
+price_max filter when it helps), pick items whose combined price fits, add \
+them, and confirm the cart total the tool returns is within budget.
 If a product the customer wants isn't available, or they ask for something \
 "like" a product or for alternatives, call get_similar_products with that \
 product's id and offer the closest matches.
@@ -91,9 +101,8 @@ search_help and answer only from what it returns — don't guess a policy. If \
 search_help returns nothing relevant, say you're not sure and point the \
 customer to support.
 When you add or remove a cart item, say so plainly in your reply — the new \
-quantity of that item as shown in the cart the tool returned (and a total \
-only if the tool actually gave you one) — so the customer doesn't have to \
-open the cart UI to check.
+quantity of that item and the cart total, both as shown in the cart the \
+tool returned — so the customer doesn't have to open the cart UI to check.
 Whenever you mention a specific product from a tool result, write its name \
 as a Markdown link to its page: [<name>](/products/<product_id>) — the \
 36-character UUID from that same result, nothing else. Link each product \
@@ -139,19 +148,22 @@ def _sender_role_to_map(sender_type: str) -> str:
 
 
 def _build_contents(
-    *, message: str, viewing_product_id: str | None, history: list[dict] | None
+    *,
+    message: str,
+    viewing_product_id: str | None,
+    viewing_category_id: str | None,
+    history: list[dict] | None,
 ) -> list[types.Content]:
     contents: list[types.Content] = [
         types.Content(role=_sender_role_to_map(entry["sender_type"]), parts=[types.Part(text=entry["content"])])
         for entry in (history or [])
         if entry.get("content")
     ]
-    # STR-XXX: if the customer had a product page open, tell the model
-    # which product "this"/"it" refers to — as a separate turn so it reads
-    # as context, not as something the customer typed. viewing_product_id
-    # is a Chat-validated UUID (see chat/ws/room.py); still, the model must
-    # confirm it via get_product before quoting details, since a stale tab
-    # could point at a deleted product.
+    # If the customer had a page open, tell the model what "this" / "here"
+    # refers to — as a separate turn so it reads as context, not as
+    # something the customer typed. Both ids are Chat-validated UUIDs (see
+    # chat/ws/room.py); the model must still confirm current details via a
+    # tool, since a stale tab could point at something deleted.
     if viewing_product_id:
         contents.append(
             types.Content(
@@ -163,6 +175,23 @@ def _build_contents(
                             f"{viewing_product_id}. If they say 'this', 'it', or 'this product' "
                             f"without naming one, they mean that product. Call get_product to "
                             f"confirm its current details before quoting them.)"
+                        )
+                    )
+                ],
+            )
+        )
+    elif viewing_category_id:
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        text=(
+                            f"(Context: the customer is browsing the category page for category_id "
+                            f"{viewing_category_id}. If they say 'here', 'this category', or ask "
+                            f"for 'more like these' without naming a category, they mean that one. "
+                            f"Call list_categories to get its name, then search_products with that "
+                            f"name as the category filter.)"
                         )
                     )
                 ],
@@ -202,6 +231,7 @@ async def run_shopping_agent_stream(
     chat_model: str,
     message: str,
     viewing_product_id: str | None = None,
+    viewing_category_id: str | None = None,
     token: RefreshableToken,
     history: list[dict] | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -222,7 +252,12 @@ async def run_shopping_agent_stream(
     the product-page context turn below."""
     tool_specs = await mcp_client.list_tools(token.value)
     tools = _to_genai_tools(tool_specs)
-    contents = _build_contents(message=message, viewing_product_id=viewing_product_id, history=history)
+    contents = _build_contents(
+        message=message,
+        viewing_product_id=viewing_product_id,
+        viewing_category_id=viewing_category_id,
+        history=history,
+    )
     config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, tools=tools)
 
     for _ in range(max_iterations):
@@ -282,6 +317,7 @@ async def run_shopping_agent(
     chat_model: str,
     message: str,
     viewing_product_id: str | None = None,
+    viewing_category_id: str | None = None,
     token: RefreshableToken,
     history: list[dict] | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -297,6 +333,7 @@ async def run_shopping_agent(
         chat_model=chat_model,
         message=message,
         viewing_product_id=viewing_product_id,
+        viewing_category_id=viewing_category_id,
         token=token,
         history=history,
         max_iterations=max_iterations,

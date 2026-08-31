@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -12,6 +13,32 @@ PRODUCT_ID = "11111111-1111-1111-1111-111111111111"
 
 def _client() -> OrdersToolsClient:
     return OrdersToolsClient(BASE_URL, timeout_seconds=5.0)
+
+
+class _FakeSession:
+    """Stands in for an AsyncSession over the mirrored product_embeddings
+    table — yields the given rows from execute()."""
+
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    async def __aenter__(self) -> "_FakeSession":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+    async def execute(self, _stmt: object) -> object:
+        return iter(self._rows)
+
+
+def _priced_client(rows: list) -> OrdersToolsClient:
+    return OrdersToolsClient(BASE_URL, timeout_seconds=5.0, session_factory=lambda: _FakeSession(rows))
+
+
+_GOUDA_ROW = SimpleNamespace(
+    product_id=PRODUCT_ID, name="Aged Gouda", price=12.5
+)
 
 
 @respx.mock
@@ -99,42 +126,77 @@ async def test_get_pending_orders_filters_status_and_age():
 
 
 @respx.mock
-async def test_get_cart_forwards_caller_token():
+async def test_get_cart_forwards_caller_token_and_enriches_with_prices():
     route = respx.get(f"{BASE_URL}/cart").mock(
-        return_value=httpx.Response(200, json={"items": [{"product_id": "prod-1", "quantity": 2}]})
+        return_value=httpx.Response(200, json={"items": [{"product_id": PRODUCT_ID, "quantity": 2}]})
+    )
+
+    result = await _priced_client([_GOUDA_ROW]).get_cart("customer-alices-token")
+
+    assert route.called
+    assert route.calls.last.request.headers["x-internal-token"] == "customer-alices-token"
+    assert result == {
+        "items": [
+            {
+                "product_id": PRODUCT_ID,
+                "name": "Aged Gouda",
+                "quantity": 2,
+                "unit_price": 12.5,
+                "line_total": 25.0,
+            }
+        ],
+        "total": 25.0,
+    }
+
+
+@respx.mock
+async def test_get_cart_without_a_session_factory_returns_quantities_but_no_prices():
+    respx.get(f"{BASE_URL}/cart").mock(
+        return_value=httpx.Response(200, json={"items": [{"product_id": PRODUCT_ID, "quantity": 2}]})
     )
 
     result = await _client().get_cart("customer-alices-token")
 
-    assert route.called
-    assert route.calls.last.request.headers["x-internal-token"] == "customer-alices-token"
-    assert result == {"items": [{"product_id": "prod-1", "quantity": 2}]}
+    assert result == {
+        "items": [
+            {
+                "product_id": PRODUCT_ID,
+                "name": None,
+                "quantity": 2,
+                "unit_price": None,
+                "line_total": None,
+            }
+        ],
+        "total": None,
+    }
 
 
 @respx.mock
-async def test_add_to_cart_forwards_caller_token_and_body():
+async def test_add_to_cart_forwards_caller_token_and_body_and_returns_the_enriched_cart():
     route = respx.post(f"{BASE_URL}/cart").mock(
         return_value=httpx.Response(201, json={"items": [{"product_id": PRODUCT_ID, "quantity": 2}]})
     )
 
-    result = await _client().add_to_cart("customer-alices-token", PRODUCT_ID, 2)
+    result = await _priced_client([_GOUDA_ROW]).add_to_cart("customer-alices-token", PRODUCT_ID, 2)
 
     assert route.called
     assert route.calls.last.request.headers["x-internal-token"] == "customer-alices-token"
     sent_body = route.calls.last.request.content
     assert PRODUCT_ID.encode() in sent_body and b'"quantity":2' in sent_body
-    assert result == {"items": [{"product_id": PRODUCT_ID, "quantity": 2}]}
+    assert result["total"] == 25.0
+    assert result["items"][0]["name"] == "Aged Gouda"
 
 
 @respx.mock
-async def test_remove_from_cart_forwards_caller_token():
-    route = respx.delete(f"{BASE_URL}/cart/items/{PRODUCT_ID}").mock(return_value=httpx.Response(204))
+async def test_remove_from_cart_forwards_caller_token_and_rereads_the_cart():
+    delete_route = respx.delete(f"{BASE_URL}/cart/items/{PRODUCT_ID}").mock(return_value=httpx.Response(204))
+    get_route = respx.get(f"{BASE_URL}/cart").mock(return_value=httpx.Response(200, json={"items": []}))
 
     result = await _client().remove_from_cart("customer-alices-token", PRODUCT_ID)
 
-    assert route.called
-    assert route.calls.last.request.headers["x-internal-token"] == "customer-alices-token"
-    assert result == {"removed_product_id": PRODUCT_ID}
+    assert delete_route.called and get_route.called
+    assert delete_route.calls.last.request.headers["x-internal-token"] == "customer-alices-token"
+    assert result == {"items": [], "total": None}
 
 
 # --- STR-148: found live — the shopping agent's LLM occasionally passes a

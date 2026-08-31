@@ -56,10 +56,12 @@ const ChatWidget: FC = () => {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
 
-  // The customer-facing product route (not /admin/products/preview/:id) —
-  // gives the agent an antecedent for "this product" / "it".
+  // The customer-facing product / category routes (not the /admin ones) —
+  // give the agent an antecedent for "this product" / "here".
   const productMatch = useMatch('/products/:id');
+  const categoryMatch = useMatch('/categories/:categoryId');
   const viewingProductId = productMatch?.params.id ?? null;
+  const viewingCategoryId = categoryMatch?.params.categoryId ?? null;
 
   const {
     messages,
@@ -68,7 +70,10 @@ const ChatWidget: FC = () => {
     streamingText,
     sendMessage,
     clearConversation,
-  } = useChatRoom(isCustomer && open, viewingProductId);
+  } = useChatRoom(isCustomer && open, {
+    productId: viewingProductId,
+    categoryId: viewingCategoryId,
+  });
 
   // The agent can mutate the cart server-side (add_to_cart / remove_from_cart)
   // — pull a fresh cart whenever it finishes a reply so the header badge and

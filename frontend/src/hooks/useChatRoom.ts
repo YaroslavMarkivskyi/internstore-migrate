@@ -24,15 +24,24 @@ interface OutgoingMessageFrame {
   type: 'message';
   content: string;
   viewing_product_id?: string;
+  viewing_category_id?: string;
+}
+
+export interface ViewingContext {
+  productId?: string | null;
+  categoryId?: string | null;
 }
 
 const buildMessageFrame = (
   text: string,
-  viewingProductId: string | null | undefined
+  viewing: ViewingContext
 ): OutgoingMessageFrame => {
   const frame: OutgoingMessageFrame = { type: 'message', content: text };
-  if (viewingProductId) {
-    frame.viewing_product_id = viewingProductId;
+  if (viewing.productId) {
+    frame.viewing_product_id = viewing.productId;
+  }
+  if (viewing.categoryId) {
+    frame.viewing_category_id = viewing.categoryId;
   }
   return frame;
 };
@@ -89,15 +98,15 @@ interface UseChatRoomResult {
 
 export const useChatRoom = (
   enabled: boolean,
-  viewingProductId?: string | null
+  viewing: ViewingContext = {}
 ): UseChatRoomResult => {
   const currentUser = useSelector(selectCurrentUser);
   const roomId = currentUser ? `room_${currentUser.user_id}` : null;
 
-  // Kept in a ref so a route change (different product page) doesn't churn
-  // the socket — it's only read at send time.
-  const viewingProductIdRef = useRef(viewingProductId);
-  viewingProductIdRef.current = viewingProductId;
+  // Kept in a ref so a route change (different product / category page)
+  // doesn't churn the socket — it's only read at send time.
+  const viewingRef = useRef(viewing);
+  viewingRef.current = viewing;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatConnectionStatus>('closed');
@@ -156,7 +165,7 @@ export const useChatRoom = (
 
     const sendRaw = (text: string) => {
       socketRef.current?.send(
-        JSON.stringify(buildMessageFrame(text, viewingProductIdRef.current))
+        JSON.stringify(buildMessageFrame(text, viewingRef.current))
       );
       markAssistantThinking();
     };
@@ -355,7 +364,7 @@ export const useChatRoom = (
       if (socket && fresh) {
         socket.send(
           JSON.stringify(
-            buildMessageFrame(trimmed, viewingProductIdRef.current)
+            buildMessageFrame(trimmed, viewingRef.current)
           )
         );
         markAssistantThinking();

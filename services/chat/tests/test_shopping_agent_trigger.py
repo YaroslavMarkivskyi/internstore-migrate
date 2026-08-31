@@ -48,6 +48,21 @@ def test_a_valid_viewing_product_id_is_forwarded_to_the_shopping_agent(app, ws_c
     assert kwargs["viewing_product_id"] == product_id
 
 
+def test_a_valid_viewing_category_id_is_forwarded_to_the_shopping_agent(app, ws_client, customer_token):
+    headers = {**customer_token, "x-internal-token": "caller-supplied-token"}
+    category_id = "11111111-2222-3333-4444-555555555555"
+    with connect(ws_client, ROOM_ID, headers) as ws:
+        ws.send_text(
+            json.dumps({"type": "message", "content": "what's here?", "viewing_category_id": category_id})
+        )
+        ws.receive_text()
+
+    time.sleep(0.05)
+
+    _, kwargs = app.state.ai_assistant_client.notify_shopping_agent.await_args
+    assert kwargs["viewing_category_id"] == category_id
+
+
 def test_a_non_uuid_viewing_product_id_is_dropped_not_forwarded(app, ws_client, customer_token):
     headers = {**customer_token, "x-internal-token": "caller-supplied-token"}
     with connect(ws_client, ROOM_ID, headers) as ws:

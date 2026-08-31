@@ -1,7 +1,14 @@
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from mcp_gateway.models import ProductEmbedding
+
+logger = logging.getLogger(__name__)
 
 
 def _require_uuid(product_id: str) -> None:
@@ -25,13 +32,75 @@ def _require_uuid(product_id: str) -> None:
 
 
 class OrdersToolsClient:
-    def __init__(self, base_url: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: float,
+        session_factory: async_sessionmaker | None = None,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
+        # Optional: the mirrored product_embeddings table (same AI_DB_URL as
+        # ProductSearchClient). Used only to enrich cart responses with
+        # names/prices/totals — see _enrich_cart. None in tests that only
+        # care about the HTTP proxying, in which case the cart is returned
+        # with quantities but no prices.
+        self._session_factory = session_factory
 
     @staticmethod
     def _headers(token: str) -> dict[str, str]:
         return {"X-Internal-Token": token}
+
+    async def _enrich_cart(self, cart: dict) -> dict:
+        """Orders stores only {product_id, quantity} per line (no price
+        snapshot — see services/orders/src/orders/routers/cart.py). The
+        shopping agent needs real names and a real total to report back
+        (it must not do the arithmetic itself), so join each line to the
+        mirrored product_embeddings row for name + current price and sum a
+        cart total here."""
+        items = cart.get("items") or []
+        product_ids: list[uuid.UUID] = []
+        for item in items:
+            try:
+                product_ids.append(uuid.UUID(str(item["product_id"])))
+            except (KeyError, ValueError, TypeError):
+                continue
+
+        catalog: dict[str, tuple[str | None, float | None]] = {}
+        if product_ids and self._session_factory is not None:
+            try:
+                async with self._session_factory() as session:
+                    rows = await session.execute(
+                        select(ProductEmbedding.product_id, ProductEmbedding.name, ProductEmbedding.price).where(
+                            ProductEmbedding.product_id.in_(product_ids)
+                        )
+                    )
+                    for row in rows:
+                        catalog[str(row.product_id)] = (row.name, row.price)
+            except Exception as exc:  # best-effort — the cart itself must still come back
+                logger.warning("Cart price enrichment failed, returning quantities only: %s", exc)
+
+        enriched: list[dict] = []
+        total = 0.0
+        priced = False
+        for item in items:
+            pid = str(item.get("product_id"))
+            quantity = item.get("quantity", 0)
+            name, unit_price = catalog.get(pid, (None, None))
+            line_total = round(unit_price * quantity, 2) if unit_price is not None else None
+            if line_total is not None:
+                total += line_total
+                priced = True
+            enriched.append(
+                {
+                    "product_id": pid,
+                    "name": name,
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "line_total": line_total,
+                }
+            )
+        return {"items": enriched, "total": round(total, 2) if priced else None}
 
     async def get_order_status(self, token: str, order_id: str) -> dict:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -75,7 +144,7 @@ class OrdersToolsClient:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.get(f"{self._base_url}/cart", headers=self._headers(token))
         resp.raise_for_status()
-        return resp.json()
+        return await self._enrich_cart(resp.json())
 
     # --- Customer-scoped order reads. Unlike get_order_status /
     # list_customer_orders above (which hit /admin and need an admin-or-
@@ -108,11 +177,15 @@ class OrdersToolsClient:
                 headers=self._headers(token),
             )
         resp.raise_for_status()
-        return resp.json()
+        return await self._enrich_cart(resp.json())
 
     async def remove_from_cart(self, token: str, product_id: str) -> dict:
         _require_uuid(product_id)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.delete(f"{self._base_url}/cart/items/{product_id}", headers=self._headers(token))
-        resp.raise_for_status()
-        return {"removed_product_id": product_id}
+            resp.raise_for_status()
+            # Orders' DELETE returns 204 with no body — re-read so the agent
+            # gets the updated cart (with the new total) to report from.
+            cart_resp = await client.get(f"{self._base_url}/cart", headers=self._headers(token))
+        cart_resp.raise_for_status()
+        return await self._enrich_cart(cart_resp.json())

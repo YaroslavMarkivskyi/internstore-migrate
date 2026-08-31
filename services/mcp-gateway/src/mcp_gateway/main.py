@@ -41,7 +41,7 @@ def build_clients(settings: Settings) -> GatewayClients:
     genai_client = genai.Client(enterprise=True, project=settings.gcp_project, location=settings.gcp_location)
 
     return GatewayClients(
-        orders=OrdersToolsClient(settings.orders_service_url, timeout),
+        orders=OrdersToolsClient(settings.orders_service_url, timeout, session_factory),
         inventory=InventoryToolsClient(settings.inventory_service_url, timeout),
         catalog=CatalogToolsClient(settings.catalog_service_url, timeout),
         product_search=ProductSearchClient(

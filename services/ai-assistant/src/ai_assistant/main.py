@@ -77,12 +77,13 @@ class ShoppingAgentRequest(BaseModel):
     room_id: str
     sender_id: str
     message: str
-    # STR-XXX: the product page the customer had open when they sent this,
-    # if any — lets the agent resolve "this" / "it" without the customer
-    # naming the product. A UUID string; Chat validates the shape before
-    # forwarding (see chat/ws/room.py), so a client can't smuggle prose
-    # into the prompt through this field.
+    # The product / category page the customer had open when they sent this,
+    # if any — lets the agent resolve "this" / "here" without them naming it.
+    # UUID strings; Chat validates the shape before forwarding (see
+    # chat/ws/room.py), so a client can't smuggle prose into the prompt
+    # through these fields.
     viewing_product_id: str | None = None
+    viewing_category_id: str | None = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -191,6 +192,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chat_model=settings.chat_model,
             message=payload.message,
             viewing_product_id=payload.viewing_product_id,
+            viewing_category_id=payload.viewing_category_id,
             token=RefreshableToken(token),
             history=history,
             max_iterations=settings.max_react_iterations,

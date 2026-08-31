@@ -187,6 +187,44 @@ async def test_viewing_product_id_is_added_as_a_context_turn_before_the_message(
     assert sent[1] == ("user", "what is this?")
 
 
+async def test_viewing_category_id_is_added_as_a_context_turn():
+    mcp_client, auth_backend_client, genai_client = _fake_deps()
+    _set_stream(genai_client, _chunk("Here's what's in that category."))
+
+    await _run(
+        genai_client,
+        mcp_client,
+        auth_backend_client,
+        message="what's here?",
+        viewing_category_id="11111111-2222-3333-4444-555555555555",
+    )
+
+    sent = [(c.role, c.parts[0].text) for c in _stream_calls(genai_client).call_args.kwargs["contents"]]
+    assert len(sent) == 2
+    assert "11111111-2222-3333-4444-555555555555" in sent[0][1]
+    assert "categor" in sent[0][1].lower()
+    assert sent[1] == ("user", "what's here?")
+
+
+async def test_product_context_wins_when_both_product_and_category_are_present():
+    mcp_client, auth_backend_client, genai_client = _fake_deps()
+    _set_stream(genai_client, _chunk("ok"))
+
+    await _run(
+        genai_client,
+        mcp_client,
+        auth_backend_client,
+        message="this one",
+        viewing_product_id="912f78a1-bf1f-4dea-a85b-6d4125588321",
+        viewing_category_id="11111111-2222-3333-4444-555555555555",
+    )
+
+    sent = [c.parts[0].text for c in _stream_calls(genai_client).call_args.kwargs["contents"]]
+    assert len(sent) == 2
+    assert "912f78a1-bf1f-4dea-a85b-6d4125588321" in sent[0]
+    assert "11111111-2222-3333-4444-555555555555" not in sent[0]
+
+
 async def test_no_context_turn_when_viewing_product_id_is_absent():
     mcp_client, auth_backend_client, genai_client = _fake_deps()
     _set_stream(genai_client, _chunk("done"))

@@ -73,12 +73,19 @@ TOOL_SPECS: list[ToolSpec] = [
     },
     {
         "name": "get_cart",
-        "description": "Get the caller's own current cart contents. Scoped to whoever's token was forwarded — there is no customer_id argument.",
+        "description": (
+            "Get the caller's own current cart. Scoped to whoever's token was forwarded — there is "
+            "no customer_id argument. Returns {items: [{product_id, name, quantity, unit_price, "
+            "line_total}], total}."
+        ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "add_to_cart",
-        "description": "Add a quantity of a product to the caller's own cart (accumulates if already present).",
+        "description": (
+            "Add a quantity of a product to the caller's own cart (accumulates if already present). "
+            "Returns the full updated cart in the same shape as get_cart, including the new total."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -90,7 +97,10 @@ TOOL_SPECS: list[ToolSpec] = [
     },
     {
         "name": "remove_from_cart",
-        "description": "Remove a product entirely from the caller's own cart.",
+        "description": (
+            "Remove a product entirely from the caller's own cart. Returns the full updated cart in "
+            "the same shape as get_cart, including the new total."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {"product_id": {"type": "string", "description": "Product UUID"}},

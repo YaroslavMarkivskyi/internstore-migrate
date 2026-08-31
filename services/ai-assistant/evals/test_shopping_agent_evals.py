@@ -150,3 +150,25 @@ async def test_no_match_is_reported_without_inventing_a_product(run_agent):
     assert_used(mcp, "search_products")
     assert_mentions_none(reply, ["gouda", "roquefort", "brie"])
     assert_mentions_any(reply, ["don't", "no ", "not ", "unable", "sorry"])
+
+
+async def test_reorder_pulls_the_last_order_and_re_adds_its_lines(run_agent):
+    reply, mcp = await run_agent("reorder my last order")
+    assert_used(mcp, "get_my_orders")
+    assert_used(mcp, "add_to_cart")
+    assert_product_id_args_are_uuids(mcp)
+    # The fixture's only past order is 2x Gouda.
+    added = add_to_cart_args(mcp)
+    assert any(a["product_id"] == GOUDA and a.get("quantity") == 2 for a in added)
+    assert_mentions_any(reply, ["gouda", "cart", "added"])
+
+
+async def test_budget_selection_stays_within_the_stated_limit(run_agent):
+    reply, mcp = await run_agent("put together a cheese board for four, keep it under $40")
+    assert_used(mcp, "search_products")
+    assert_used(mcp, "add_to_cart")
+    added = add_to_cart_args(mcp)
+    assert len(added) >= 2  # it's a selection, not one item
+    prices = {GOUDA: 12.5, ROQUEFORT: 18.9, BRIE: 9.99}
+    picked_total = sum(prices[a["product_id"]] * a.get("quantity", 1) for a in added)
+    assert picked_total <= 40.0, f"selection totals ${picked_total:.2f}, over the $40 budget"

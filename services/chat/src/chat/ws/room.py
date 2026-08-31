@@ -161,12 +161,13 @@ async def room_websocket(
                 continue
 
             content = data.get("content")
-            # The product page the customer had open when they sent this,
-            # if any (see frontend ChatWidget). Only forwarded to the
-            # shopping agent when it's a well-formed UUID — this value ends
-            # up in the model's prompt, so a client must not be able to put
-            # arbitrary prose there.
+            # The product / category page the customer had open when they
+            # sent this, if any (see frontend ChatWidget). Only forwarded to
+            # the shopping agent when well-formed UUIDs — these end up in the
+            # model's prompt, so a client must not be able to put arbitrary
+            # prose there.
             viewing_product_id = _valid_uuid_or_none(data.get("viewing_product_id"))
+            viewing_category_id = _valid_uuid_or_none(data.get("viewing_category_id"))
             # References an object this same caller already uploaded via
             # POST /rooms/{room_id}/attachments (see routers/attachments.py)
             # -- not a URL. Resolved to a fresh presigned attachment_url
@@ -242,6 +243,8 @@ async def room_websocket(
                 }
                 if viewing_product_id is not None:
                     notify_kwargs["viewing_product_id"] = viewing_product_id
+                if viewing_category_id is not None:
+                    notify_kwargs["viewing_category_id"] = viewing_category_id
                 asyncio.create_task(
                     _notify_shopping_agent_traced(app.state.ai_assistant_client, **notify_kwargs)
                 )
