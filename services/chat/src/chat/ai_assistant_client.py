@@ -34,17 +34,25 @@ class AIAssistantClient:
             body["viewing_product_id"] = viewing_product_id
         if viewing_category_id:
             body["viewing_category_id"] = viewing_category_id
+        await self._post_agent("/agent/shopping", body, token, room_id, "Shopping agent")
+
+    async def notify_admin_agent(self, *, room_id: str, sender_id: str, message: str, token: str) -> None:
+        """Ops assistant — see ai-assistant's POST /agent/admin. Same
+        forward-the-caller's-token, best-effort contract as
+        notify_shopping_agent."""
+        body = {"room_id": room_id, "sender_id": sender_id, "message": message}
+        await self._post_agent("/agent/admin", body, token, room_id, "Ops assistant")
+
+    async def _post_agent(self, path: str, body: dict, token: str, room_id: str, label: str) -> None:
+        # Best-effort: a failed call here must not take down the caller's
+        # own WS message send, which has already succeeded by the time this
+        # runs (see ws/room.py) — same trade-off as notification delivery
+        # elsewhere in this service.
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(
-                    f"{self._base_url}/agent/shopping",
-                    json=body,
-                    headers={"X-Internal-Token": token},
+                    f"{self._base_url}{path}", json=body, headers={"X-Internal-Token": token}
                 )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            # Best-effort: a failed call here shouldn't take down the
-            # customer's own WS message send, which has already succeeded
-            # by the time this runs (see ws/room.py) — same trade-off as
-            # notification delivery elsewhere in this service.
-            logger.warning("Shopping agent call failed for room %s: %s", room_id, exc)
+            logger.warning("%s call failed for room %s: %s", label, room_id, exc)

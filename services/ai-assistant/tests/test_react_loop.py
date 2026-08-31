@@ -6,11 +6,14 @@ from tests.gemini_fakes import set_stream as _set_stream
 from tests.gemini_fakes import turn as _turn
 
 from ai_assistant.react_loop import (
+    ADMIN_SYSTEM_PROMPT,
+    ADMIN_TOOL_NAMES,
     FALLBACK_REPLY,
     SHOPPING_TOOL_NAMES,
     SYSTEM_PROMPT,
     Delta,
     Reset,
+    run_admin_agent_stream,
     run_shopping_agent,
     run_shopping_agent_stream,
 )
@@ -355,3 +358,57 @@ async def test_wrapper_drops_streamed_text_before_a_reset():
     reply = await _run(genai_client, mcp_client, auth_backend_client, message="what's in my cart?")
 
     assert reply == "Your cart is empty."
+
+
+async def _collect(agen) -> list:
+    return [e async for e in agen]
+
+
+async def test_admin_agent_offers_only_read_only_tools_no_cart():
+    mcp_client, auth_backend_client, genai_client = _fake_deps()
+    _set_stream(genai_client, _chunk("No orders are stuck in pending."))
+
+    await _collect(
+        run_admin_agent_stream(
+            genai_client=genai_client,
+            mcp_client=mcp_client,
+            auth_backend_client=auth_backend_client,
+            chat_model="gemini-2.5-flash",
+            message="any orders stuck in pending?",
+            token=RefreshableToken(_no_exp_token()),
+        )
+    )
+
+    cfg = _stream_calls(genai_client).call_args.kwargs["config"]
+    assert cfg.system_instruction == ADMIN_SYSTEM_PROMPT
+    offered = {d.name for t in cfg.tools for d in t.function_declarations}
+    assert offered <= set(ADMIN_TOOL_NAMES)
+    for forbidden in ("add_to_cart", "remove_from_cart", "get_cart"):
+        assert forbidden not in offered
+    # get_visit_log is admin-only and IS in the ops set (it's not in SHOPPING_TOOL_NAMES).
+    assert "get_visit_log" in offered
+
+
+async def test_admin_agent_runs_tools_and_streams_the_answer():
+    mcp_client, auth_backend_client, genai_client = _fake_deps()
+    mcp_client.call_tool = AsyncMock(return_value=[{"id": "o-1", "status": "pending"}])
+    _set_stream(
+        genai_client,
+        _chunk(None, function_calls=[_function_call("get_pending_orders", {})]),
+        _chunk("One order is stuck in pending: o-1."),
+    )
+
+    events = await _collect(
+        run_admin_agent_stream(
+            genai_client=genai_client,
+            mcp_client=mcp_client,
+            auth_backend_client=auth_backend_client,
+            chat_model="gemini-2.5-flash",
+            message="anything stuck?",
+            token=RefreshableToken(_no_exp_token()),
+        )
+    )
+
+    mcp_client.call_tool.assert_awaited_once()
+    assert mcp_client.call_tool.call_args.args[1] == "get_pending_orders"
+    assert "".join(e.text for e in events if isinstance(e, Delta)) == "One order is stuck in pending: o-1."

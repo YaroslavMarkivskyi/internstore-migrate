@@ -98,10 +98,15 @@ interface UseChatRoomResult {
 
 export const useChatRoom = (
   enabled: boolean,
-  viewing: ViewingContext = {}
+  viewing: ViewingContext = {},
+  // Defaults to the caller's own customer room; the ops assistant passes
+  // `room_ops_<sub>` instead (see OpsAssistant).
+  roomIdOverride?: string | null
 ): UseChatRoomResult => {
   const currentUser = useSelector(selectCurrentUser);
-  const roomId = currentUser ? `room_${currentUser.user_id}` : null;
+  const roomId =
+    roomIdOverride ??
+    (currentUser ? `room_${currentUser.user_id}` : null);
 
   // Kept in a ref so a route change (different product / category page)
   // doesn't churn the socket — it's only read at send time.

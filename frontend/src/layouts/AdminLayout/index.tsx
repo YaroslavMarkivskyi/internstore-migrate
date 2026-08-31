@@ -1,5 +1,7 @@
 import { Outlet } from 'react-router-dom';
 
+import OpsAssistant from '@components/OpsAssistant';
+
 import {
   ContentWrapper,
   LayoutContainer,
@@ -22,6 +24,7 @@ const AdminLayout = () => {
           </ContentWrapper>
         </PageContentContainer>
       </MainContentContainer>
+      <OpsAssistant />
     </LayoutContainer>
   );
 };

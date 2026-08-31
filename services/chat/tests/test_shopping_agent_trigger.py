@@ -97,3 +97,28 @@ def test_admin_message_never_notifies_the_shopping_agent(app, ws_client, admin_t
     time.sleep(0.05)
 
     app.state.ai_assistant_client.notify_shopping_agent.assert_not_awaited()
+
+
+def test_admin_in_their_ops_room_notifies_the_ops_assistant(app, ws_client, admin_token):
+    headers = {**admin_token, "x-internal-token": "admin-caller-token"}
+    with connect(ws_client, "room_ops_admin-1", headers) as ws:
+        ws.send_text(json.dumps({"type": "message", "content": "any orders stuck in pending?"}))
+        ws.receive_text()
+
+    time.sleep(0.05)
+
+    app.state.ai_assistant_client.notify_admin_agent.assert_awaited_once()
+    _, kwargs = app.state.ai_assistant_client.notify_admin_agent.await_args
+    assert kwargs["room_id"] == "room_ops_admin-1"
+    assert kwargs["token"] == "admin-caller-token"
+    app.state.ai_assistant_client.notify_shopping_agent.assert_not_awaited()
+
+
+def test_admin_in_a_customer_support_room_does_not_trigger_the_ops_assistant(app, ws_client, admin_token):
+    with connect(ws_client, ROOM_ID, admin_token) as ws:
+        ws.send_text(json.dumps({"type": "message", "content": "how can I help?"}))
+        ws.receive_text()
+
+    time.sleep(0.05)
+
+    app.state.ai_assistant_client.notify_admin_agent.assert_not_awaited()

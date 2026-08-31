@@ -21,7 +21,7 @@ from ai_assistant.kafka import run_consumer_loop
 from ai_assistant.mcp_client import MCPGatewayClient
 from ai_assistant.observability import setup_observability
 from ai_assistant.orders_client import OrdersClient
-from ai_assistant.react_loop import Reset, run_shopping_agent_stream
+from ai_assistant.react_loop import Reset, run_admin_agent_stream, run_shopping_agent_stream
 
 # Batch streamed deltas up to roughly this many characters before pushing
 # one to Chat — Gemini streams word-by-word, and one HTTP round trip per
@@ -84,6 +84,39 @@ class ShoppingAgentRequest(BaseModel):
     # through these fields.
     viewing_product_id: str | None = None
     viewing_category_id: str | None = None
+
+
+class AdminAgentRequest(BaseModel):
+    room_id: str
+    sender_id: str
+    message: str
+
+
+async def _stream_agent_reply(chat_client, room_id: str, events) -> None:
+    """Drain a react_loop stream into Chat: batched `message_delta` frames,
+    a `message_reset` on Reset, one persisted `message_done` at the end."""
+    stream_id = str(uuid.uuid4())
+    full: list[str] = []
+    pending: list[str] = []
+
+    async def _flush() -> None:
+        if pending:
+            await chat_client.stream_delta(room_id, stream_id, "".join(pending))
+            pending.clear()
+
+    async for event in events:
+        if isinstance(event, Reset):
+            full.clear()
+            pending.clear()
+            await chat_client.stream_reset(room_id, stream_id)
+            continue
+        full.append(event.text)
+        pending.append(event.text)
+        if sum(len(part) for part in pending) >= _DELTA_FLUSH_CHARS:
+            await _flush()
+
+    await _flush()
+    await chat_client.stream_done(room_id, stream_id, "".join(full))
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -170,46 +203,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
         # STR-XXX: stream the reply to Chat (and on to the customer's
-        # WebSocket) as the model produces it, rather than posting one
-        # message after a multi-second silence. Deltas are batched (see
-        # _DELTA_FLUSH_CHARS); the full text is persisted once, on
-        # stream_done. A Reset means the model streamed a preamble then
-        # called a tool — drop what was sent so far.
-        chat_client = app.state.chat_client
-        stream_id = str(uuid.uuid4())
-        full: list[str] = []
-        pending: list[str] = []
+        # WebSocket) as the model produces it — see _stream_agent_reply.
+        await _stream_agent_reply(
+            app.state.chat_client,
+            payload.room_id,
+            run_shopping_agent_stream(
+                genai_client=app.state.genai_client,
+                mcp_client=app.state.mcp_client,
+                auth_backend_client=app.state.auth_backend_client,
+                chat_model=settings.chat_model,
+                message=payload.message,
+                viewing_product_id=payload.viewing_product_id,
+                viewing_category_id=payload.viewing_category_id,
+                token=RefreshableToken(token),
+                history=history,
+                max_iterations=settings.max_react_iterations,
+                refresh_margin_seconds=settings.token_refresh_margin_seconds,
+            ),
+        )
+        return {"status": "ok"}
 
-        async def _flush() -> None:
-            if pending:
-                await chat_client.stream_delta(payload.room_id, stream_id, "".join(pending))
-                pending.clear()
+    # STR-XXX: the internal ops assistant. Called by Chat (ws/room.py) only
+    # when an admin sends a message in their own ops room (room_ops_<sub>),
+    # forwarding the admin's own internal token. Read-only tools only (see
+    # react_loop.ADMIN_TOOL_NAMES); this handler independently rejects any
+    # non-admin token as a fail-closed second check.
+    @app.post("/agent/admin")
+    async def admin_agent(
+        payload: AdminAgentRequest,
+        token: Annotated[str, Depends(get_raw_internal_token)],
+    ) -> dict[str, str]:
+        try:
+            claims: InternalClaims = verify_internal_token(token, settings.internal_token_secret)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="Invalid internal token") from exc
 
-        async for event in run_shopping_agent_stream(
-            genai_client=app.state.genai_client,
-            mcp_client=app.state.mcp_client,
-            auth_backend_client=app.state.auth_backend_client,
-            chat_model=settings.chat_model,
-            message=payload.message,
-            viewing_product_id=payload.viewing_product_id,
-            viewing_category_id=payload.viewing_category_id,
-            token=RefreshableToken(token),
-            history=history,
-            max_iterations=settings.max_react_iterations,
-            refresh_margin_seconds=settings.token_refresh_margin_seconds,
-        ):
-            if isinstance(event, Reset):
-                full.clear()
-                pending.clear()
-                await chat_client.stream_reset(payload.room_id, stream_id)
-                continue
-            full.append(event.text)
-            pending.append(event.text)
-            if sum(len(part) for part in pending) >= _DELTA_FLUSH_CHARS:
-                await _flush()
+        if claims.role != "admin":
+            raise HTTPException(status_code=403, detail="Ops assistant is admin-only")
+        if claims.sub != payload.sender_id:
+            logger.warning("Ops assistant token/sender_id mismatch for room %s", payload.room_id)
+            raise HTTPException(status_code=401, detail="Token does not match sender_id")
 
-        await _flush()
-        await chat_client.stream_done(payload.room_id, stream_id, "".join(full))
+        history = await app.state.chat_client.get_recent_messages(
+            payload.room_id, settings.conversation_history_limit
+        )
+        await _stream_agent_reply(
+            app.state.chat_client,
+            payload.room_id,
+            run_admin_agent_stream(
+                genai_client=app.state.genai_client,
+                mcp_client=app.state.mcp_client,
+                auth_backend_client=app.state.auth_backend_client,
+                chat_model=settings.chat_model,
+                message=payload.message,
+                token=RefreshableToken(token),
+                history=history,
+                max_iterations=settings.max_react_iterations,
+                refresh_margin_seconds=settings.token_refresh_margin_seconds,
+            ),
+        )
         return {"status": "ok"}
 
     return app

@@ -116,13 +116,57 @@ sentence). If the customer's language is unclear, use English. Product \
 names stay as they are.
 Always be concise and professional."""
 
+# STR-XXX: the internal ops assistant — a SECOND agent, admin-only, that
+# reads across the platform (orders stuck in pending, low stock,
+# temperature incidents, support-room summaries, warehouse access logs) so
+# an operator can ask questions in plain language. Strictly read-only: no
+# cart tools, no order mutation, nothing that writes. The `admin` /
+# `admin_or_assistant` tier tools it uses would 403 for a customer token
+# anyway — this list is the same belt-and-braces filter as SHOPPING_TOOL_NAMES.
+ADMIN_TOOL_NAMES = (
+    "search_products",
+    "get_product",
+    "list_categories",
+    "get_order_status",
+    "list_customer_orders",
+    "get_pending_orders",
+    "check_availability",
+    "get_stock_levels",
+    "get_unavailable_items",
+    "get_store_temperature",
+    "get_temperature_readings",
+    "get_active_incidents",
+    "get_room_summary",
+    "list_active_rooms",
+    "get_active_users",
+    "get_visit_log",
+)
+
+ADMIN_SYSTEM_PROMPT = """\
+You are InternStore's internal operations assistant, used by staff only. \
+You answer questions about the state of the platform — orders stuck in \
+pending, stock levels and unavailable items, temperature incidents and \
+readings, open support conversations, and warehouse access logs — by \
+calling the read-only tools available to you.
+You are STRICTLY read-only: you never modify an order, product, cart, \
+inventory row, or anything else. If asked to change something, say you \
+can't and that the operator must do it in the relevant admin screen.
+Base every answer on what the tools return. Never invent an order id, \
+product, quantity, or incident. If a tool returns nothing, say so plainly. \
+UUID arguments must be copied verbatim from a previous tool result.
+Reply in plain sentences, concise and factual. A short bulleted list is \
+fine here (unlike the customer assistant) when you're enumerating several \
+orders, stores, or incidents. Reply in the same language the operator used \
+(English or Ukrainian), never mixing the two."""
+
 DEFAULT_MAX_ITERATIONS = 5
 DEFAULT_REFRESH_MARGIN_SECONDS = 15
 
 FALLBACK_REPLY = "I wasn't able to finish that — please check your cart directly, or try rephrasing your request."
+ADMIN_FALLBACK_REPLY = "I couldn't finish that — try narrowing the question, or check the admin screens directly."
 
 
-def _to_genai_tools(tool_specs: list[dict]) -> list[types.Tool]:
+def _to_genai_tools(tool_specs: list[dict], allowed_names: tuple[str, ...]) -> list[types.Tool]:
     # STR-161b: a single Tool bundling every allowed FunctionDeclaration —
     # Gemini's request shape, vs. OpenAI's one {"type": "function", ...}
     # entry per tool. parameters_json_schema takes the Gateway's own raw
@@ -134,7 +178,7 @@ def _to_genai_tools(tool_specs: list[dict]) -> list[types.Tool]:
                     name=spec["name"], description=spec["description"], parameters_json_schema=spec["input_schema"]
                 )
                 for spec in tool_specs
-                if spec["name"] in SHOPPING_TOOL_NAMES
+                if spec["name"] in allowed_names
             ]
         )
     ]
@@ -209,7 +253,7 @@ async def _run_tool_calls(
         try:
             result = await mcp_client.call_tool(token.value, call.name, dict(call.args or {}))
             function_response = {"result": result}
-            logger.info("Shopping agent tool call %s(%s) -> %s", call.name, dict(call.args or {}), result)
+            logger.info("Agent tool call %s(%s) -> %s", call.name, dict(call.args or {}), result)
         except Exception as exc:
             # Surfaced back to the model as a tool error (e.g. "product
             # not found", a 401 from a stale token the refresh above
@@ -217,7 +261,7 @@ async def _run_tool_calls(
             # registry has no entry for — see mcp_gateway/router.py) so it
             # can recover or apologize, rather than crashing the whole
             # request over one bad call.
-            logger.warning("Shopping agent tool call %s(%s) failed: %s", call.name, call.args, exc)
+            logger.warning("Agent tool call %s(%s) failed: %s", call.name, call.args, exc)
             function_response = {"error": str(exc)}
         response_parts.append(types.Part.from_function_response(name=call.name, response=function_response))
     return types.Content(role="tool", parts=response_parts)
@@ -251,14 +295,48 @@ async def run_shopping_agent_stream(
     loop — see STR-148 (history antecedents for "add it to my cart") and
     the product-page context turn below."""
     tool_specs = await mcp_client.list_tools(token.value)
-    tools = _to_genai_tools(tool_specs)
     contents = _build_contents(
         message=message,
         viewing_product_id=viewing_product_id,
         viewing_category_id=viewing_category_id,
         history=history,
     )
-    config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, tools=tools)
+    async for event in _agent_loop_stream(
+        genai_client=genai_client,
+        mcp_client=mcp_client,
+        auth_backend_client=auth_backend_client,
+        chat_model=chat_model,
+        contents=contents,
+        tools=_to_genai_tools(tool_specs, SHOPPING_TOOL_NAMES),
+        system_prompt=SYSTEM_PROMPT,
+        fallback_reply=FALLBACK_REPLY,
+        token=token,
+        max_iterations=max_iterations,
+        refresh_margin_seconds=refresh_margin_seconds,
+    ):
+        yield event
+
+
+async def _agent_loop_stream(
+    *,
+    genai_client: genai.Client,
+    mcp_client: MCPGatewayClient,
+    auth_backend_client: AuthBackendClient,
+    chat_model: str,
+    contents: list[types.Content],
+    tools: list[types.Tool],
+    system_prompt: str,
+    fallback_reply: str,
+    token: RefreshableToken,
+    max_iterations: int,
+    refresh_margin_seconds: int,
+) -> AsyncIterator[StreamEvent]:
+    """The provider-agnostic ReAct loop shared by the shopping and ops
+    agents: iterate generate_content_stream, run any tool calls, stream the
+    final answer's Deltas. The only things that differ per agent are the
+    `contents` (built by the caller), the `tools` allow-list, the
+    `system_prompt`, and the `fallback_reply`."""
+    config = types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
 
     for _ in range(max_iterations):
         await token.ensure_fresh(auth_backend_client, refresh_margin_seconds)
@@ -306,7 +384,42 @@ async def run_shopping_agent_stream(
 
         contents.append(await _run_tool_calls(mcp_client, token, function_calls))
 
-    yield Delta(text=FALLBACK_REPLY)
+    yield Delta(text=fallback_reply)
+
+
+async def run_admin_agent_stream(
+    *,
+    genai_client: genai.Client,
+    mcp_client: MCPGatewayClient,
+    auth_backend_client: AuthBackendClient,
+    chat_model: str,
+    message: str,
+    token: RefreshableToken,
+    history: list[dict] | None = None,
+    max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    refresh_margin_seconds: int = DEFAULT_REFRESH_MARGIN_SECONDS,
+) -> AsyncIterator[StreamEvent]:
+    """Streaming ops assistant (staff only) — same loop as the shopping
+    agent but over `ADMIN_TOOL_NAMES` (all read-only) and `ADMIN_SYSTEM_PROMPT`.
+    No cart tools, no viewing-context turns."""
+    tool_specs = await mcp_client.list_tools(token.value)
+    contents = _build_contents(
+        message=message, viewing_product_id=None, viewing_category_id=None, history=history
+    )
+    async for event in _agent_loop_stream(
+        genai_client=genai_client,
+        mcp_client=mcp_client,
+        auth_backend_client=auth_backend_client,
+        chat_model=chat_model,
+        contents=contents,
+        tools=_to_genai_tools(tool_specs, ADMIN_TOOL_NAMES),
+        system_prompt=ADMIN_SYSTEM_PROMPT,
+        fallback_reply=ADMIN_FALLBACK_REPLY,
+        token=token,
+        max_iterations=max_iterations,
+        refresh_margin_seconds=refresh_margin_seconds,
+    ):
+        yield event
 
 
 async def run_shopping_agent(

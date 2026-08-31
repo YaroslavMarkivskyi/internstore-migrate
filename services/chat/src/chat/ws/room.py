@@ -30,6 +30,14 @@ async def _notify_shopping_agent_traced(client, **kwargs) -> None:
         await client.notify_shopping_agent(**kwargs)
 
 
+async def _notify_admin_agent_traced(client, **kwargs) -> None:
+    """Ops-assistant counterpart of _notify_shopping_agent_traced — roots
+    the trace for an admin's ops-room message the same way (a WS frame gets
+    no ASGI span of its own)."""
+    with _tracer.start_as_current_span("chat.notify_admin_agent"):
+        await client.notify_admin_agent(**kwargs)
+
+
 def _room_owner_matches(role: str, room_id: str, sub: str) -> bool:
     return role == "admin" or room_id == f"room_{sub}"
 
@@ -247,6 +255,20 @@ async def room_websocket(
                     notify_kwargs["viewing_category_id"] = viewing_category_id
                 asyncio.create_task(
                     _notify_shopping_agent_traced(app.state.ai_assistant_client, **notify_kwargs)
+                )
+
+            # An admin in their own ops room (room_ops_<sub>) — not a customer
+            # support room — talks to the read-only ops assistant. Same
+            # fire-and-forget + token-forward pattern as the shopping agent.
+            if claims.role == "admin" and content and room_id == f"room_ops_{claims.sub}":
+                asyncio.create_task(
+                    _notify_admin_agent_traced(
+                        app.state.ai_assistant_client,
+                        room_id=room_id,
+                        sender_id=claims.sub,
+                        message=content,
+                        token=websocket.headers.get("x-internal-token", ""),
+                    )
                 )
 
             await pubsub.publish(

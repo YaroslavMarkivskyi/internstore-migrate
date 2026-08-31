@@ -19,6 +19,10 @@ class ChatClient:
                 params={"limit": limit},
                 headers=self._headers(),
             )
+        # A room with no messages yet (or not lazily created) 404s — that's
+        # just "no history", not an error the agent should choke on.
+        if resp.status_code == 404:
+            return []
         resp.raise_for_status()
         # Chat returns newest-first (see routers/rooms.py's
         # Message.created_at.desc()) — reverse to oldest-first for the
