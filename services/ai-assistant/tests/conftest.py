@@ -46,6 +46,7 @@ def app(settings: Settings):
     app.state.mcp_client = AsyncMock()
     app.state.auth_backend_client = AsyncMock()
     app.state.genai_client = AsyncMock()
+    app.state.memory_service = AsyncMock()
     return app
 
 

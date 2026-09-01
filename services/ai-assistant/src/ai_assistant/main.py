@@ -20,6 +20,7 @@ from ai_assistant.adk.agents import (
     build_shopping_agent,
     close_toolsets,
 )
+from ai_assistant.adk.memory import PgVectorMemoryService
 from ai_assistant.adk.prompts import ADMIN_FALLBACK_REPLY, FALLBACK_REPLY
 from ai_assistant.adk.session import prepare_session, viewing_context_note
 from ai_assistant.adk.streaming import Reset, run_agent_stream
@@ -175,8 +176,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         model=settings.chat_model, mcp_gateway_url=settings.mcp_gateway_url, header_provider=header_provider
     )
     app.state.adk_session_service = InMemorySessionService()
+    # Cross-session customer memory (durable prefs), pgvector-backed — the
+    # shopping agent's PreloadMemoryTool reads it each turn, and the endpoint
+    # feeds finished conversations back in. Ops agent gets no memory.
+    app.state.memory_service = PgVectorMemoryService(
+        app.state.session_factory,
+        app.state.genai_client,
+        chat_model=settings.chat_model,
+        embedding_model=settings.embedding_model,
+        embedding_dimensions=settings.embedding_dimensions,
+    )
     app.state.shopping_runner = Runner(
-        app_name=APP_NAME, agent=app.state.shopping_agent, session_service=app.state.adk_session_service
+        app_name=APP_NAME,
+        agent=app.state.shopping_agent,
+        session_service=app.state.adk_session_service,
+        memory_service=app.state.memory_service,
     )
     app.state.ops_runner = Runner(
         app_name=APP_NAME, agent=app.state.ops_agent, session_service=app.state.adk_session_service
@@ -267,6 +281,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         finally:
             reset_request_token(token_handle)
+
+        # Feed the finished conversation back into memory — best-effort, the
+        # reply has already been delivered. PgVectorMemoryService distils any
+        # durable customer facts and stores them for the next session.
+        updated = await app.state.adk_session_service.get_session(
+            app_name=APP_NAME, user_id=claims.sub, session_id=session.id
+        )
+        if updated is not None:
+            await app.state.memory_service.add_session_to_memory(updated)
         return {"status": "ok"}
 
     # STR-XXX: the internal ops assistant. Called by Chat (ws/room.py) only

@@ -60,6 +60,19 @@ async def test_customer_message_fetches_and_seeds_room_history(client, app, cust
     )
 
 
+async def test_finished_conversation_is_fed_back_into_memory(client, app, customer_token, monkeypatch):
+    monkeypatch.setattr("ai_assistant.main.run_agent_stream", fake_agent_stream("Done."))
+
+    resp = await client.post(
+        "/agent/shopping",
+        json={"room_id": ROOM_ID, "sender_id": "customer-1", "message": "I'm lactose intolerant, any hard cheese?"},
+        headers={"X-Internal-Token": customer_token},
+    )
+
+    assert resp.status_code == 200
+    app.state.memory_service.add_session_to_memory.assert_awaited_once()
+
+
 async def test_human_mode_room_skips_the_agent_entirely(client, app, customer_token, monkeypatch):
     fake = fake_agent_stream("should not run")
     monkeypatch.setattr("ai_assistant.main.run_agent_stream", fake)

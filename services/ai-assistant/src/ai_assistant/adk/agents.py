@@ -6,6 +6,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools.base_toolset import BaseToolset
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 from ai_assistant.adk.prompts import (
     ADMIN_INSTRUCTION,
@@ -33,19 +34,25 @@ def _gateway_toolset(
 
 
 def build_shopping_agent(
-    *, model: str, mcp_gateway_url: str, header_provider: HeaderProvider, extra_tools: tuple = ()
+    *,
+    model: str,
+    mcp_gateway_url: str,
+    header_provider: HeaderProvider,
+    with_memory: bool = True,
+    extra_tools: tuple = (),
 ) -> LlmAgent:
-    return LlmAgent(
-        name=SHOPPING_AGENT_NAME,
-        model=model,
-        instruction=SHOPPING_INSTRUCTION,
-        tools=[
-            _gateway_toolset(
-                mcp_url=mcp_gateway_url, tool_filter=SHOPPING_TOOL_NAMES, header_provider=header_provider
-            ),
-            *extra_tools,
-        ],
-    )
+    tools = [
+        _gateway_toolset(
+            mcp_url=mcp_gateway_url, tool_filter=SHOPPING_TOOL_NAMES, header_provider=header_provider
+        ),
+        *extra_tools,
+    ]
+    if with_memory:
+        # Runs on every turn (not model-invoked): pulls the customer's nearest
+        # stored facts and injects them into the prompt. Needs the Runner to
+        # have a memory_service — see main.py.
+        tools.append(PreloadMemoryTool())
+    return LlmAgent(name=SHOPPING_AGENT_NAME, model=model, instruction=SHOPPING_INSTRUCTION, tools=tools)
 
 
 def build_ops_agent(
