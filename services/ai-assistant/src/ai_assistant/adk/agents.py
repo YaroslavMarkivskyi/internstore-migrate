@@ -24,7 +24,7 @@ def _gateway_toolset(
     *, mcp_url: str, tool_filter: tuple[str, ...], header_provider: HeaderProvider
 ) -> McpToolset:
     return McpToolset(
-        connection_params=StreamableHTTPConnectionParams(url=mcp_url.rstrip("/") + "/mcp/stream"),
+        connection_params=StreamableHTTPConnectionParams(url=mcp_url.rstrip("/") + "/mcp"),
         tool_filter=list(tool_filter),
         header_provider=header_provider,
         # The gateway's tool set never changes at runtime; cache the list so a

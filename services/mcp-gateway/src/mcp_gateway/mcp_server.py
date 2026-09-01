@@ -1,11 +1,9 @@
-"""Real Model Context Protocol server for the Gateway (Phase 1).
+"""The Gateway's MCP protocol surface.
 
-A genuine MCP server — `mcp.server.lowlevel.Server` over the Streamable HTTP
-transport (JSON-RPC) — mounted at `POST /mcp/stream`, alongside the older
-homegrown REST facade (`/mcp/tools`, `/mcp/tools/call` in main.py). Phase 1
-changes no behaviour: tools, JSON Schemas (`schema.TOOL_SPECS`) and the
-execution path (`router.call_tool` over the same `build_tool_registry` dict)
-are exactly the ones the REST facade uses.
+A real MCP server — `mcp.server.lowlevel.Server` over the Streamable HTTP
+transport (JSON-RPC) — served at `/mcp`. Tools + JSON Schemas come from
+`schema.TOOL_SPECS`; execution goes through `router.call_tool` over the
+`build_tool_registry` dict.
 
 Pinned to `mcp` 1.x deliberately: the ai-assistant side consumes this through
 Google ADK's `McpToolset`, and ADK requires the 1.x client SDK. Keeping both
@@ -15,11 +13,11 @@ Auth: every request must carry a Gateway-minted `X-Internal-Token`, same as
 every other route on this internal-only service. The transport stashes the
 Starlette request on `server.request_context`, so the handler reads and
 verifies the header there and forwards the *raw* token downstream per tool
-call — identical trust model to main.py's `call_tool_endpoint`.
+call — so Orders' `owner_id == claims.sub` check resolves against the real
+caller (customer / guest / admin / the Assistant), not the Gateway.
 
-Phase 2 promotes this to `/mcp` and retires the REST facade + hand-maintained
-schema translation; Phase 3 adds the public OAuth door and moves tool-tier
-gating into the Gateway.
+Phase 3 (TODO) adds the public OAuth door and moves the tool-tier gating
+(currently `McpToolset(tool_filter=...)` on the agent side) into the Gateway.
 """
 
 import json
@@ -37,7 +35,7 @@ from mcp_gateway.schema import TOOL_SPECS
 
 logger = logging.getLogger(__name__)
 
-MCP_STREAM_PATH = "/mcp/stream"
+MCP_PATH = "/mcp"
 
 
 _TOOLS: list[mcp_types.Tool] = [
@@ -124,7 +122,7 @@ def build_streamable_http_asgi(
     registry: dict[str, ToolFunc], internal_token_secret: str
 ) -> tuple[StreamableHTTPSessionManager, _StreamableHTTPASGIApp]:
     """Return the session manager (its `.run()` must be entered in the host
-    app's lifespan) and the ASGI app to mount at `MCP_STREAM_PATH`.
+    app's lifespan) and the ASGI app to mount at `MCP_PATH`.
 
     `stateless=True`: mesh clients open a fresh connection per call and need no
     server-tracked session; `json_response=True`: one JSON reply per request."""

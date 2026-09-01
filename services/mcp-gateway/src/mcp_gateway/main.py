@@ -1,22 +1,16 @@
 import contextlib
-import json
 from collections.abc import AsyncIterator
-from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI
 from google import genai
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pydantic import BaseModel
 from starlette.routing import Route
 
-from mcp_gateway.auth import InternalClaims, get_internal_claims, get_raw_internal_token
 from mcp_gateway.config import Settings, load_settings
 from mcp_gateway.db import make_session_factory
-from mcp_gateway.mcp_server import MCP_STREAM_PATH, build_streamable_http_asgi
+from mcp_gateway.mcp_server import MCP_PATH, build_streamable_http_asgi
 from mcp_gateway.observability import setup_observability
-from mcp_gateway.router import GatewayClients, ToolNotFoundError, build_tool_registry, call_tool
-from mcp_gateway.schema import TOOL_SPECS
+from mcp_gateway.router import GatewayClients, build_tool_registry
 from mcp_gateway.tools.catalog import CatalogToolsClient, ProductSearchClient
 from mcp_gateway.tools.chat import ChatToolsClient
 from mcp_gateway.tools.help import HelpSearchClient
@@ -24,14 +18,6 @@ from mcp_gateway.tools.inventory import InventoryToolsClient
 from mcp_gateway.tools.orders import OrdersToolsClient
 from mcp_gateway.tools.security import SecurityToolsClient
 from mcp_gateway.tools.telemetry import TelemetryToolsClient
-
-SERVER_NAME = "internstore-mcp-gateway"
-SERVER_VERSION = "0.1.0"
-
-
-class ToolCallRequest(BaseModel):
-    name: str
-    arguments: dict[str, Any] = {}
 
 
 def build_clients(settings: Settings) -> GatewayClients:
@@ -66,9 +52,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     clients = build_clients(settings)
     tool_registry = build_tool_registry(clients)
 
-    # Real MCP protocol surface (Streamable HTTP transport, JSON-RPC) mounted
-    # at MCP_STREAM_PATH, alongside the homegrown REST facade below. Shares
-    # this exact registry object and the same schema catalog — see mcp_server.
+    # The MCP protocol surface: a real MCP server (Streamable HTTP transport,
+    # JSON-RPC) at MCP_PATH. This internal-only service has no nginx route
+    # (see docker-compose.yml) but the server still verifies the caller's
+    # X-Internal-Token per request — see mcp_server.
     mcp_manager, mcp_asgi = build_streamable_http_asgi(tool_registry, settings.internal_token_secret)
 
     @contextlib.asynccontextmanager
@@ -84,68 +71,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # A Route (not a Mount) with the ASGI app as endpoint — same shape the
     # mcp SDK's own streamable_http_app() uses; a Mount would 307-redirect
     # the bare path to a trailing slash, which MCP clients don't follow.
-    app.router.routes.append(Route(MCP_STREAM_PATH, endpoint=mcp_asgi))
+    app.router.routes.append(Route(MCP_PATH, endpoint=mcp_asgi))
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
-
-    # Every /mcp/* route requires an internal token, same as any other
-    # domain service — this is an internal-only service with no nginx
-    # route (see docker-compose.yml), but never trusts its network
-    # position alone.
-    @app.get("/mcp")
-    async def mcp_info(claims: Annotated[InternalClaims, Depends(get_internal_claims)]) -> dict[str, Any]:
-        return {
-            "name": SERVER_NAME,
-            "version": SERVER_VERSION,
-            "capabilities": {"tools": {"listChanged": False}},
-        }
-
-    @app.get("/mcp/tools")
-    async def list_tools(claims: Annotated[InternalClaims, Depends(get_internal_claims)]) -> dict[str, Any]:
-        return {"tools": TOOL_SPECS}
-
-    # STR-146: `claims` still proves the caller presented a validly-signed,
-    # unexpired internal token (get_internal_claims) — but the *value*
-    # forwarded downstream is the raw token itself (get_raw_internal_token),
-    # not a claims-derived re-mint. Every tool call now runs as whoever
-    # actually called this endpoint (customer, guest, admin, or the
-    # Assistant's own token), not as the Gateway's old fixed admin identity —
-    # that's what makes Orders' ownership check on add_to_cart/get_cart mean
-    # anything.
-    @app.post("/mcp/tools/call")
-    async def call_tool_endpoint(
-        payload: ToolCallRequest,
-        claims: Annotated[InternalClaims, Depends(get_internal_claims)],
-        token: Annotated[str, Depends(get_raw_internal_token)],
-    ) -> dict[str, Any]:
-        del claims  # validated by the Depends above; only the raw token is forwarded
-        try:
-            result = await call_tool(app.state.tool_registry, payload.name, payload.arguments, token)
-        except ToolNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except TypeError as exc:
-            raise HTTPException(status_code=422, detail=f"Invalid arguments for tool {payload.name!r}: {exc}") from exc
-        except ValueError as exc:
-            # STR-148: e.g. tools/orders.py's _require_uuid — a semantically
-            # invalid argument value (right type, wrong content), distinct
-            # from TypeError's "wrong shape entirely". Same 422 treatment,
-            # message passed through as-is so the caller (the shopping
-            # agent's ReAct loop) gets something actionable to retry with.
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return {"name": payload.name, "result": result}
-
-    # SSE handshake per the MCP spec's SSE transport: a single `endpoint`
-    # event telling the client where to POST tool calls, then the stream
-    # stays open for the caller to read from. Tool *results* still travel
-    # back over POST /mcp/tools/call's own response, not pushed down this
-    # channel — a full bidirectional SSE transport is out of scope here.
-    @app.get("/mcp/sse")
-    async def mcp_sse(claims: Annotated[InternalClaims, Depends(get_internal_claims)]) -> StreamingResponse:
-        async def event_stream() -> AsyncIterator[str]:
-            yield f"event: endpoint\ndata: {json.dumps({'url': '/mcp/tools/call'})}\n\n"
-
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     return app

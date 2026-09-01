@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 
 import jwt
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Header, HTTPException, Request
 from pydantic import BaseModel
 
 ISSUER = "internstore-gateway"
