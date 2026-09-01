@@ -1,11 +1,10 @@
 """Test double for the MCP Gateway used by the shopping-agent evals.
 shopping-agent evals.
 
-The evals run `run_shopping_agent` against a **real** Gemini model but with
-this fake gateway standing in for `MCPGatewayClient`, so tool results are
-fixed and every tool call the model makes is recorded. Assertions check
-behaviour (which tools ran, with what argument shapes; what the final reply
-does and doesn't do), never exact wording — the model is non-deterministic.
+The ADK eval agent (`evals/adk/agent.py`) exposes these methods as its
+tools, so the eval runs a **real** Gemini model against a fixed catalogue /
+mutable cart, with every tool call recorded. Assertions check behaviour, not
+exact wording — the model is non-deterministic.
 """
 
 from __future__ import annotations

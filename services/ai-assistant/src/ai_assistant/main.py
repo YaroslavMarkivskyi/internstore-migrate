@@ -109,8 +109,8 @@ class AdminAgentRequest(BaseModel):
 
 
 async def _stream_agent_reply(chat_client, room_id: str, events) -> None:
-    """Drain a react_loop stream into Chat: batched `message_delta` frames,
-    a `message_reset` on Reset, one persisted `message_done` at the end."""
+    """Drain an agent's Delta/Reset stream into Chat: batched `message_delta`
+    frames, a `message_reset` on Reset, one persisted `message_done` at the end."""
     stream_id = str(uuid.uuid4())
     full: list[str] = []
     pending: list[str] = []
@@ -241,11 +241,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.chat_client.set_mode(payload.room_id, "human")
             return {"status": "rate_limited"}
 
-        # STR-148: without this, every message was handled as a completely
-        # isolated turn — see react_loop.py's own docstring for the bug
-        # this caused ("add it to my cart" right after a search had no
-        # antecedent for "it"), found via live verification, not any unit
-        # test (they all mock a single self-contained turn).
+        # STR-148: without this the agent handles every message as a
+        # completely isolated turn ("add it to my cart" right after a search
+        # has no antecedent for "it"). The history seeds the ADK session —
+        # see adk/session.prepare_session.
         history = await app.state.chat_client.get_recent_messages(
             payload.room_id, settings.conversation_history_limit
         )
@@ -295,7 +294,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # STR-XXX: the internal ops assistant. Called by Chat (ws/room.py) only
     # when an admin sends a message in their own ops room (room_ops_<sub>),
     # forwarding the admin's own internal token. Read-only tools only (see
-    # react_loop.ADMIN_TOOL_NAMES); this handler independently rejects any
+    # adk.prompts.ADMIN_TOOL_NAMES); this handler independently rejects any
     # non-admin token as a fail-closed second check.
     @app.post("/agent/admin")
     async def admin_agent(
