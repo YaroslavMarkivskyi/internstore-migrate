@@ -6,34 +6,25 @@ so any MCP-compatible AI agent — starting with the AI Assistant — calls one
 consistent tool registry instead of a hand-rolled HTTP client per domain
 service.
 
-Two doors, one tool-execution core:
+One `/mcp` route, two doors, one tool-execution core (`src/mcp_gateway/mcp_server.py`'s `_identify`):
 
-- **`/mcp` (internal)** — mesh-only, no nginx route. Callers (the AI
-  Assistant's ADK agents, or any in-mesh client) present an `X-Internal-Token`.
-- **`/api/mcp` (public, Phase 3)** — fronted by the external nginx Gateway,
-  which does the Firebase → internal-token exchange every other service
-  gets and adds an `X-MCP-Public` marker. External MCP clients (Claude
-  Desktop &c.) connect here with a Firebase ID token as the Bearer.
-
-Every
-Gateway no longer mints its own token for outbound calls — it forwards the
-caller's own already-verified token unchanged to whichever domain service a
-tool call fans out to (see `src/mcp_gateway/auth.py`'s
-`get_raw_internal_token`). This is what makes `add_to_cart`/`get_cart`'s
-ownership check mean anything: a tool call runs as whoever actually called
-the Gateway (a customer, a guest, an admin, or AI Assistant's own
-`assistant`-role token), never as a fixed Gateway identity.
+- **in-mesh** — an `X-Internal-Token` (the AI Assistant's ADK agents, or any
+  in-mesh client). Verified per request, forwarded downstream unchanged so
+  `add_to_cart`/`get_cart` ownership resolves against the real customer, not
+  the Gateway (STR-146). No nginx route.
+- **public** — an OAuth 2.1 access token this service issues itself (see
+  below). Fronted by the external nginx Gateway. Always the **customer** tool
+  tier — ops/telemetry/security tools are mesh-only.
 
 ## Protocol endpoint
 
 A real [MCP](https://modelcontextprotocol.io) server (`mcp` 1.x,
 `mcp.server.lowlevel.Server`) over the **Streamable HTTP** transport at
-`POST /mcp` (JSON-RPC: `initialize`, `tools/list`, `tools/call`). The
-`X-Internal-Token` header is verified per request inside the tool handlers
-and forwarded downstream. `mcp` is pinned to 1.x because the AI Assistant
-consumes this through Google ADK's `McpToolset`, which needs the 1.x client.
+`POST /mcp` (JSON-RPC: `initialize`, `tools/list`, `tools/call`). `mcp` is
+pinned to 1.x because the AI Assistant consumes this through Google ADK's
+`McpToolset`, which needs the 1.x client.
 
-Drive it with any MCP client, e.g. the SDK's own:
+In-mesh, with an internal token:
 
 ```python
 from mcp import ClientSession
@@ -45,27 +36,39 @@ async with streamablehttp_client(
     async with ClientSession(r, w) as s:
         await s.initialize()
         print(await s.list_tools())
-        print(await s.call_tool("get_order_status", {"order_id": "<uuid>"}))
 ```
 
-### Public door (`/api/mcp`)
+### Public door — OAuth 2.1
 
-`GET /.well-known/oauth-protected-resource` (RFC 9728, unauthenticated)
-advertises the Firebase project as the OAuth authorization server, so a
-spec-compliant client can discover where to get a token. Token *acquisition*
-is Firebase's (the web app's login) — the emulator/demo path is to pass a
-Firebase ID token as the Bearer directly.
+The Gateway runs a small **OAuth 2.1 Authorization Server** co-located with
+the resource server (`src/mcp_gateway/oauth/`). Issuer = the external nginx
+Gateway (`PUBLIC_BASE_URL`). It implements what a spec-compliant MCP client
+(Claude Desktop, MCP Inspector) needs to connect on its own:
 
-Regardless of the token's role, the public door serves the **customer tier
-only** — an admin's own token gets no ops/telemetry/security tools here
-(`mcp_server._require_claims` caps it when it sees `X-MCP-Public`). nginx
-also rate-limits this route (`limit_req_zone mcp_public`, 60 r/min per IP).
-See [scripts/test-mcp-public.sh](../../scripts/test-mcp-public.sh).
+| Endpoint | Purpose |
+|---|---|
+| `/.well-known/oauth-protected-resource/mcp` | RFC 9728 — resource → authorization server |
+| `/.well-known/oauth-authorization-server` | RFC 8414 — AS metadata |
+| `/register` | RFC 7591 — dynamic client registration |
+| `/authorize` → `/oauth/login` → redirect | RFC 6749 §4.1 + PKCE; identity **federated to Firebase** (Identity Toolkit REST / the emulator) |
+| `/token` | authorization-code + refresh; RS256 JWT, `aud` = the MCP resource, scope `mcp:shopping` |
+| `/.well-known/jwks.json` | RFC 7517 — verification key |
 
-Not yet done: the full MCP OAuth 2.1 flow (dynamic client registration,
-the authorization-server metadata redirect) — Firebase Auth isn't a general
-OAuth AS, so an automatic Claude-Desktop-style connect needs a real broker
-in front; out of scope for the demo.
+`RequireAuthMiddleware` guards `/mcp` for non-internal callers and answers
+`401` + `WWW-Authenticate: Bearer resource_metadata="…"`. A validated token's
+`sub` → a freshly minted internal token for the downstream fan-out; the
+scope pins the tier to `customer` whatever the user's Firebase role.
+
+nginx rate-limits `/mcp` (`limit_req_zone mcp_public`, 60 r/min per IP).
+See [scripts/test-mcp-public.sh](../../scripts/test-mcp-public.sh) for the
+full flow driven with `curl`.
+
+**Demo-scale shortcuts:** clients/codes/refresh tokens are in-memory (a
+restart = re-register + re-auth); the RS256 key is ephemeral unless
+`OAUTH_SIGNING_KEY_PEM` is set; the Firebase ID token from the login step is
+decoded, not cryptographically verified (the password exchange is the auth,
+and the emulator signs with `alg: none`) — production would verify via the
+Firebase Admin SDK / Google JWKS.
 
 ## Tool catalog
 
@@ -180,10 +183,9 @@ docker compose up -d --build mcp-gateway
   on instead of a raw jsonschema error.
 - **`schema.py` `TOOL_SPECS` is still hand-maintained** rather than generated
   from the tool-client method signatures — a known "generate it" follow-up.
-- **No full MCP OAuth 2.1 on the public door.** `authz.py` enforces the
-  role→tier gate server-side, nginx does the Firebase→internal-token
-  exchange + rate limit, and `/.well-known/oauth-protected-resource` is
-  served — but dynamic client registration and the authorization-server
-  metadata handshake a client like Claude Desktop expects aren't wired
-  (Firebase Auth isn't a general OAuth AS). The demo path is a
-  pasted Firebase ID token.
+- **The public OAuth AS is demo-scale** — in-memory client/code/token
+  stores, an ephemeral signing key, and the federated Firebase ID token is
+  decoded rather than verified. See the "Public door — OAuth 2.1" section
+  above for the full list. The *protocol* is complete (DCR, auth-code+PKCE,
+  refresh, metadata, JWKS); a production deployment would swap the storage +
+  key + Firebase verification, or front it with a real AS (Hydra / Auth0).

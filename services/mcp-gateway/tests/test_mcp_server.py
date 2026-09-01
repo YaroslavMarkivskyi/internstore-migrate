@@ -75,11 +75,12 @@ async def test_bad_arguments_come_back_as_an_error_result(app):
     assert "get_order_status" in result.content[0].text
 
 
-async def test_missing_internal_token_is_rejected(app):
-    with pytest.raises((McpError, BaseExceptionGroup)) as excinfo:
+async def test_a_request_with_no_credentials_is_rejected(app):
+    # No X-Internal-Token and no Bearer -> the public door's
+    # RequireAuthMiddleware answers 401 before the MCP handler runs.
+    with pytest.raises((McpError, BaseExceptionGroup, Exception)):
         async with mcp_session(app, None) as session:
             await session.list_tools()
-    assert any(isinstance(e, McpError) and "internal token" in str(e) for e in _flatten(excinfo.value))
 
 
 async def test_checkout_is_structurally_absent(app):

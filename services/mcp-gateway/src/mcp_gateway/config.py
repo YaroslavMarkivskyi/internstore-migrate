@@ -30,12 +30,19 @@ class Settings(BaseSettings):
     # same product_embeddings table.
     embedding_dimensions: int = 1536
     http_timeout_seconds: float = 10.0
-    # Phase 3 — the public MCP door (nginx `/api/mcp`). `public_mcp_url` is the
-    # externally-reachable URL of this server; `firebase_project_id` (defaults
-    # to gcp_project) fixes the OAuth issuer advertised in the RFC 9728
-    # protected-resource metadata a spec-compliant MCP client discovers.
-    public_mcp_url: str = "https://localhost:8443/api/mcp"
-    firebase_project_id: str = ""
+    # Phase 3 — the public MCP door. The Gateway runs a small OAuth 2.1
+    # Authorization Server co-located with the resource server (see
+    # src/mcp_gateway/oauth/): `public_base_url` is the externally-reachable
+    # origin (the nginx Gateway), `public_mcp_url` the MCP resource URL a
+    # token's `aud` must match. Identity at the `/authorize` step is
+    # federated to Firebase via the Identity Toolkit REST API (the emulator
+    # locally). `oauth_signing_key_pem` pins the RS256 key across restarts;
+    # empty = generate an ephemeral one.
+    public_base_url: str = "https://localhost:8443"
+    public_mcp_url: str = "https://localhost:8443/mcp"
+    firebase_identity_toolkit_url: str = "http://firebase-emulator:9099/identitytoolkit.googleapis.com"
+    firebase_web_api_key: str = "fake-api-key"
+    oauth_signing_key_pem: str = ""
 
 
 def load_settings() -> Settings:

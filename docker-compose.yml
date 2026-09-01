@@ -1129,12 +1129,22 @@ services:
       # (Workload Identity in GKE instead). Must be the same project as
       # ai-assistant.
       GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
+      # Phase 3 — the public MCP door. This service runs a small OAuth 2.1
+      # Authorization Server (src/mcp_gateway/oauth/) whose issuer is the
+      # external nginx Gateway; the `/authorize` step federates identity to
+      # the Firebase Auth emulator.
+      PUBLIC_BASE_URL: https://localhost:8443
+      PUBLIC_MCP_URL: https://localhost:8443/mcp
+      FIREBASE_IDENTITY_TOOLKIT_URL: http://firebase-emulator:9099/identitytoolkit.googleapis.com
+      FIREBASE_WEB_API_KEY: fake-api-key
     volumes:
       # Live bind mount, see auth-backend's for why only this subpath.
       - ./services/mcp-gateway/src:/app/src
       - ${HOME}/.config/gcloud:/gcloud:ro
     depends_on:
       ai-db:
+        condition: service_healthy
+      firebase-emulator:
         condition: service_healthy
       orders:
         condition: service_started
@@ -1148,8 +1158,9 @@ services:
         condition: service_started
       chat:
         condition: service_started
-    # No nginx route — internal only, same as ai-assistant/notifications.
-    # Only other services (and, in future, an agent runtime) ever call it.
+    # Two doors: the in-mesh `/mcp` (X-Internal-Token, the ADK agents) has no
+    # nginx route; the public OAuth door IS routed — see nginx/nginx.conf's
+    # `/mcp` + `/authorize` &c. locations.
 
   frontend:
     build: ./frontend

@@ -1,3 +1,4 @@
+import time
 from typing import Annotated, Literal
 
 import jwt
@@ -5,6 +6,7 @@ from fastapi import Header, HTTPException, Request
 from pydantic import BaseModel
 
 ISSUER = "internstore-gateway"
+_INTERNAL_TTL_SECONDS = 60
 
 
 class InternalClaims(BaseModel):
@@ -29,6 +31,19 @@ def verify_internal_token(token: str, secret: str) -> InternalClaims:
     if not sub or role not in ("customer", "admin", "guest", "assistant"):
         raise ValueError("Invalid internal token claims")
     return InternalClaims(sub=sub, role=role)
+
+
+# The public MCP door authenticates a caller with an OAuth access token, not
+# an internal token — so for the downstream fan-out the Gateway mints a
+# short-lived internal token from the verified identity, exactly as
+# auth-backend does at the external boundary. Same 60s TTL / HS256 / issuer.
+def mint_internal_token(sub: str, role: str, secret: str) -> str:
+    now = int(time.time())
+    return jwt.encode(
+        {"sub": sub, "role": role, "iss": ISSUER, "iat": now, "exp": now + _INTERNAL_TTL_SECONDS},
+        secret,
+        algorithm="HS256",
+    )
 
 
 def get_internal_claims(

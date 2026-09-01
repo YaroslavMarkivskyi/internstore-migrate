@@ -22,6 +22,7 @@ Phase 3 (TODO) adds the public OAuth door and moves the tool-tier gating
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import mcp.types as mcp_types
@@ -29,8 +30,9 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.types import Receive, Scope, Send
 
-from mcp_gateway.auth import InternalClaims, verify_internal_token
+from mcp_gateway.auth import mint_internal_token, verify_internal_token
 from mcp_gateway.authz import authorized_tools
+from mcp_gateway.oauth.provider import SCOPE as PUBLIC_SCOPE
 from mcp_gateway.router import ToolFunc, call_tool
 from mcp_gateway.schema import TOOL_SPECS
 
@@ -50,35 +52,46 @@ _TOOLS: list[mcp_types.Tool] = [
 _ALL_TOOL_NAMES = frozenset(t.name for t in _TOOLS)
 
 
-# Tiers reachable through the public door (nginx /api/mcp, marked with the
-# X-MCP-Public header). Even an admin's own Firebase token gets capped to
-# `customer` here — the ops / telemetry / security tools are mesh-only, never
-# exposed to an external MCP client (Claude Desktop &c.), regardless of role.
-_PUBLIC_MAX_ROLE = "customer"
+@dataclass
+class _Caller:
+    role: str
+    downstream_token: str  # the internal token forwarded to domain services
 
 
-def _require_claims(server: Server, secret: str) -> InternalClaims:
-    """Read + verify X-Internal-Token off the in-flight request. Raises inside
-    a tool call -> the SDK returns it as an error result the caller can act on."""
+def _identify(server: Server, secret: str) -> _Caller:
+    """Resolve who is calling, from one of two doors:
+
+    - internal mesh: an `X-Internal-Token` — verified, forwarded downstream
+      as-is (STR-146: ownership resolves against the real caller).
+    - public: an OAuth access token, already validated by
+      `RequireAuthMiddleware` and stashed in the auth context. Its scope is
+      `mcp:shopping`, so the caller is a `customer` regardless of the
+      underlying Firebase role — ops/telemetry/security tools stay
+      mesh-only. A fresh internal token is minted for the fan-out.
+    """
     try:
         request = server.request_context.request
-    except LookupError:  # pragma: no cover - never hit under the HTTP transport
+    except LookupError:  # pragma: no cover
         request = None
-    headers = request.headers if request is not None else {}
-    token = headers.get("x-internal-token")
-    if not token:
-        raise ValueError("Missing internal token")
-    try:
-        claims = verify_internal_token(token, secret)
-    except ValueError as exc:
-        raise ValueError("Invalid internal token") from exc
-    if headers.get("x-mcp-public") and claims.role not in ("customer", "guest"):
-        claims = claims.model_copy(update={"role": _PUBLIC_MAX_ROLE})
-    return claims
+    raw = request.headers.get("x-internal-token") if request is not None else None
+    if raw:
+        try:
+            claims = verify_internal_token(raw, secret)
+        except ValueError as exc:
+            raise ValueError("Invalid internal token") from exc
+        return _Caller(role=claims.role, downstream_token=raw)
 
+    # Public door: RequireAuthMiddleware has already validated the Bearer and
+    # Starlette's AuthenticationMiddleware put the principal on the request
+    # (scope-carried, so it survives into this handler's task — a ContextVar
+    # would not). Scope is `mcp:shopping` -> a customer, whatever the
+    # underlying Firebase role.
+    user = getattr(request, "user", None)
+    access = getattr(user, "access_token", None)
+    if access is not None and PUBLIC_SCOPE in access.scopes and access.subject:
+        return _Caller(role="customer", downstream_token=mint_internal_token(access.subject, "customer", secret))
 
-def _raw_token(server: Server) -> str:
-    return server.request_context.request.headers["x-internal-token"]
+    raise ValueError("Missing internal token")
 
 
 def build_mcp_server(registry: dict[str, ToolFunc], internal_token_secret: str) -> Server:
@@ -96,8 +109,8 @@ def build_mcp_server(registry: dict[str, ToolFunc], internal_token_secret: str) 
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        claims = _require_claims(server, internal_token_secret)
-        allowed = authorized_tools(claims.role, _ALL_TOOL_NAMES)
+        caller = _identify(server, internal_token_secret)
+        allowed = authorized_tools(caller.role, _ALL_TOOL_NAMES)
         return [t for t in _TOOLS if t.name in allowed]
 
     # validate_input=False: the Gateway's own tool clients already validate
@@ -105,14 +118,14 @@ def build_mcp_server(registry: dict[str, ToolFunc], internal_token_secret: str) 
     # a far more actionable message than a raw jsonschema error).
     @server.call_tool(validate_input=False)
     async def call_tool_handler(name: str, arguments: dict[str, Any]) -> dict | mcp_types.CallToolResult:
-        claims = _require_claims(server, internal_token_secret)
-        if name in _ALL_TOOL_NAMES and name not in authorized_tools(claims.role, _ALL_TOOL_NAMES):
+        caller = _identify(server, internal_token_secret)
+        if name in _ALL_TOOL_NAMES and name not in authorized_tools(caller.role, _ALL_TOOL_NAMES):
             return mcp_types.CallToolResult(
                 content=[mcp_types.TextContent(type="text", text=f"{name}: not available to this caller")],
                 isError=True,
             )
         try:
-            result = await call_tool(registry, name, arguments or {}, _raw_token(server))
+            result = await call_tool(registry, name, arguments or {}, caller.downstream_token)
         except Exception as exc:  # noqa: BLE001 - surfaced to the model as an error result
             return mcp_types.CallToolResult(
                 content=[mcp_types.TextContent(type="text", text=f"{name}: {exc}")],

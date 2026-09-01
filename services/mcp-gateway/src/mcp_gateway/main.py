@@ -9,6 +9,7 @@ from starlette.routing import Route
 from mcp_gateway.config import Settings, load_settings
 from mcp_gateway.db import make_session_factory
 from mcp_gateway.mcp_server import MCP_PATH, build_streamable_http_asgi
+from mcp_gateway.oauth.wiring import build_public_oauth
 from mcp_gateway.observability import setup_observability
 from mcp_gateway.router import GatewayClients, build_tool_registry
 from mcp_gateway.tools.catalog import CatalogToolsClient, ProductSearchClient
@@ -53,10 +54,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     tool_registry = build_tool_registry(clients)
 
     # The MCP protocol surface: a real MCP server (Streamable HTTP transport,
-    # JSON-RPC) at MCP_PATH. This internal-only service has no nginx route
-    # (see docker-compose.yml) but the server still verifies the caller's
-    # X-Internal-Token per request — see mcp_server.
-    mcp_manager, mcp_asgi = build_streamable_http_asgi(tool_registry, settings.internal_token_secret)
+    # JSON-RPC) at MCP_PATH, serving two doors off one route — see
+    # oauth/wiring.build_public_oauth:
+    #  - in-mesh: an X-Internal-Token (the ADK agents), verified per request
+    #  - public: an OAuth 2.1 access token this service itself issues
+    #    (small co-located Authorization Server, identity federated to
+    #    Firebase). Capped to the customer tool tier.
+    mcp_manager, mcp_bare = build_streamable_http_asgi(tool_registry, settings.internal_token_secret)
+    public = build_public_oauth(settings, mcp_bare)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -71,25 +76,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # A Route (not a Mount) with the ASGI app as endpoint — same shape the
     # mcp SDK's own streamable_http_app() uses; a Mount would 307-redirect
     # the bare path to a trailing slash, which MCP clients don't follow.
-    app.router.routes.append(Route(MCP_PATH, endpoint=mcp_asgi))
+    app.router.routes.append(Route(MCP_PATH, endpoint=public.endpoint))
+    app.router.routes.extend(public.routes)
+    app.state.oauth = public
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
-
-    # RFC 9728 — lets a spec-compliant MCP client (Claude Desktop &c.)
-    # connecting to the public door (nginx `/api/mcp`) discover that this
-    # resource is protected by Firebase-issued OAuth tokens. Token
-    # acquisition itself is Firebase's (the web app's login); for the demo a
-    # client passes a Firebase ID token as the Bearer directly.
-    @app.get("/.well-known/oauth-protected-resource")
-    async def oauth_protected_resource() -> dict:
-        project = settings.firebase_project_id or settings.gcp_project
-        return {
-            "resource": settings.public_mcp_url,
-            "authorization_servers": [f"https://securetoken.google.com/{project}"],
-            "bearer_methods_supported": ["header"],
-            "scopes_supported": ["mcp:shopping"],
-        }
 
     return app
