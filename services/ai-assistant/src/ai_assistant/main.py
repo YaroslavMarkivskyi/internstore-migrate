@@ -108,9 +108,13 @@ class AdminAgentRequest(BaseModel):
     message: str
 
 
-async def _stream_agent_reply(chat_client, room_id: str, events) -> None:
+async def _stream_agent_reply(chat_client, room_id: str, events, *, fallback: str) -> None:
     """Drain an agent's Delta/Reset stream into Chat: batched `message_delta`
-    frames, a `message_reset` on Reset, one persisted `message_done` at the end."""
+    frames, a `message_reset` on Reset, one persisted `message_done` at the end.
+
+    Always finishes with a `message_done` — if the agent stream raises partway
+    through (a model error, an MCP hiccup), the customer gets the fallback
+    text and the "typing…" indicator clears, instead of hanging forever."""
     stream_id = str(uuid.uuid4())
     full: list[str] = []
     pending: list[str] = []
@@ -120,18 +124,24 @@ async def _stream_agent_reply(chat_client, room_id: str, events) -> None:
             await chat_client.stream_delta(room_id, stream_id, "".join(pending))
             pending.clear()
 
-    async for event in events:
-        if isinstance(event, Reset):
-            full.clear()
-            pending.clear()
+    try:
+        async for event in events:
+            if isinstance(event, Reset):
+                full.clear()
+                pending.clear()
+                await chat_client.stream_reset(room_id, stream_id)
+                continue
+            full.append(event.text)
+            pending.append(event.text)
+            if sum(len(part) for part in pending) >= _DELTA_FLUSH_CHARS:
+                await _flush()
+        await _flush()
+    except Exception:
+        logger.exception("Agent stream failed for room %s", room_id)
+        if not full:
             await chat_client.stream_reset(room_id, stream_id)
-            continue
-        full.append(event.text)
-        pending.append(event.text)
-        if sum(len(part) for part in pending) >= _DELTA_FLUSH_CHARS:
-            await _flush()
+            full = [fallback]
 
-    await _flush()
     await chat_client.stream_done(room_id, stream_id, "".join(full))
 
 
@@ -277,6 +287,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     max_llm_calls=settings.max_react_iterations * 2,
                     fallback_reply=FALLBACK_REPLY,
                 ),
+                fallback=FALLBACK_REPLY,
             )
         finally:
             reset_request_token(token_handle)
@@ -336,6 +347,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     max_llm_calls=settings.max_react_iterations * 2,
                     fallback_reply=ADMIN_FALLBACK_REPLY,
                 ),
+                fallback=ADMIN_FALLBACK_REPLY,
             )
         finally:
             reset_request_token(token_handle)
