@@ -21,11 +21,20 @@ dependencies = [
     # below 3.0 per the SDK's own README: breaking changes to Automatic
     # Function Calling are planned for 3.0, and this service builds its
     # tool declarations manually (see react_loop.py), not via AFC.
-    "google-genai>=1.0.0,<3.0.0",
-    "opentelemetry-sdk>=1.44.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
-    "opentelemetry-instrumentation-fastapi>=0.65b0",
-    "opentelemetry-instrumentation-httpx>=0.65b0",
+    "google-genai>=2.19,<3.0.0",
+    # Agent framework: shopping + ops agents run on ADK's LlmAgent/Runner
+    # (see src/ai_assistant/adk/). ADK 2.x consumes the MCP Gateway through
+    # its McpToolset, which requires the mcp 1.x client SDK — the Gateway's
+    # own server is pinned to match (services/mcp-gateway).
+    "google-adk>=2.8.0,<3",
+    "mcp>=1.9.0,<2.0.0",
+    # ADK caps opentelemetry-api/sdk at <=1.42.1; the rest of the OTel stack
+    # is brought down to the matching line. The observability module only
+    # uses long-stable SDK surface, so this is a version move, not an API one.
+    "opentelemetry-sdk>=1.39,<=1.42.1",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.39,<=1.42.1",
+    "opentelemetry-instrumentation-fastapi>=0.60b0",
+    "opentelemetry-instrumentation-httpx>=0.60b0",
 ]
 
 [dependency-groups]
