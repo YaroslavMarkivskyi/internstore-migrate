@@ -1,3 +1,4 @@
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
@@ -7,10 +8,12 @@ from fastapi.responses import StreamingResponse
 from google import genai
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
+from starlette.routing import Route
 
 from mcp_gateway.auth import InternalClaims, get_internal_claims, get_raw_internal_token
 from mcp_gateway.config import Settings, load_settings
 from mcp_gateway.db import make_session_factory
+from mcp_gateway.mcp_server import MCP_STREAM_PATH, build_streamable_http_asgi
 from mcp_gateway.observability import setup_observability
 from mcp_gateway.router import GatewayClients, ToolNotFoundError, build_tool_registry, call_tool
 from mcp_gateway.schema import TOOL_SPECS
@@ -60,11 +63,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     setup_observability("mcp-gateway")
 
-    app = FastAPI(title="mcp-gateway")
+    clients = build_clients(settings)
+    tool_registry = build_tool_registry(clients)
+
+    # Real MCP protocol surface (Streamable HTTP transport, JSON-RPC) mounted
+    # at MCP_STREAM_PATH, alongside the homegrown REST facade below. Shares
+    # this exact registry object and the same schema catalog — see mcp_server.
+    mcp_manager, mcp_asgi = build_streamable_http_asgi(tool_registry, settings.internal_token_secret)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        async with mcp_manager.run():
+            yield
+
+    app = FastAPI(title="mcp-gateway", lifespan=lifespan)
     FastAPIInstrumentor.instrument_app(app)
     app.state.settings = settings
-    clients = build_clients(settings)
-    app.state.tool_registry = build_tool_registry(clients)
+    app.state.tool_registry = tool_registry
+    app.state.mcp_manager = mcp_manager
+    # A Route (not a Mount) with the ASGI app as endpoint — same shape the
+    # mcp SDK's own streamable_http_app() uses; a Mount would 307-redirect
+    # the bare path to a trailing slash, which MCP clients don't follow.
+    app.router.routes.append(Route(MCP_STREAM_PATH, endpoint=mcp_asgi))
 
     @app.get("/health")
     async def health() -> dict[str, str]:
