@@ -1071,12 +1071,11 @@ services:
       CHAT_MODEL: ${CHAT_MODEL:-gemini-2.5-flash}
       AI_MODE_DEFAULT: ai
       AI_RATE_LIMIT: "10"
-      # STR-146: the shopping ReAct loop's tool calls all go through here
-      # now (see react_loop.py/mcp_client.py) — this was wired through
-      # ahead of time but unused until this ticket.
+      # The ADK agents reach every tool over the real MCP protocol here
+      # (adk/agents.py -> McpToolset -> http://mcp-gateway:8000/mcp).
       MCP_GATEWAY_URL: http://mcp-gateway:8000
-      # STR-146: used to refresh the customer's internal-token mid-loop when
-      # it's close to its 60s TTL (see token_manager.py/auth_backend_client.py).
+      # Refreshes the customer's internal-token when it's near its 60s TTL —
+      # the McpToolset header provider calls it (adk/token_context.py).
       AUTH_BACKEND_URL: http://auth-backend:3000
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.

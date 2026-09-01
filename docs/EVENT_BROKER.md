@@ -83,14 +83,11 @@ deliberately does **not** read from this service.
 `mcp-gateway` produces and consumes no topics — it's included here because
 it's the other piece of internal infrastructure sitting alongside the
 broker, not because it uses it. It exposes Orders/Inventory/Catalog/
-Telemetry/Security/Chat as MCP tools over HTTP (`GET /mcp/tools`,
-`POST /mcp/tools/call`), each tool a thin `httpx` wrapper that calls the
-relevant domain service synchronously with its own Gateway-minted internal
-token — the same request/response model every other domain service already
-uses, just fronted by one consistent tool registry instead of a client
-class per consumer. AI Assistant is the first intended caller (see
-`MCP_GATEWAY_URL` in its compose environment); a full agent runtime wired
-through the ReAct loop is future scope. See
+Telemetry/Security/Chat as MCP tools over a real MCP server (Streamable
+HTTP / JSON-RPC at `/mcp`), each tool a thin `httpx` wrapper that calls the
+relevant domain service synchronously, forwarding the caller's own internal
+token so ownership checks resolve against the real customer. AI Assistant's
+ADK agents are the caller — `McpToolset` over `MCP_GATEWAY_URL`. See
 [services/mcp-gateway/README.md](../services/mcp-gateway/README.md).
 
 ## Verifying the broker is alive

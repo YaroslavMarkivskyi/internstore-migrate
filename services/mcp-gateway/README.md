@@ -14,24 +14,31 @@ caller's own already-verified token unchanged to whichever domain service a
 tool call fans out to (see `src/mcp_gateway/auth.py`'s
 `get_raw_internal_token`). This is what makes `add_to_cart`/`get_cart`'s
 ownership check mean anything: a tool call runs as whoever actually called
-`/mcp/tools/call` (a customer, a guest, an admin, or AI Assistant's own
+the Gateway (a customer, a guest, an admin, or AI Assistant's own
 `assistant`-role token), never as a fixed Gateway identity.
 
-## Protocol endpoints
+## Protocol endpoint
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/mcp` | Server info: name, version, capabilities |
-| GET | `/mcp/tools` | Full tool catalog with JSON Schema input for each tool |
-| POST | `/mcp/tools/call` | Execute a tool: `{"name": "...", "arguments": {...}}` |
-| GET | `/mcp/sse` | SSE handshake — emits an `endpoint` event pointing back at `/mcp/tools/call` |
+A real [MCP](https://modelcontextprotocol.io) server (`mcp` 1.x,
+`mcp.server.lowlevel.Server`) over the **Streamable HTTP** transport at
+`POST /mcp` (JSON-RPC: `initialize`, `tools/list`, `tools/call`). The
+`X-Internal-Token` header is verified per request inside the tool handlers
+and forwarded downstream. `mcp` is pinned to 1.x because the AI Assistant
+consumes this through Google ADK's `McpToolset`, which needs the 1.x client.
 
-```bash
-curl -s http://mcp-gateway:8000/mcp/tools -H "X-Internal-Token: $TOKEN" | jq
+Drive it with any MCP client, e.g. the SDK's own:
 
-curl -s http://mcp-gateway:8000/mcp/tools/call \
-  -H "X-Internal-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "get_order_status", "arguments": {"order_id": "<uuid>"}}'
+```python
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+async with streamablehttp_client(
+    "http://mcp-gateway:8000/mcp", headers={"X-Internal-Token": TOKEN}
+) as (r, w, _):
+    async with ClientSession(r, w) as s:
+        await s.initialize()
+        print(await s.list_tools())
+        print(await s.call_tool("get_order_status", {"order_id": "<uuid>"}))
 ```
 
 ## Tool catalog
@@ -91,29 +98,19 @@ every other inter-service call in this repo is.
 
 ## Usage from AI Assistant
 
-**STR-146:** AI Assistant's shopping ReAct loop (`react_loop.py`) is this
-service's first real consumer — it fetches `GET /mcp/tools`, filters to
-exactly `search_products`/`get_cart`/`add_to_cart`/`remove_from_cart`, builds
-Gemini's `FunctionDeclaration`/`Tool` request shape from those specs
-(**STR-161b:** was OpenAI's function-calling `tools` parameter before the
-Gemini migration — `TOOL_SPECS`' plain JSON Schema in `schema.py` is
-unchanged either way, only the caller-side translation differs), and forwards
-the customer's own internal-token (refreshed via auth-backend if the loop
-outlives its 60s TTL) on every `POST /mcp/tools/call`. The Gateway's full
-16-tool catalog still exists for other admin-facing use, but nothing outside
-that 4-tool subset is ever offered to the shopping agent's model, and no
-checkout/payment tool exists in the registry at all — see
+AI Assistant's shopping + ops agents (Google ADK `LlmAgent`) are this
+service's consumers, each via an ADK `McpToolset` pointed at `/mcp` with a
+`tool_filter` — the shopping agent sees only the cart-scoped and
+customer-safe reads, the ops agent only the read-only admin tools. The
+customer's own internal-token is forwarded on every call (the toolset's
+`header_provider` refreshes it against auth-backend when it's near its 60s
+TTL). No checkout/payment tool exists in the registry at all — see
 `src/mcp_gateway/router.py`'s `build_tool_registry` for the enforced
 boundary. This boundary is structural (no registry entry to route to), not a
-prompt instruction or a model-specific behavior, so it holds the same way
-regardless of which model calls it — re-verified specifically against Gemini
-in `tests/test_checkout_tool_absent.py` and
-`services/ai-assistant/tests/test_react_loop.py`'s
-`test_a_hallucinated_checkout_tool_call_is_surfaced_as_an_error_not_executed_as_success`,
-plus the live adversarial-prompt check in
-`scripts/test-shopping-agent-gemini-checkout.sh`. Any MCP-compatible client
-(Claude Desktop, a custom agent) can otherwise call this service directly:
-fetch `GET /mcp/tools` for the schema, then `POST /mcp/tools/call` per
+prompt instruction, so it holds regardless of which model calls it —
+verified in `tests/test_checkout_tool_absent.py` and
+`services/ai-assistant/evals/adk/test_adk_evals.py`. Any MCP-compatible
+client can otherwise call this service directly over the `/mcp` endpoint per
 invocation.
 
 ## Gemini migration (STR-161b)
@@ -148,12 +145,15 @@ docker compose up -d --build mcp-gateway
   status/age filter on `GET /orders/admin` — both tools pull the admin list
   and filter in this service instead. Fine for a low-frequency, admin-facing
   tool; would need a real query param upstream if this became a hot path.
-- **No JSON Schema argument validation before dispatch.** `POST
-  /mcp/tools/call` relies on the target function's own required-keyword
-  arguments (`TypeError` → `422`) rather than validating `arguments` against
-  each tool's declared `input_schema` up front — the schema in `GET
-  /mcp/tools` is documentation-quality, not a validation gate yet.
-- **`/mcp/sse` is a one-shot handshake, not a live push channel.** It emits
-  a single `endpoint` event and lets the client know where to `POST` tool
-  calls; results still return over that POST's own response body, not
-  streamed back down the SSE connection.
+- **No JSON Schema argument validation before dispatch.** The `tools/call`
+  handler runs with `validate_input=False` and relies on the target
+  function's own required-keyword arguments (bad shape → an `isError` tool
+  result) rather than validating `arguments` against each tool's declared
+  `inputSchema` up front — deliberately, so `tools/orders.py`'s `_require_uuid`
+  / `_require_sane_quantity` can return a message the model can actually act
+  on instead of a raw jsonschema error.
+- **`schema.py` `TOOL_SPECS` is still hand-maintained** rather than generated
+  from the tool-client method signatures — a known "generate it" follow-up.
+- **Tool-tier gating lives on the agent side** (`McpToolset(tool_filter=...)`
+  in ai-assistant), not in the Gateway. Moving it here, behind a shared
+  `authorize_tools(role)`, is Phase 3 along with the public OAuth door.
