@@ -29,7 +29,8 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.types import Receive, Scope, Send
 
-from mcp_gateway.auth import verify_internal_token
+from mcp_gateway.auth import InternalClaims, verify_internal_token
+from mcp_gateway.authz import authorized_tools
 from mcp_gateway.router import ToolFunc, call_tool
 from mcp_gateway.schema import TOOL_SPECS
 
@@ -46,9 +47,10 @@ _TOOLS: list[mcp_types.Tool] = [
     )
     for spec in TOOL_SPECS
 ]
+_ALL_TOOL_NAMES = frozenset(t.name for t in _TOOLS)
 
 
-def _require_token(server: Server, secret: str) -> str:
+def _require_claims(server: Server, secret: str) -> InternalClaims:
     """Read + verify X-Internal-Token off the in-flight request. Raises inside
     a tool call -> the SDK returns it as an error result the caller can act on."""
     try:
@@ -59,10 +61,14 @@ def _require_token(server: Server, secret: str) -> str:
     if not token:
         raise ValueError("Missing internal token")
     try:
-        verify_internal_token(token, secret)
+        claims = verify_internal_token(token, secret)
     except ValueError as exc:
         raise ValueError("Invalid internal token") from exc
-    return token
+    return claims
+
+
+def _raw_token(server: Server) -> str:
+    return server.request_context.request.headers["x-internal-token"]
 
 
 def build_mcp_server(registry: dict[str, ToolFunc], internal_token_secret: str) -> Server:
@@ -80,18 +86,23 @@ def build_mcp_server(registry: dict[str, ToolFunc], internal_token_secret: str) 
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        _require_token(server, internal_token_secret)
-        return _TOOLS
+        claims = _require_claims(server, internal_token_secret)
+        allowed = authorized_tools(claims.role, _ALL_TOOL_NAMES)
+        return [t for t in _TOOLS if t.name in allowed]
 
     # validate_input=False: the Gateway's own tool clients already validate
     # (tools/orders.py's _require_uuid / _require_sane_quantity give the model
-    # a far more actionable message than a raw jsonschema error), and this
-    # keeps behaviour identical to the REST facade.
+    # a far more actionable message than a raw jsonschema error).
     @server.call_tool(validate_input=False)
     async def call_tool_handler(name: str, arguments: dict[str, Any]) -> dict | mcp_types.CallToolResult:
-        token = _require_token(server, internal_token_secret)
+        claims = _require_claims(server, internal_token_secret)
+        if name in _ALL_TOOL_NAMES and name not in authorized_tools(claims.role, _ALL_TOOL_NAMES):
+            return mcp_types.CallToolResult(
+                content=[mcp_types.TextContent(type="text", text=f"{name}: not available to this caller")],
+                isError=True,
+            )
         try:
-            result = await call_tool(registry, name, arguments or {}, token)
+            result = await call_tool(registry, name, arguments or {}, _raw_token(server))
         except Exception as exc:  # noqa: BLE001 - surfaced to the model as an error result
             return mcp_types.CallToolResult(
                 content=[mcp_types.TextContent(type="text", text=f"{name}: {exc}")],

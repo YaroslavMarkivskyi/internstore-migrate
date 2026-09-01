@@ -25,20 +25,36 @@ async def test_list_tools_matches_the_schema_catalog(app):
 async def test_call_tool_routes_to_the_registry_and_forwards_identity(app):
     captured: dict = {}
 
-    async def _fake_get_order_status(*, token: str, order_id: str) -> dict:
+    async def _fake_get_my_orders(*, token: str, limit: int = 5) -> list:
         captured["token"] = token
-        captured["order_id"] = order_id
-        return {"id": order_id, "status": "paid"}
+        captured["limit"] = limit
+        return [{"id": "order-1", "status": "paid"}]
 
-    app.state.tool_registry["get_order_status"] = _fake_get_order_status
+    app.state.tool_registry["get_my_orders"] = _fake_get_my_orders
     token = mint_internal_token("cust-1", "customer")
 
     async with mcp_session(app, token) as session:
-        result = await session.call_tool("get_order_status", {"order_id": "order-1"})
+        result = await session.call_tool("get_my_orders", {"limit": 3})
 
     assert result.isError is False
-    assert result.structuredContent == {"id": "order-1", "status": "paid"}
-    assert captured == {"token": token, "order_id": "order-1"}
+    assert captured == {"token": token, "limit": 3}
+
+
+async def test_a_customer_token_only_sees_the_shopping_tier(app):
+    async with mcp_session(app, mint_internal_token("cust-1", "customer")) as session:
+        tools = {t.name for t in (await session.list_tools()).tools}
+        result = await session.call_tool("get_visit_log", {"warehouse_id": "w", "date_from": "x", "date_to": "y"})
+    assert "get_cart" in tools and "search_products" in tools
+    assert "get_visit_log" not in tools and "get_pending_orders" not in tools
+    assert result.isError is True
+    assert "not available" in result.content[0].text
+
+
+async def test_an_admin_token_sees_the_ops_tier_not_cart_writes(app):
+    async with mcp_session(app, mint_internal_token("admin-1", "admin")) as session:
+        tools = {t.name for t in (await session.list_tools()).tools}
+    assert "get_visit_log" in tools and "get_pending_orders" in tools
+    assert "add_to_cart" not in tools and "remove_from_cart" not in tools
 
 
 async def test_unknown_tool_comes_back_as_an_error_result(app):

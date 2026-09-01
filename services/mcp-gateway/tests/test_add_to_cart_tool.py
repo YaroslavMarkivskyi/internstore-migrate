@@ -49,7 +49,7 @@ async def test_add_to_cart_has_no_customer_id_argument_to_hallucinate(app):
     # A hallucinated customer_id isn't a valid argument for the underlying
     # callable at all — the tool contract has no seam for cross-customer
     # pollution, independent of what Orders does.
-    async with mcp_session(app, mint_internal_token("mcp-gateway", "admin")) as session:
+    async with mcp_session(app, mint_internal_token("cust-x", "customer")) as session:
         result = await session.call_tool(
             "add_to_cart", {"product_id": PRODUCT_ID, "quantity": 2, "customer_id": "someone-elses-id"}
         )
@@ -60,13 +60,13 @@ async def test_add_to_cart_with_non_uuid_product_id_returns_an_actionable_error(
     # STR-148: the shopping agent's LLM occasionally sends a product's
     # name/description instead of its id. That must surface with a message
     # that explains the mistake (tools/orders.py's _require_uuid).
-    async with mcp_session(app, mint_internal_token("mcp-gateway", "admin")) as session:
+    async with mcp_session(app, mint_internal_token("cust-x", "customer")) as session:
         result = await session.call_tool("add_to_cart", {"product_id": "Aged Dutch Gouda", "quantity": 1})
     assert result.isError is True
     assert "must be a UUID" in result.content[0].text
 
 
 async def test_get_cart_has_no_customer_id_argument(app):
-    async with mcp_session(app, mint_internal_token("mcp-gateway", "admin")) as session:
+    async with mcp_session(app, mint_internal_token("cust-x", "customer")) as session:
         result = await session.call_tool("get_cart", {"customer_id": "someone-elses-id"})
     assert result.isError is True
