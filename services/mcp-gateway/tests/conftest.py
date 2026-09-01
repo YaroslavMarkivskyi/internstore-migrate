@@ -49,13 +49,14 @@ def admin_token() -> str:
 
 
 @asynccontextmanager
-async def mcp_session(app, token: str | None):
+async def mcp_session(app, token: str | None, extra_headers: dict | None = None):
     """A real MCP client session over the in-process ASGI app, talking to the
     Streamable HTTP endpoint at /mcp."""
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
     headers = {"X-Internal-Token": token} if token else {}
+    headers.update(extra_headers or {})
 
     def _factory(*, headers=None, timeout=None, auth=None) -> AsyncClient:
         return AsyncClient(

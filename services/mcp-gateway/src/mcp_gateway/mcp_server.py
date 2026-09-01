@@ -50,6 +50,13 @@ _TOOLS: list[mcp_types.Tool] = [
 _ALL_TOOL_NAMES = frozenset(t.name for t in _TOOLS)
 
 
+# Tiers reachable through the public door (nginx /api/mcp, marked with the
+# X-MCP-Public header). Even an admin's own Firebase token gets capped to
+# `customer` here — the ops / telemetry / security tools are mesh-only, never
+# exposed to an external MCP client (Claude Desktop &c.), regardless of role.
+_PUBLIC_MAX_ROLE = "customer"
+
+
 def _require_claims(server: Server, secret: str) -> InternalClaims:
     """Read + verify X-Internal-Token off the in-flight request. Raises inside
     a tool call -> the SDK returns it as an error result the caller can act on."""
@@ -57,13 +64,16 @@ def _require_claims(server: Server, secret: str) -> InternalClaims:
         request = server.request_context.request
     except LookupError:  # pragma: no cover - never hit under the HTTP transport
         request = None
-    token = request.headers.get("x-internal-token") if request is not None else None
+    headers = request.headers if request is not None else {}
+    token = headers.get("x-internal-token")
     if not token:
         raise ValueError("Missing internal token")
     try:
         claims = verify_internal_token(token, secret)
     except ValueError as exc:
         raise ValueError("Invalid internal token") from exc
+    if headers.get("x-mcp-public") and claims.role not in ("customer", "guest"):
+        claims = claims.model_copy(update={"role": _PUBLIC_MAX_ROLE})
     return claims
 
 

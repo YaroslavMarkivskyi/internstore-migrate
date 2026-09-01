@@ -6,9 +6,16 @@ so any MCP-compatible AI agent — starting with the AI Assistant — calls one
 consistent tool registry instead of a hand-rolled HTTP client per domain
 service.
 
-Internal-only: no nginx route, never reachable from the browser. Every
-request (from AI Assistant, or any future client) must carry the same
-`X-Internal-Token` every other domain service requires. **STR-146:** the
+Two doors, one tool-execution core:
+
+- **`/mcp` (internal)** — mesh-only, no nginx route. Callers (the AI
+  Assistant's ADK agents, or any in-mesh client) present an `X-Internal-Token`.
+- **`/api/mcp` (public, Phase 3)** — fronted by the external nginx Gateway,
+  which does the Firebase → internal-token exchange every other service
+  gets and adds an `X-MCP-Public` marker. External MCP clients (Claude
+  Desktop &c.) connect here with a Firebase ID token as the Bearer.
+
+Every
 Gateway no longer mints its own token for outbound calls — it forwards the
 caller's own already-verified token unchanged to whichever domain service a
 tool call fans out to (see `src/mcp_gateway/auth.py`'s
@@ -40,6 +47,25 @@ async with streamablehttp_client(
         print(await s.list_tools())
         print(await s.call_tool("get_order_status", {"order_id": "<uuid>"}))
 ```
+
+### Public door (`/api/mcp`)
+
+`GET /.well-known/oauth-protected-resource` (RFC 9728, unauthenticated)
+advertises the Firebase project as the OAuth authorization server, so a
+spec-compliant client can discover where to get a token. Token *acquisition*
+is Firebase's (the web app's login) — the emulator/demo path is to pass a
+Firebase ID token as the Bearer directly.
+
+Regardless of the token's role, the public door serves the **customer tier
+only** — an admin's own token gets no ops/telemetry/security tools here
+(`mcp_server._require_claims` caps it when it sees `X-MCP-Public`). nginx
+also rate-limits this route (`limit_req_zone mcp_public`, 60 r/min per IP).
+See [scripts/test-mcp-public.sh](../../scripts/test-mcp-public.sh).
+
+Not yet done: the full MCP OAuth 2.1 flow (dynamic client registration,
+the authorization-server metadata redirect) — Firebase Auth isn't a general
+OAuth AS, so an automatic Claude-Desktop-style connect needs a real broker
+in front; out of scope for the demo.
 
 ## Tool catalog
 
@@ -154,6 +180,10 @@ docker compose up -d --build mcp-gateway
   on instead of a raw jsonschema error.
 - **`schema.py` `TOOL_SPECS` is still hand-maintained** rather than generated
   from the tool-client method signatures — a known "generate it" follow-up.
-- **Tool-tier gating lives on the agent side** (`McpToolset(tool_filter=...)`
-  in ai-assistant), not in the Gateway. Moving it here, behind a shared
-  `authorize_tools(role)`, is Phase 3 along with the public OAuth door.
+- **No full MCP OAuth 2.1 on the public door.** `authz.py` enforces the
+  role→tier gate server-side, nginx does the Firebase→internal-token
+  exchange + rate limit, and `/.well-known/oauth-protected-resource` is
+  served — but dynamic client registration and the authorization-server
+  metadata handshake a client like Claude Desktop expects aren't wired
+  (Firebase Auth isn't a general OAuth AS). The demo path is a
+  pasted Firebase ID token.

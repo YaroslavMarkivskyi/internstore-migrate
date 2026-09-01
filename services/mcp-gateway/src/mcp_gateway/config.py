@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # same product_embeddings table.
     embedding_dimensions: int = 1536
     http_timeout_seconds: float = 10.0
+    # Phase 3 — the public MCP door (nginx `/api/mcp`). `public_mcp_url` is the
+    # externally-reachable URL of this server; `firebase_project_id` (defaults
+    # to gcp_project) fixes the OAuth issuer advertised in the RFC 9728
+    # protected-resource metadata a spec-compliant MCP client discovers.
+    public_mcp_url: str = "https://localhost:8443/api/mcp"
+    firebase_project_id: str = ""
 
 
 def load_settings() -> Settings:

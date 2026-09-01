@@ -1212,6 +1212,8 @@ services:
       - telemetry-aggregates
       - security
       - chat
+      # Phase 3: the public MCP door (/api/mcp) proxies here.
+      - mcp-gateway
 
   kafka:
     image: apache/kafka:3.7.0

@@ -77,4 +77,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    # RFC 9728 — lets a spec-compliant MCP client (Claude Desktop &c.)
+    # connecting to the public door (nginx `/api/mcp`) discover that this
+    # resource is protected by Firebase-issued OAuth tokens. Token
+    # acquisition itself is Firebase's (the web app's login); for the demo a
+    # client passes a Firebase ID token as the Bearer directly.
+    @app.get("/.well-known/oauth-protected-resource")
+    async def oauth_protected_resource() -> dict:
+        project = settings.firebase_project_id or settings.gcp_project
+        return {
+            "resource": settings.public_mcp_url,
+            "authorization_servers": [f"https://securetoken.google.com/{project}"],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": ["mcp:shopping"],
+        }
+
     return app
