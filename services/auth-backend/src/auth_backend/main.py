@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import firebase_admin
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from redis.asyncio import Redis
@@ -120,6 +121,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {"sub": claims.sub, "email": claims.email, "role": claims.role, "internalToken": internal_token}
         )
+
+    # Self-service customer registration. The rest of auth is Firebase-
+    # native (the frontend calls the Firebase JS SDK directly for
+    # login/refresh), but creating a user ALSO needs the `role: customer`
+    # custom claim set server-side — external_token.py rejects any token
+    # without a customer/admin role — so it can't be done from the browser.
+    # firebase_admin here talks to the Auth emulator (FIREBASE_AUTH_EMULATOR_HOST).
+    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    @app.post("/auth/register")
+    async def register(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"detail": "Invalid request body"}, status_code=400)
+
+        email = (body.get("email") or "").strip()
+        password = body.get("password") or ""
+        first = (body.get("first_name") or "").strip()
+        last = (body.get("last_name") or "").strip()
+
+        if not _EMAIL_RE.match(email):
+            return JSONResponse({"detail": "A valid email is required"}, status_code=422)
+        if len(password) < 6:
+            return JSONResponse({"detail": "Password must be at least 6 characters"}, status_code=422)
+
+        display_name = " ".join(p for p in (first, last) if p) or None
+        try:
+            user = firebase_auth.create_user(email=email, password=password, display_name=display_name)
+        except firebase_auth.EmailAlreadyExistsError:
+            return JSONResponse({"detail": "An account with this email already exists"}, status_code=409)
+        except Exception:
+            return JSONResponse({"detail": "Registration failed"}, status_code=400)
+
+        # Downstream services (external_token.py) require this claim; a fresh
+        # sign-in right after this call picks it up in the ID token.
+        firebase_auth.set_custom_user_claims(user.uid, {"role": "customer"})
+        return JSONResponse({"status": "ok", "uid": user.uid}, status_code=201)
 
     # STR-146: re-mints a still-valid internal token with a fresh exp,
     # same sub/role. Exists for callers that hold a real user's internal

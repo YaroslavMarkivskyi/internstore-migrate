@@ -145,18 +145,3 @@ async def reindex_help_docs(
     return len(seen)
 
 
-async def search_help(
-    session: AsyncSession,
-    client: genai.Client,
-    model: str,
-    dimensions: int,
-    query: str,
-    limit: int,
-) -> list[dict]:
-    vector = await embed_text(client, model, query, dimensions)
-    result = await session.execute(
-        select(HelpChunk.source, HelpChunk.heading, HelpChunk.content)
-        .order_by(HelpChunk.embedding.l2_distance(vector))
-        .limit(limit)
-    )
-    return [{"source": row.source, "heading": row.heading, "content": row.content} for row in result]

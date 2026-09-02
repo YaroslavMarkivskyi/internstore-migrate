@@ -11,6 +11,8 @@ from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from ai_assistant.adk.prompts import (
     ADMIN_INSTRUCTION,
     ADMIN_TOOL_NAMES,
+    GUEST_INSTRUCTION,
+    GUEST_TOOL_NAMES,
     SHOPPING_INSTRUCTION,
     SHOPPING_TOOL_NAMES,
 )
@@ -18,6 +20,7 @@ from ai_assistant.adk.token_context import HeaderProvider
 
 SHOPPING_AGENT_NAME = "shopping_assistant"
 OPS_AGENT_NAME = "ops_assistant"
+GUEST_AGENT_NAME = "guest_assistant"
 
 
 def _gateway_toolset(
@@ -67,6 +70,24 @@ def build_ops_agent(
                 mcp_url=mcp_gateway_url, tool_filter=ADMIN_TOOL_NAMES, header_provider=header_provider
             ),
             *extra_tools,
+        ],
+    )
+
+
+def build_guest_agent(
+    *, model: str, mcp_gateway_url: str, header_provider: HeaderProvider
+) -> LlmAgent:
+    """The support agent for signed-out chat-widget visitors. Read-only
+    catalogue + help tools only, no memory (guests have no durable
+    identity)."""
+    return LlmAgent(
+        name=GUEST_AGENT_NAME,
+        model=model,
+        instruction=GUEST_INSTRUCTION,
+        tools=[
+            _gateway_toolset(
+                mcp_url=mcp_gateway_url, tool_filter=GUEST_TOOL_NAMES, header_provider=header_provider
+            )
         ],
     )
 

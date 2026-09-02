@@ -12,7 +12,21 @@ copy — this repo has no shared-library mechanism between services (same
 reason `observability.py` etc. are duplicated).
 """
 
-# Cart-scoped or read-only and customer/guest-safe with a forwarded customer
+# Read-only catalogue + help, no cart, no order history. What an
+# unauthenticated guest (chat widget, no Firebase account) may reach through
+# the guest support agent. Matches ai_assistant/adk/prompts.GUEST_TOOL_NAMES.
+_GUEST_TIER = frozenset(
+    {
+        "search_products",
+        "get_similar_products",
+        "get_product",
+        "list_categories",
+        "check_availability",
+        "search_help",
+    }
+)
+
+# Cart-scoped or read-only and customer-safe with a forwarded customer
 # token. Matches ai_assistant/adk/prompts.SHOPPING_TOOL_NAMES.
 _SHOPPING_TIER = frozenset(
     {
@@ -63,6 +77,8 @@ def authorized_tools(role: str, all_tool_names: frozenset[str]) -> frozenset[str
         return all_tool_names
     if role == "admin":
         return _ADMIN_TIER & all_tool_names
-    if role in ("customer", "guest"):
+    if role == "customer":
         return _SHOPPING_TIER & all_tool_names
+    if role == "guest":
+        return _GUEST_TIER & all_tool_names
     return frozenset()

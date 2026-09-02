@@ -1,5 +1,6 @@
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 
+import api from '@services/http/api';
 import { auth } from '@services/firebase/client';
 
 import {
@@ -23,11 +24,12 @@ export const login = async (
 };
 
 export const signUp = async (
-  _creds: SignUpCredentials
+  creds: SignUpCredentials
 ): Promise<AuthCredentials> => {
-  throw new Error(
-    'Sign-up is not available yet: the backend has no user-registration endpoint.'
-  );
+  // auth-backend creates the Firebase user and sets its role claim
+  // (POST /api/auth/register); then we sign in normally to get tokens.
+  await api.post('auth/register', creds);
+  return login({ email: creds.email, password: creds.password });
 };
 
 export const logout = async (_creds: RefreshToken): Promise<void> => {

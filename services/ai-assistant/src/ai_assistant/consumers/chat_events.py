@@ -1,18 +1,23 @@
 import logging
 from collections.abc import Awaitable, Callable
 
-from google import genai
+from google.adk.runners import Runner
+from google.adk.sessions import BaseSessionService
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from ai_assistant.agent import RATE_LIMIT_MESSAGE, check_and_increment_rate_limit, generate_reply, get_mode
+from ai_assistant.adk.agents import GUEST_AGENT_NAME
+from ai_assistant.adk.prompts import GUEST_FALLBACK_REPLY
+from ai_assistant.adk.session import prepare_session
+from ai_assistant.adk.streaming import run_agent_stream, stream_agent_reply
+from ai_assistant.adk.token_context import reset_request_token, set_request_token
+from ai_assistant.agent import RATE_LIMIT_MESSAGE, check_and_increment_rate_limit, get_mode
+from ai_assistant.auth import mint_internal_token
 from ai_assistant.chat_client import ChatClient
 from ai_assistant.config import Settings
-from ai_assistant.context import build_messages
-from ai_assistant.orders_client import OrdersClient
 
 logger = logging.getLogger(__name__)
 
+APP_NAME = "ai-assistant"
 TOPIC = "chat-events"
 GROUP_ID = "ai-assistant-chat-events"
 
@@ -21,11 +26,10 @@ Dispatch = Callable[[dict], Awaitable[None]]
 
 async def handle_customer_message_sent(
     *,
-    session_factory: async_sessionmaker,
     redis: Redis,
-    genai_client: genai.Client,
+    session_service: BaseSessionService,
+    guest_runner: Runner,
     chat_client: ChatClient,
-    orders_client: OrdersClient,
     settings: Settings,
     payload: dict,
 ) -> None:
@@ -44,13 +48,12 @@ async def handle_customer_message_sent(
 
     # STR-146: registered customers are handled synchronously instead, via
     # Chat calling POST /agent/shopping directly with the customer's own
-    # internal-token (see main.py) — that's the only path that can
-    # propagate a real per-customer identity into a cart-mutating tool
-    # call. This Kafka-driven consumer has no inbound token to forward (see
-    # ai_assistant/auth.py's own docstring) and keeps handling guests only,
-    # with the original non-agentic, tool-less reply — guests get no
-    # shopping-agent access per the ticket, and this path never touches
-    # cart tools regardless.
+    # internal-token (see main.py) — that's the only path that can propagate
+    # a real per-customer identity into a cart-mutating tool call. This
+    # Kafka-driven consumer has no inbound token to forward and keeps
+    # handling guests only: it mints a guest-role token, so the Gateway pins
+    # it to the read-only guest tool tier (mcp_gateway/authz._GUEST_TIER) —
+    # catalogue lookups and the FAQ / policy corpus, no cart, no orders.
     if sender_role == "customer":
         return
 
@@ -66,37 +69,42 @@ async def handle_customer_message_sent(
         await chat_client.set_mode(room_id, "human")
         return
 
-    async with session_factory() as session:
-        system_instruction, contents = await build_messages(
-            session=session,
-            genai_client=genai_client,
-            embedding_model=settings.embedding_model,
-            embedding_dimensions=settings.embedding_dimensions,
-            chat_client=chat_client,
-            orders_client=orders_client,
-            room_id=room_id,
-            sender_id=sender_id,
-            sender_role=sender_role or "guest",
-            customer_message=content,
-            conversation_history_limit=settings.conversation_history_limit,
-            order_history_limit=settings.order_history_limit,
-            product_context_limit=settings.product_context_limit,
-            help_context_limit=settings.help_context_limit,
-        )
-
-    reply = await generate_reply(
-        genai_client, settings.chat_model, system_instruction, contents, settings.max_response_tokens
+    history = await chat_client.get_recent_messages(room_id, settings.conversation_history_limit)
+    session = await prepare_session(
+        session_service,
+        app_name=APP_NAME,
+        user_id=sender_id,
+        agent_name=GUEST_AGENT_NAME,
+        history=history,
     )
-    await chat_client.post_message(room_id, reply)
+
+    token = mint_internal_token(settings.internal_token_secret, sub=sender_id, role="guest")
+    handle = set_request_token(token)
+    try:
+        await stream_agent_reply(
+            chat_client,
+            room_id,
+            run_agent_stream(
+                guest_runner,
+                user_id=sender_id,
+                session_id=session.id,
+                message=content,
+                author=GUEST_AGENT_NAME,
+                max_llm_calls=settings.max_react_iterations * 2,
+                fallback_reply=GUEST_FALLBACK_REPLY,
+            ),
+            fallback=GUEST_FALLBACK_REPLY,
+        )
+    finally:
+        reset_request_token(handle)
 
 
 def make_dispatch(
     *,
-    session_factory: async_sessionmaker,
     redis: Redis,
-    genai_client: genai.Client,
+    session_service: BaseSessionService,
+    guest_runner: Runner,
     chat_client: ChatClient,
-    orders_client: OrdersClient,
     settings: Settings,
 ) -> Dispatch:
     async def dispatch(envelope: dict) -> None:
@@ -107,11 +115,10 @@ def make_dispatch(
             # needed for them here.
             return
         await handle_customer_message_sent(
-            session_factory=session_factory,
             redis=redis,
-            genai_client=genai_client,
+            session_service=session_service,
+            guest_runner=guest_runner,
             chat_client=chat_client,
-            orders_client=orders_client,
             settings=settings,
             payload=envelope.get("payload", {}),
         )

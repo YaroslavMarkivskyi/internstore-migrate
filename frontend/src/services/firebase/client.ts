@@ -15,5 +15,16 @@ const app = initializeApp({
 export const auth = getAuth(app);
 
 if (FIREBASE_AUTH_EMULATOR_HOST) {
-  connectAuthEmulator(auth, `http://${FIREBASE_AUTH_EMULATOR_HOST}`);
+  // "origin" -> use the page's own origin, so the SDK's
+  // identitytoolkit/securetoken calls go through whatever host served the
+  // app (localhost:8443, an ngrok tunnel, …) and nginx forwards them to
+  // the emulator. A bare "host:port" keeps the old direct-to-emulator
+  // behaviour; a full URL is used as-is.
+  const emulatorUrl =
+    FIREBASE_AUTH_EMULATOR_HOST === 'origin'
+      ? window.location.origin
+      : /^https?:\/\//.test(FIREBASE_AUTH_EMULATOR_HOST)
+        ? FIREBASE_AUTH_EMULATOR_HOST
+        : `http://${FIREBASE_AUTH_EMULATOR_HOST}`;
+  connectAuthEmulator(auth, emulatorUrl);
 }

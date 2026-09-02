@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -16,6 +15,7 @@ from pydantic import BaseModel
 from ai_assistant.adk.agents import (
     OPS_AGENT_NAME,
     SHOPPING_AGENT_NAME,
+    build_guest_agent,
     build_ops_agent,
     build_shopping_agent,
     close_toolsets,
@@ -23,7 +23,7 @@ from ai_assistant.adk.agents import (
 from ai_assistant.adk.memory import PgVectorMemoryService
 from ai_assistant.adk.prompts import ADMIN_FALLBACK_REPLY, FALLBACK_REPLY
 from ai_assistant.adk.session import prepare_session, viewing_context_note
-from ai_assistant.adk.streaming import Reset, run_agent_stream
+from ai_assistant.adk.streaming import run_agent_stream, stream_agent_reply
 from ai_assistant.adk.token_context import make_header_provider, reset_request_token, set_request_token
 from ai_assistant.agent import RATE_LIMIT_MESSAGE, check_and_increment_rate_limit, get_mode
 from ai_assistant.auth import InternalClaims, get_raw_internal_token, verify_internal_token
@@ -34,13 +34,7 @@ from ai_assistant.consumers import catalog_events, chat_events
 from ai_assistant.db import make_session_factory
 from ai_assistant.kafka import run_consumer_loop
 from ai_assistant.observability import setup_observability
-from ai_assistant.orders_client import OrdersClient
 from ai_assistant.redis_client import make_redis_client
-
-# Batch streamed deltas up to roughly this many characters before pushing
-# one to Chat — the model streams word-by-word, and one HTTP round trip per
-# word through Chat's gate is needless chatter for no perceptible UX gain.
-_DELTA_FLUSH_CHARS = 40
 
 APP_NAME = "ai-assistant"
 
@@ -52,11 +46,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
 
     chat_dispatch = chat_events.make_dispatch(
-        session_factory=app.state.session_factory,
         redis=app.state.redis,
-        genai_client=app.state.genai_client,
+        session_service=app.state.adk_session_service,
+        guest_runner=app.state.guest_runner,
         chat_client=app.state.chat_client,
-        orders_client=app.state.orders_client,
         settings=settings,
     )
     catalog_dispatch = catalog_events.make_dispatch(
@@ -86,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.gather(*tasks, return_exceptions=True)
         await close_toolsets(app.state.shopping_agent)
         await close_toolsets(app.state.ops_agent)
+        await close_toolsets(app.state.guest_agent)
         await app.state.redis.aclose()
 
 
@@ -108,43 +102,6 @@ class AdminAgentRequest(BaseModel):
     message: str
 
 
-async def _stream_agent_reply(chat_client, room_id: str, events, *, fallback: str) -> None:
-    """Drain an agent's Delta/Reset stream into Chat: batched `message_delta`
-    frames, a `message_reset` on Reset, one persisted `message_done` at the end.
-
-    Always finishes with a `message_done` — if the agent stream raises partway
-    through (a model error, an MCP hiccup), the customer gets the fallback
-    text and the "typing…" indicator clears, instead of hanging forever."""
-    stream_id = str(uuid.uuid4())
-    full: list[str] = []
-    pending: list[str] = []
-
-    async def _flush() -> None:
-        if pending:
-            await chat_client.stream_delta(room_id, stream_id, "".join(pending))
-            pending.clear()
-
-    try:
-        async for event in events:
-            if isinstance(event, Reset):
-                full.clear()
-                pending.clear()
-                await chat_client.stream_reset(room_id, stream_id)
-                continue
-            full.append(event.text)
-            pending.append(event.text)
-            if sum(len(part) for part in pending) >= _DELTA_FLUSH_CHARS:
-                await _flush()
-        await _flush()
-    except Exception:
-        logger.exception("Agent stream failed for room %s", room_id)
-        if not full:
-            await chat_client.stream_reset(room_id, stream_id)
-            full = [fallback]
-
-    await chat_client.stream_done(room_id, stream_id, "".join(full))
-
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     setup_observability("ai-assistant")
@@ -163,7 +120,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         enterprise=True, project=settings.gcp_project, location=settings.gcp_location
     )
     app.state.chat_client = ChatClient(settings.chat_service_url, 10.0, settings.internal_token_secret)
-    app.state.orders_client = OrdersClient(settings.orders_service_url, 10.0, settings.internal_token_secret)
     app.state.auth_backend_client = AuthBackendClient(settings.auth_backend_url, 10.0)
 
     # ADK talks to Gemini through google-genai; point it at the same Vertex
@@ -180,21 +136,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_backend_client, settings.token_refresh_margin_seconds
     )
     app.state.shopping_agent = build_shopping_agent(
-        model=settings.chat_model, mcp_gateway_url=settings.mcp_gateway_url, header_provider=header_provider
+        model=settings.chat_model,
+        mcp_gateway_url=settings.mcp_gateway_url,
+        header_provider=header_provider,
+        with_memory=settings.memory_enabled,
     )
     app.state.ops_agent = build_ops_agent(
+        model=settings.chat_model, mcp_gateway_url=settings.mcp_gateway_url, header_provider=header_provider
+    )
+    # The guest support agent — signed-out chat-widget visitors, driven by
+    # the chat-events Kafka consumer. Read-only catalogue + help tools, no
+    # memory; the consumer mints a guest-role token per message so the
+    # Gateway pins it to the guest tier (see consumers/chat_events.py).
+    app.state.guest_agent = build_guest_agent(
         model=settings.chat_model, mcp_gateway_url=settings.mcp_gateway_url, header_provider=header_provider
     )
     app.state.adk_session_service = InMemorySessionService()
     # Cross-session customer memory (durable prefs), pgvector-backed — the
     # shopping agent's PreloadMemoryTool reads it each turn, and the endpoint
     # feeds finished conversations back in. Ops agent gets no memory.
-    app.state.memory_service = PgVectorMemoryService(
-        app.state.session_factory,
-        app.state.genai_client,
-        chat_model=settings.chat_model,
-        embedding_model=settings.embedding_model,
-        embedding_dimensions=settings.embedding_dimensions,
+    # MEMORY_ENABLED=false turns it off entirely (each turn otherwise costs
+    # several extra Gemini embedding calls — a real drain on a tight Vertex
+    # quota, and irrelevant to a search-focused demo).
+    app.state.memory_service = (
+        PgVectorMemoryService(
+            app.state.session_factory,
+            app.state.genai_client,
+            chat_model=settings.chat_model,
+            embedding_model=settings.embedding_model,
+            embedding_dimensions=settings.embedding_dimensions,
+        )
+        if settings.memory_enabled
+        else None
     )
     app.state.shopping_runner = Runner(
         app_name=APP_NAME,
@@ -204,6 +177,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.ops_runner = Runner(
         app_name=APP_NAME, agent=app.state.ops_agent, session_service=app.state.adk_session_service
+    )
+    app.state.guest_runner = Runner(
+        app_name=APP_NAME, agent=app.state.guest_agent, session_service=app.state.adk_session_service
     )
 
     @app.get("/health")
@@ -272,10 +248,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
         # Stream the reply to Chat (and on to the customer's WebSocket) as the
-        # model produces it — see _stream_agent_reply.
+        # model produces it — see adk.streaming.stream_agent_reply.
         token_handle = set_request_token(token)
         try:
-            await _stream_agent_reply(
+            await stream_agent_reply(
                 app.state.chat_client,
                 payload.room_id,
                 run_agent_stream(
@@ -295,11 +271,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Feed the finished conversation back into memory — best-effort, the
         # reply has already been delivered. PgVectorMemoryService distils any
         # durable customer facts and stores them for the next session.
-        updated = await app.state.adk_session_service.get_session(
-            app_name=APP_NAME, user_id=claims.sub, session_id=session.id
-        )
-        if updated is not None:
-            await app.state.memory_service.add_session_to_memory(updated)
+        if app.state.memory_service is not None:
+            updated = await app.state.adk_session_service.get_session(
+                app_name=APP_NAME, user_id=claims.sub, session_id=session.id
+            )
+            if updated is not None:
+                await app.state.memory_service.add_session_to_memory(updated)
         return {"status": "ok"}
 
     # STR-XXX: the internal ops assistant. Called by Chat (ws/room.py) only
@@ -335,7 +312,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         token_handle = set_request_token(token)
         try:
-            await _stream_agent_reply(
+            await stream_agent_reply(
                 app.state.chat_client,
                 payload.room_id,
                 run_agent_stream(

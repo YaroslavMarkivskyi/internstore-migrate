@@ -4,11 +4,16 @@ from mcp_gateway.schema import TOOL_SPECS_BY_NAME
 ALL = frozenset(TOOL_SPECS_BY_NAME)
 
 
-def test_customer_and_guest_get_the_cart_and_customer_safe_reads_only():
-    for role in ("customer", "guest"):
-        allowed = authorized_tools(role, ALL)
-        assert {"get_cart", "add_to_cart", "search_products", "search_help"} <= allowed
-        assert not (allowed & {"get_visit_log", "get_pending_orders", "list_customer_orders", "get_stock_levels"})
+def test_customer_gets_the_cart_and_customer_safe_reads_only():
+    allowed = authorized_tools("customer", ALL)
+    assert {"get_cart", "add_to_cart", "search_products", "search_help"} <= allowed
+    assert not (allowed & {"get_visit_log", "get_pending_orders", "list_customer_orders", "get_stock_levels"})
+
+
+def test_guest_gets_read_only_catalogue_and_help_but_no_cart_or_orders():
+    allowed = authorized_tools("guest", ALL)
+    assert {"search_products", "get_product", "check_availability", "search_help"} <= allowed
+    assert not (allowed & {"get_cart", "add_to_cart", "remove_from_cart", "get_my_orders", "get_visit_log"})
 
 
 def test_admin_gets_read_only_ops_tools_but_no_cart_writes():

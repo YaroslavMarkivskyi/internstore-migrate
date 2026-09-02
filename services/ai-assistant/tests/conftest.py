@@ -24,7 +24,6 @@ def settings() -> Settings:
         kafka_bootstrap_servers="kafka.invalid:9092",
         redis_url="redis://redis.invalid:6379",
         chat_service_url="http://chat.invalid",
-        orders_service_url="http://orders.invalid",
         mcp_gateway_url="http://mcp-gateway.invalid",
         auth_backend_url="http://auth-backend.invalid",
         gcp_project="test-project",
@@ -43,7 +42,6 @@ def app(settings: Settings):
     app.state.redis = fakeredis.aioredis.FakeRedis(server=fakeredis.aioredis.FakeServer(), decode_responses=True)
     app.state.chat_client = AsyncMock()
     app.state.chat_client.get_recent_messages = AsyncMock(return_value=[])
-    app.state.mcp_client = AsyncMock()
     app.state.auth_backend_client = AsyncMock()
     app.state.genai_client = AsyncMock()
     app.state.memory_service = AsyncMock()

@@ -10,11 +10,10 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str
     redis_url: str
     chat_service_url: str
-    orders_service_url: str
-    # STR-146: this service's first actual consumer of the Gateway — the
-    # shopping ReAct loop (see react_loop.py) calls search_products/
-    # get_cart/add_to_cart/remove_from_cart through here instead of a direct
-    # Orders/Catalog HTTP call.
+    # STR-146: this service's first actual consumer of the Gateway — the ADK
+    # agents call search_products / get_cart / add_to_cart / remove_from_cart
+    # (and the read-only ops + guest tool tiers) through here over the real
+    # MCP protocol instead of direct Orders/Catalog HTTP calls.
     mcp_gateway_url: str
     # STR-146: used to refresh the customer's internal-token mid-ReAct-loop
     # when it's close to its 60s TTL (see token_manager.py) — this service
@@ -50,10 +49,10 @@ class Settings(BaseSettings):
     ai_rate_limit: int = 10
     ai_rate_limit_window_seconds: int = 3600
     conversation_history_limit: int = 20
-    order_history_limit: int = 5
-    product_context_limit: int = 5
-    help_context_limit: int = 2
-    max_response_tokens: int = 500
+    # Cross-session customer memory (PreloadMemoryTool + add_session_to_memory).
+    # Off for demos on a tight Vertex embedding quota — each shopping turn
+    # otherwise spends several extra embedding calls that search_products needs.
+    memory_enabled: bool = True
     # STR-146: reuses STR-137's ReAct loop cap — a shopping conversation
     # shouldn't need more than a few search/add cycles.
     max_react_iterations: int = 5
