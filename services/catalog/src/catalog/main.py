@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from sqlalchemy import text
 
 from catalog.config import Settings, load_settings
 from catalog.db import make_session_factory
@@ -14,10 +15,19 @@ from catalog.observability import setup_observability
 from catalog.outbox_worker import run_outbox_worker
 from catalog.routers import categories, product_images, products
 
+_STARTUP_DB_TIMEOUT_SECONDS = 10.0
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+
+    # Fail fast (12-factor): if a backing service is unreachable at boot, crash
+    # and let the orchestrator restart us rather than serve broken traffic. The
+    # timeout keeps an unreachable host from hanging the boot indefinitely.
+    async with app.state.session_factory() as session:
+        await asyncio.wait_for(session.execute(text("SELECT 1")), timeout=_STARTUP_DB_TIMEOUT_SECONDS)
+
     producer = KafkaEventProducer(settings.kafka_bootstrap_servers)
     await producer.start()
     app.state.kafka_producer = producer

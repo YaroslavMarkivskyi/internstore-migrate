@@ -117,6 +117,11 @@ services:
       # is briefly unavailable, this call just 503s in that case.
       INVENTORY_BASE_URL: http://inventory:8000
       INVENTORY_TIMEOUT_SECONDS: "5.0"
+      # The image entrypoint only starts the web process (12-factor). It does
+      # not run migrations — do that as a one-off when the schema changes:
+      #   docker compose run --rm catalog alembic upgrade head
+      # RELOAD=1 starts uvicorn with --reload against the src bind mount below.
+      RELOAD: "1"
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/catalog/src:/app/src
