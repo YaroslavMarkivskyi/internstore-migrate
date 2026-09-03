@@ -1198,7 +1198,7 @@ services:
       # Hosts the Vite 6 dev server will answer for when reached through a
       # proxy/tunnel (it rejects unknown Host headers otherwise). The
       # leading dot on ".ngrok-free.dev" covers any ngrok subdomain.
-      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-localhost,.ngrok-free.dev,.ngrok.io}
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-localhost,.ngrok-free.dev,.ngrok.io,.trycloudflare.com}
       # HMR's websocket can't infer the public port behind a proxy, so it's
       # off for the containerised setup (edits still recompile; the browser
       # just needs a manual refresh). Set to "false" for hot reload when you

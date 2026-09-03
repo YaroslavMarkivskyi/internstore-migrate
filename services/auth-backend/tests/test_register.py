@@ -3,6 +3,7 @@ set the `role: customer` custom claim itself (external_token.py rejects a
 token without it), so auth-backend creates the Firebase user and sets the
 claim server-side."""
 
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -14,10 +15,9 @@ def firebase_stub(monkeypatch):
     created: list[dict] = []
     claims: dict[str, dict] = {}
 
-    def _create_user(*, email, password, display_name=None):
+    def _create_user(*, uid, email, password, display_name=None):
         if any(u["email"] == email for u in created):
             raise firebase_auth.EmailAlreadyExistsError("exists", cause=None, http_response=None)
-        uid = f"uid-{len(created) + 1}"
         created.append({"uid": uid, "email": email, "password": password, "display_name": display_name})
         return SimpleNamespace(uid=uid)
 
@@ -44,6 +44,8 @@ async def test_register_creates_user_and_sets_customer_claim(client, firebase_st
     body = resp.json()
     assert body["status"] == "ok"
     uid = body["uid"]
+    # chat's Room.customer_id is a UUID column — the uid must parse as one.
+    assert uuid.UUID(uid)
     assert firebase_stub.created[0]["email"] == "new.customer@example.com"
     assert firebase_stub.created[0]["display_name"] == "New Customer"
     assert firebase_stub.claims[uid] == {"role": "customer"}

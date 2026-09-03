@@ -1,4 +1,5 @@
 import re
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -148,8 +149,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"detail": "Password must be at least 6 characters"}, status_code=422)
 
         display_name = " ".join(p for p in (first, last) if p) or None
+        # chat's Room.customer_id is a UUID column and ws/room.py builds it
+        # straight from the token sub (uuid.UUID(claims.sub)), so a customer's
+        # Firebase uid MUST be UUID-shaped — the emulator's own generated ids
+        # (28-char base62) blow up the WebSocket handshake. Pin it ourselves.
         try:
-            user = firebase_auth.create_user(email=email, password=password, display_name=display_name)
+            user = firebase_auth.create_user(
+                uid=str(uuid.uuid4()), email=email, password=password, display_name=display_name
+            )
         except firebase_auth.EmailAlreadyExistsError:
             return JSONResponse({"detail": "An account with this email already exists"}, status_code=409)
         except Exception:
