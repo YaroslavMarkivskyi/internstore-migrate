@@ -4,7 +4,8 @@
 #
 # 12-factor: starts one web process, nothing else.
 #   * No waiting for backing services -- the app fails fast in
-#     catalog.main.lifespan and the orchestrator restarts it.
+#     catalog.main.lifespan (and /ready reports it) and the orchestrator
+#     restarts / depools it.
 #   * No migrations -- that is a separate release-phase admin process:
 #         <run-image> alembic upgrade head
 #
@@ -23,7 +24,7 @@ fi
 reload=
 [ "${RELOAD:-0}" = "1" ] && reload=--reload
 
-exec uvicorn catalog.main:create_app --factory \
+exec uvicorn catalog.asgi:app \
     --host "${HOST:-0.0.0.0}" \
     --port "${PORT:-8000}" \
     --proxy-headers \
