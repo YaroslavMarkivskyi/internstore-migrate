@@ -59,6 +59,24 @@ class HelpChunk(Base):
     )
 
 
+class AgentMemory(Base):
+    """One durable fact about a customer, distilled from a past shopping
+    conversation and embedded for retrieval (see adk/memory.py's
+    PgVectorMemoryService). Scoped by (app_name, user_id) — a customer's
+    memories never cross to another customer, and guests (no stable sub) are
+    never written. Read each turn by ADK's PreloadMemoryTool via
+    search_memory, which injects the nearest few into the prompt."""
+
+    __tablename__ = "agent_memories"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    app_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ProcessedEvent(Base):
     """Dedup ledger for the catalog-events consumer's at-least-once
     delivery — same shape as Inventory's (see

@@ -1,5 +1,3 @@
-from google import genai
-from google.genai import types
 from redis.asyncio import Redis
 
 RATE_LIMIT_MESSAGE = "I've reached my response limit, switching to human support."
@@ -29,26 +27,3 @@ async def check_and_increment_rate_limit(redis: Redis, room_id: str, limit: int,
     if count == 1:
         await redis.expire(key, window_seconds)
     return count <= limit
-
-
-async def generate_reply(
-    client: genai.Client, model: str, system_instruction: str, contents: list[dict], max_tokens: int
-) -> str:
-    # STR-161b: contents come from context.build_messages as plain
-    # {"role", "content"} dicts (role already mapped to Gemini's "user"/
-    # "model" — see context._sender_role_to_map) — converted to
-    # types.Content here rather than upstream, so build_messages stays
-    # testable without importing the SDK's types.
-    genai_contents = [
-        types.Content(role=entry["role"], parts=[types.Part(text=entry["content"])]) for entry in contents
-    ]
-    response = await client.aio.models.generate_content(
-        model=model,
-        contents=genai_contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            max_output_tokens=max_tokens,
-            temperature=0.3,  # low temperature for factual support responses
-        ),
-    )
-    return response.text

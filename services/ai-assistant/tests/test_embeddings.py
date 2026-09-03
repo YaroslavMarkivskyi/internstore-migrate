@@ -6,7 +6,6 @@ from ai_assistant.consumers.catalog_events import handle_product_deleted, handle
 from ai_assistant.embeddings import (
     build_embedding_text,
     delete_product_embedding,
-    search_similar_products,
     upsert_product_embedding,
 )
 from ai_assistant.models import ProcessedEvent, ProductEmbedding
@@ -128,22 +127,6 @@ async def test_embed_text_requests_the_configured_output_dimensionality():
 
     call_kwargs = client.aio.models.embed_content.call_args.kwargs
     assert call_kwargs["config"].output_dimensionality == DIMENSIONS
-
-
-async def test_search_similar_products_returns_top_results():
-    session = AsyncMock()
-    rows = [
-        SimpleNamespace(product_id=uuid.uuid4(), name="Frozen Peas", description="1kg bag"),
-        SimpleNamespace(product_id=uuid.uuid4(), name="Frozen Corn", description="1kg bag"),
-    ]
-    session.execute = AsyncMock(return_value=iter(rows))
-    client = _fake_genai_client()
-
-    results = await search_similar_products(session, client, "gemini-embedding-001", "peas", DIMENSIONS, limit=5)
-
-    assert len(results) == 2
-    assert results[0]["name"] == "Frozen Peas"
-    assert all("product_id" in r and "description" in r for r in results)
 
 
 async def test_delete_product_embedding_removes_existing_row():

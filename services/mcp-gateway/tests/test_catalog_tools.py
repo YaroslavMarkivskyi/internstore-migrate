@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import AsyncMock
 
 import httpx
@@ -86,6 +87,33 @@ async def test_search_products_embeds_query_and_returns_nearest_rows():
     assert result == [
         {"product_id": "prod-1", "name": "Frozen Peas", "description": "1kg bag", "price": 4.5, "category": "Frozen"}
     ]
+
+
+async def test_search_products_caches_the_query_embedding():
+    genai_client = _fake_genai_client()
+    search_client = ProductSearchClient(_fake_session_factory([]), genai_client, "gemini-embedding-001", 1536)
+
+    await search_client.search_products("t", "Cheese For A Board", limit=5)
+    await search_client.search_products("t", "  cheese   for a board  ", limit=3)  # same, normalised
+
+    genai_client.aio.models.embed_content.assert_awaited_once()
+
+
+async def test_search_products_retries_once_on_a_429():
+    from google.genai.errors import ClientError
+
+    genai_client = AsyncMock()
+    quota_error = ClientError(429, {"error": {"status": "RESOURCE_EXHAUSTED"}}, None)
+    genai_client.aio.models.embed_content = AsyncMock(
+        side_effect=[quota_error, SimpleNamespace(embeddings=[SimpleNamespace(values=[0.1] * 1536)])]
+    )
+    search_client = ProductSearchClient(_fake_session_factory([]), genai_client, "gemini-embedding-001", 1536)
+
+    with mock.patch("mcp_gateway.tools.catalog._EMBED_RETRY_DELAY_SECONDS", 0):
+        result = await search_client.search_products("t", "gouda", limit=5)
+
+    assert result == []
+    assert genai_client.aio.models.embed_content.await_count == 2
 
 
 ANCHOR_ID = "11111111-1111-1111-1111-111111111111"

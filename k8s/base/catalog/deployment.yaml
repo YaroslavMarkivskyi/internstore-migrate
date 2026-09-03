@@ -15,6 +15,28 @@ spec:
         app: catalog
     spec:
       enableServiceLinks: false
+      initContainers:
+      # Schema migrations as a release-phase step, not part of the app's own
+      # start-up (12-factor XII). Same image; the entrypoint execs any args
+      # verbatim instead of the server. Runs on every rollout; Alembic is a
+      # no-op when already at head.
+      - name: migrate
+        image: internstore/catalog:local
+        imagePullPolicy: IfNotPresent
+        args: ["alembic", "upgrade", "head"]
+        envFrom:
+        - configMapRef:
+            name: catalog-config
+        - secretRef:
+            name: catalog-secret
+            optional: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
       containers:
       - name: catalog
         image: internstore/catalog:local
@@ -91,9 +113,12 @@ spec:
         - name: catalog-gate-config
           mountPath: /etc/nginx-src
           readOnly: true
+        # Both probes traverse this gate to the app (nginx passes GETs straight
+        # through). Readiness checks the DB via /ready so a DB outage depools
+        # the pod; liveness stays on /health so it does not also restart it.
         readinessProbe:
           httpGet:
-            path: /health
+            path: /ready
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 5

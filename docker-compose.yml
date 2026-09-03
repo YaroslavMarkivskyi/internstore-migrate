@@ -117,6 +117,11 @@ services:
       # is briefly unavailable, this call just 503s in that case.
       INVENTORY_BASE_URL: http://inventory:8000
       INVENTORY_TIMEOUT_SECONDS: "5.0"
+      # The image entrypoint only starts the web process (12-factor). It does
+      # not run migrations — do that as a one-off when the schema changes:
+      #   docker compose run --rm catalog alembic upgrade head
+      # RELOAD=1 starts uvicorn with --reload against the src bind mount below.
+      RELOAD: "1"
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
       - ./services/catalog/src:/app/src
@@ -1046,10 +1051,11 @@ services:
       INTERNAL_TOKEN_SECRET: dev-only-internal-secret-change-me
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_URL: redis://redis:6379
-      # Container-to-container addresses — bypasses nginx for these internal
-      # calls, same as Orders -> Inventory.
+      # Container-to-container address — bypasses nginx for this internal
+      # call, same as Orders -> Inventory. (Order data now reaches the agents
+      # only as MCP tools via mcp-gateway; this service no longer calls
+      # Orders directly.)
       CHAT_SERVICE_URL: http://chat:8000
-      ORDERS_SERVICE_URL: http://orders:8000
       # STR-161b: replaces OPENAI_API_KEY — Gemini via the Gemini Enterprise
       # Agent Platform authenticates with IAM/Workload Identity, not an API
       # key, so there's no ${VAR:-} secret passthrough here anymore. Local
@@ -1061,6 +1067,10 @@ services:
       # README's "Dev gaps" (same class of trade-off as the old
       # OPENAI_API_KEY requirement — no local LLM fallback either way).
       GCP_PROJECT: ${GCP_PROJECT:-internstore-dev}
+      # Pin the Vertex region so a quota increase lands where the traffic
+      # goes (the "global" endpoint spreads requests across regions, so a
+      # per-region quota bump wouldn't reliably help). Must match mcp-gateway.
+      GCP_LOCATION: ${GCP_LOCATION:-us-central1}
       # Local dev: authenticate to Vertex with the host's Application
       # Default Credentials (gcloud auth application-default login), mounted
       # read-only below. In GKE this is Workload Identity instead and this
@@ -1071,12 +1081,16 @@ services:
       CHAT_MODEL: ${CHAT_MODEL:-gemini-2.5-flash}
       AI_MODE_DEFAULT: ai
       AI_RATE_LIMIT: "10"
-      # STR-146: the shopping ReAct loop's tool calls all go through here
-      # now (see react_loop.py/mcp_client.py) — this was wired through
-      # ahead of time but unused until this ticket.
+      # Cross-session memory adds several Gemini embedding calls per shopping
+      # turn. The local Vertex project's gemini-embedding quota is tiny, and
+      # search_products needs that quota for every query — so it's off here.
+      # Flip to "true" once the quota is raised to demo the memory feature.
+      MEMORY_ENABLED: "false"
+      # The ADK agents reach every tool over the real MCP protocol here
+      # (adk/agents.py -> McpToolset -> http://mcp-gateway:8000/mcp).
       MCP_GATEWAY_URL: http://mcp-gateway:8000
-      # STR-146: used to refresh the customer's internal-token mid-loop when
-      # it's close to its 60s TTL (see token_manager.py/auth_backend_client.py).
+      # Refreshes the customer's internal-token when it's near its 60s TTL —
+      # the McpToolset header provider calls it (adk/token_context.py).
       AUTH_BACKEND_URL: http://auth-backend:3000
     volumes:
       # Live bind mount, see auth-backend's for why only these subpaths.
@@ -1126,16 +1140,33 @@ services:
       # Identity auth, same local-dev ADC requirement, must match
       # ai-assistant's GCP_PROJECT (both embed into the same pgvector index).
       GCP_PROJECT: ${GCP_PROJECT:-internstore-dev}
+      # Same Vertex region as ai-assistant — see its comment. search_products
+      # embeds the query here, so it draws on the same per-region quota.
+      GCP_LOCATION: ${GCP_LOCATION:-us-central1}
       # Local dev: Vertex auth via the host's ADC, mounted read-only below
       # (Workload Identity in GKE instead). Must be the same project as
       # ai-assistant.
       GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
+      # Phase 3 — the public MCP door. This service runs a small OAuth 2.1
+      # Authorization Server (src/mcp_gateway/oauth/) whose issuer is the
+      # external nginx Gateway; the `/authorize` step federates identity to
+      # the Firebase Auth emulator.
+      # Override with an ngrok/cloudflared origin to connect the public door
+      # to a cloud client (claude.ai): PUBLIC_BASE_URL / PUBLIC_MCP_URL must
+      # match the origin the client actually sees (RFC 8414/9728), or the
+      # OAuth discovery -> token flow fails.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost:8443}
+      PUBLIC_MCP_URL: ${PUBLIC_MCP_URL:-https://localhost:8443/mcp}
+      FIREBASE_IDENTITY_TOOLKIT_URL: http://firebase-emulator:9099/identitytoolkit.googleapis.com
+      FIREBASE_WEB_API_KEY: fake-api-key
     volumes:
       # Live bind mount, see auth-backend's for why only this subpath.
       - ./services/mcp-gateway/src:/app/src
       - ${HOME}/.config/gcloud:/gcloud:ro
     depends_on:
       ai-db:
+        condition: service_healthy
+      firebase-emulator:
         condition: service_healthy
       orders:
         condition: service_started
@@ -1149,8 +1180,9 @@ services:
         condition: service_started
       chat:
         condition: service_started
-    # No nginx route — internal only, same as ai-assistant/notifications.
-    # Only other services (and, in future, an agent runtime) ever call it.
+    # Two doors: the in-mesh `/mcp` (X-Internal-Token, the ADK agents) has no
+    # nginx route; the public OAuth door IS routed — see nginx/nginx.conf's
+    # `/mcp` + `/authorize` &c. locations.
 
   frontend:
     build: ./frontend
@@ -1160,13 +1192,34 @@ services:
       # code, so these must be host-reachable URLs (localhost, not
       # container names) — the browser runs on the host, not inside the
       # compose network.
-      VITE_SERVER_URL: https://localhost:8443/api/
+      #
+      # Origin-relative by default: nginx now serves the SPA at `/` too
+      # (nginx.conf's catch-all `location /`), so the browser loads the app
+      # and calls `/api/` on the SAME origin — works identically whether
+      # that origin is https://localhost:8443 or an ngrok tunnel, with no
+      # rebuild. Override with a full URL only if you serve the SPA straight
+      # off :5180 and want it to reach a different API host.
+      VITE_SERVER_URL: ${VITE_SERVER_URL:-/api/}
+      # Hosts the Vite 6 dev server will answer for when reached through a
+      # proxy/tunnel (it rejects unknown Host headers otherwise). The
+      # leading dot on ".ngrok-free.dev" covers any ngrok subdomain.
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-localhost,.ngrok-free.dev,.ngrok.io,.trycloudflare.com}
+      # HMR's websocket can't infer the public port behind a proxy, so it's
+      # off for the containerised setup (edits still recompile; the browser
+      # just needs a manual refresh). Set to "false" for hot reload when you
+      # hit :5180 directly.
+      VITE_DISABLE_HMR: ${VITE_DISABLE_HMR:-true}
       # Firebase Auth emulator, same project id as firebase-emulator's
       # --project flag below and scripts/seed-firebase-users.py's default.
       # No VITE_FIREBASE_API_KEY here — the emulator accepts any non-empty
       # key (see src/services/firebase/client.ts's fallback).
       VITE_FIREBASE_PROJECT_ID: internstore-dev
-      VITE_FIREBASE_AUTH_EMULATOR_HOST: localhost:9099
+      # "origin" -> the SDK talks to the emulator through the page's own
+      # origin (nginx routes /identitytoolkit.googleapis.com/ &c. to
+      # firebase-emulator:9099), so sign-in works both locally and for a
+      # remote browser hitting the tunnel. Set to "localhost:9099" to go
+      # straight to the emulator instead (only reachable on this host).
+      VITE_FIREBASE_AUTH_EMULATOR_HOST: ${VITE_FIREBASE_AUTH_EMULATOR_HOST:-origin}
       # Publishable key (pk_test_...) -- safe to ship to the browser by
       # design (Stripe Elements needs it client-side to mount the card
       # form), unlike STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET below which
@@ -1213,6 +1266,8 @@ services:
       - telemetry-aggregates
       - security
       - chat
+      # Phase 3: the public MCP door (/api/mcp) proxies here.
+      - mcp-gateway
 
   kafka:
     image: apache/kafka:3.7.0

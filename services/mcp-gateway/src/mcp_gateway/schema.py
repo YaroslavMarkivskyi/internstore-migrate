@@ -7,15 +7,12 @@ class ToolSpec(TypedDict):
     input_schema: dict[str, Any]
 
 
-# Static JSON Schema catalog for every tool in router.TOOL_REGISTRY — drives
-# both GET /mcp/tools and the function-calling schema a client like AI
-# Assistant would build from it (STR-161b: Gemini's FunctionDeclaration/Tool
-# shape now, was OpenAI's `tools` parameter before the Gemini migration —
-# this plain JSON Schema is unchanged either way, see react_loop.py's
-# _to_genai_tools for the translation). Kept separate from the callables
-# themselves (router.py) since a tool's public contract (name/description/
-# args) is Gateway API surface, independent of which domain client happens
-# to implement it.
+# Static JSON Schema catalog for every tool in the registry — the `Tool`
+# list the MCP server advertises on `tools/list` (see mcp_server.py). Kept
+# separate from the callables themselves (router.py) since a tool's public
+# contract (name / description / args) is Gateway API surface, independent of
+# which domain client implements it. Still hand-maintained rather than
+# derived from the method signatures — a noted follow-up (see README).
 TOOL_SPECS: list[ToolSpec] = [
     {
         "name": "get_order_status",

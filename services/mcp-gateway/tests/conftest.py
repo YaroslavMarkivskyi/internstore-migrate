@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 import jwt
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -44,3 +46,27 @@ async def client(app):
 @pytest.fixture
 def admin_token() -> str:
     return mint_internal_token(sub="mcp-gateway", role="admin")
+
+
+@asynccontextmanager
+async def mcp_session(app, token: str | None, extra_headers: dict | None = None):
+    """A real MCP client session over the in-process ASGI app, talking to the
+    Streamable HTTP endpoint at /mcp."""
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+
+    headers = {"X-Internal-Token": token} if token else {}
+    headers.update(extra_headers or {})
+
+    def _factory(*, headers=None, timeout=None, auth=None) -> AsyncClient:
+        return AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test", headers=headers, timeout=timeout
+        )
+
+    async with (
+        app.router.lifespan_context(app),
+        streamablehttp_client("http://test/mcp", headers=headers, httpx_client_factory=_factory) as (r, w, _),
+        ClientSession(r, w) as session,
+    ):
+        await session.initialize()
+        yield session

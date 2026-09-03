@@ -6,33 +6,69 @@ so any MCP-compatible AI agent — starting with the AI Assistant — calls one
 consistent tool registry instead of a hand-rolled HTTP client per domain
 service.
 
-Internal-only: no nginx route, never reachable from the browser. Every
-request (from AI Assistant, or any future client) must carry the same
-`X-Internal-Token` every other domain service requires. **STR-146:** the
-Gateway no longer mints its own token for outbound calls — it forwards the
-caller's own already-verified token unchanged to whichever domain service a
-tool call fans out to (see `src/mcp_gateway/auth.py`'s
-`get_raw_internal_token`). This is what makes `add_to_cart`/`get_cart`'s
-ownership check mean anything: a tool call runs as whoever actually called
-`/mcp/tools/call` (a customer, a guest, an admin, or AI Assistant's own
-`assistant`-role token), never as a fixed Gateway identity.
+One `/mcp` route, two doors, one tool-execution core (`src/mcp_gateway/mcp_server.py`'s `_identify`):
 
-## Protocol endpoints
+- **in-mesh** — an `X-Internal-Token` (the AI Assistant's ADK agents, or any
+  in-mesh client). Verified per request, forwarded downstream unchanged so
+  `add_to_cart`/`get_cart` ownership resolves against the real customer, not
+  the Gateway (STR-146). No nginx route.
+- **public** — an OAuth 2.1 access token this service issues itself (see
+  below). Fronted by the external nginx Gateway. Always the **customer** tool
+  tier — ops/telemetry/security tools are mesh-only.
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/mcp` | Server info: name, version, capabilities |
-| GET | `/mcp/tools` | Full tool catalog with JSON Schema input for each tool |
-| POST | `/mcp/tools/call` | Execute a tool: `{"name": "...", "arguments": {...}}` |
-| GET | `/mcp/sse` | SSE handshake — emits an `endpoint` event pointing back at `/mcp/tools/call` |
+## Protocol endpoint
 
-```bash
-curl -s http://mcp-gateway:8000/mcp/tools -H "X-Internal-Token: $TOKEN" | jq
+A real [MCP](https://modelcontextprotocol.io) server (`mcp` 1.x,
+`mcp.server.lowlevel.Server`) over the **Streamable HTTP** transport at
+`POST /mcp` (JSON-RPC: `initialize`, `tools/list`, `tools/call`). `mcp` is
+pinned to 1.x because the AI Assistant consumes this through Google ADK's
+`McpToolset`, which needs the 1.x client.
 
-curl -s http://mcp-gateway:8000/mcp/tools/call \
-  -H "X-Internal-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "get_order_status", "arguments": {"order_id": "<uuid>"}}'
+In-mesh, with an internal token:
+
+```python
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+async with streamablehttp_client(
+    "http://mcp-gateway:8000/mcp", headers={"X-Internal-Token": TOKEN}
+) as (r, w, _):
+    async with ClientSession(r, w) as s:
+        await s.initialize()
+        print(await s.list_tools())
 ```
+
+### Public door — OAuth 2.1
+
+The Gateway runs a small **OAuth 2.1 Authorization Server** co-located with
+the resource server (`src/mcp_gateway/oauth/`). Issuer = the external nginx
+Gateway (`PUBLIC_BASE_URL`). It implements what a spec-compliant MCP client
+(Claude Desktop, MCP Inspector) needs to connect on its own:
+
+| Endpoint | Purpose |
+|---|---|
+| `/.well-known/oauth-protected-resource/mcp` | RFC 9728 — resource → authorization server |
+| `/.well-known/oauth-authorization-server` | RFC 8414 — AS metadata |
+| `/register` | RFC 7591 — dynamic client registration |
+| `/authorize` → `/oauth/login` → redirect | RFC 6749 §4.1 + PKCE; identity **federated to Firebase** (Identity Toolkit REST / the emulator) |
+| `/token` | authorization-code + refresh; RS256 JWT, `aud` = the MCP resource, scope `mcp:shopping` |
+| `/.well-known/jwks.json` | RFC 7517 — verification key |
+
+`RequireAuthMiddleware` guards `/mcp` for non-internal callers and answers
+`401` + `WWW-Authenticate: Bearer resource_metadata="…"`. A validated token's
+`sub` → a freshly minted internal token for the downstream fan-out; the
+scope pins the tier to `customer` whatever the user's Firebase role.
+
+nginx rate-limits `/mcp` (`limit_req_zone mcp_public`, 60 r/min per IP).
+See [scripts/test-mcp-public.sh](../../scripts/test-mcp-public.sh) for the
+full flow driven with `curl`.
+
+**Demo-scale shortcuts:** clients/codes/refresh tokens are in-memory (a
+restart = re-register + re-auth); the RS256 key is ephemeral unless
+`OAUTH_SIGNING_KEY_PEM` is set; the Firebase ID token from the login step is
+decoded, not cryptographically verified (the password exchange is the auth,
+and the emulator signs with `alg: none`) — production would verify via the
+Firebase Admin SDK / Google JWKS.
 
 ## Tool catalog
 
@@ -91,29 +127,19 @@ every other inter-service call in this repo is.
 
 ## Usage from AI Assistant
 
-**STR-146:** AI Assistant's shopping ReAct loop (`react_loop.py`) is this
-service's first real consumer — it fetches `GET /mcp/tools`, filters to
-exactly `search_products`/`get_cart`/`add_to_cart`/`remove_from_cart`, builds
-Gemini's `FunctionDeclaration`/`Tool` request shape from those specs
-(**STR-161b:** was OpenAI's function-calling `tools` parameter before the
-Gemini migration — `TOOL_SPECS`' plain JSON Schema in `schema.py` is
-unchanged either way, only the caller-side translation differs), and forwards
-the customer's own internal-token (refreshed via auth-backend if the loop
-outlives its 60s TTL) on every `POST /mcp/tools/call`. The Gateway's full
-16-tool catalog still exists for other admin-facing use, but nothing outside
-that 4-tool subset is ever offered to the shopping agent's model, and no
-checkout/payment tool exists in the registry at all — see
+AI Assistant's shopping + ops agents (Google ADK `LlmAgent`) are this
+service's consumers, each via an ADK `McpToolset` pointed at `/mcp` with a
+`tool_filter` — the shopping agent sees only the cart-scoped and
+customer-safe reads, the ops agent only the read-only admin tools. The
+customer's own internal-token is forwarded on every call (the toolset's
+`header_provider` refreshes it against auth-backend when it's near its 60s
+TTL). No checkout/payment tool exists in the registry at all — see
 `src/mcp_gateway/router.py`'s `build_tool_registry` for the enforced
 boundary. This boundary is structural (no registry entry to route to), not a
-prompt instruction or a model-specific behavior, so it holds the same way
-regardless of which model calls it — re-verified specifically against Gemini
-in `tests/test_checkout_tool_absent.py` and
-`services/ai-assistant/tests/test_react_loop.py`'s
-`test_a_hallucinated_checkout_tool_call_is_surfaced_as_an_error_not_executed_as_success`,
-plus the live adversarial-prompt check in
-`scripts/test-shopping-agent-gemini-checkout.sh`. Any MCP-compatible client
-(Claude Desktop, a custom agent) can otherwise call this service directly:
-fetch `GET /mcp/tools` for the schema, then `POST /mcp/tools/call` per
+prompt instruction, so it holds regardless of which model calls it —
+verified in `tests/test_checkout_tool_absent.py` and
+`services/ai-assistant/evals/adk/test_adk_evals.py`. Any MCP-compatible
+client can otherwise call this service directly over the `/mcp` endpoint per
 invocation.
 
 ## Gemini migration (STR-161b)
@@ -148,12 +174,18 @@ docker compose up -d --build mcp-gateway
   status/age filter on `GET /orders/admin` — both tools pull the admin list
   and filter in this service instead. Fine for a low-frequency, admin-facing
   tool; would need a real query param upstream if this became a hot path.
-- **No JSON Schema argument validation before dispatch.** `POST
-  /mcp/tools/call` relies on the target function's own required-keyword
-  arguments (`TypeError` → `422`) rather than validating `arguments` against
-  each tool's declared `input_schema` up front — the schema in `GET
-  /mcp/tools` is documentation-quality, not a validation gate yet.
-- **`/mcp/sse` is a one-shot handshake, not a live push channel.** It emits
-  a single `endpoint` event and lets the client know where to `POST` tool
-  calls; results still return over that POST's own response body, not
-  streamed back down the SSE connection.
+- **No JSON Schema argument validation before dispatch.** The `tools/call`
+  handler runs with `validate_input=False` and relies on the target
+  function's own required-keyword arguments (bad shape → an `isError` tool
+  result) rather than validating `arguments` against each tool's declared
+  `inputSchema` up front — deliberately, so `tools/orders.py`'s `_require_uuid`
+  / `_require_sane_quantity` can return a message the model can actually act
+  on instead of a raw jsonschema error.
+- **`schema.py` `TOOL_SPECS` is still hand-maintained** rather than generated
+  from the tool-client method signatures — a known "generate it" follow-up.
+- **The public OAuth AS is demo-scale** — in-memory client/code/token
+  stores, an ephemeral signing key, and the federated Firebase ID token is
+  decoded rather than verified. See the "Public door — OAuth 2.1" section
+  above for the full list. The *protocol* is complete (DCR, auth-code+PKCE,
+  refresh, metadata, JWKS); a production deployment would swap the storage +
+  key + Firebase verification, or front it with a real AS (Hydra / Auth0).

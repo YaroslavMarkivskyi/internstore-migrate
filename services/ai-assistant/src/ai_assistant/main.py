@@ -1,15 +1,30 @@
 import asyncio
 import logging
-import uuid
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 from google import genai
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 
+from ai_assistant.adk.agents import (
+    OPS_AGENT_NAME,
+    SHOPPING_AGENT_NAME,
+    build_guest_agent,
+    build_ops_agent,
+    build_shopping_agent,
+    close_toolsets,
+)
+from ai_assistant.adk.memory import PgVectorMemoryService
+from ai_assistant.adk.prompts import ADMIN_FALLBACK_REPLY, FALLBACK_REPLY
+from ai_assistant.adk.session import prepare_session, viewing_context_note
+from ai_assistant.adk.streaming import run_agent_stream, stream_agent_reply
+from ai_assistant.adk.token_context import make_header_provider, reset_request_token, set_request_token
 from ai_assistant.agent import RATE_LIMIT_MESSAGE, check_and_increment_rate_limit, get_mode
 from ai_assistant.auth import InternalClaims, get_raw_internal_token, verify_internal_token
 from ai_assistant.auth_backend_client import AuthBackendClient
@@ -18,17 +33,10 @@ from ai_assistant.config import Settings, load_settings
 from ai_assistant.consumers import catalog_events, chat_events
 from ai_assistant.db import make_session_factory
 from ai_assistant.kafka import run_consumer_loop
-from ai_assistant.mcp_client import MCPGatewayClient
 from ai_assistant.observability import setup_observability
-from ai_assistant.orders_client import OrdersClient
-from ai_assistant.react_loop import Reset, run_admin_agent_stream, run_shopping_agent_stream
-
-# Batch streamed deltas up to roughly this many characters before pushing
-# one to Chat — Gemini streams word-by-word, and one HTTP round trip per
-# word through Chat's gate is needless chatter for no perceptible UX gain.
-_DELTA_FLUSH_CHARS = 40
 from ai_assistant.redis_client import make_redis_client
-from ai_assistant.token_manager import RefreshableToken
+
+APP_NAME = "ai-assistant"
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +46,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
 
     chat_dispatch = chat_events.make_dispatch(
-        session_factory=app.state.session_factory,
         redis=app.state.redis,
-        genai_client=app.state.genai_client,
+        session_service=app.state.adk_session_service,
+        guest_runner=app.state.guest_runner,
         chat_client=app.state.chat_client,
-        orders_client=app.state.orders_client,
         settings=settings,
     )
     catalog_dispatch = catalog_events.make_dispatch(
@@ -70,6 +77,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await close_toolsets(app.state.shopping_agent)
+        await close_toolsets(app.state.ops_agent)
+        await close_toolsets(app.state.guest_agent)
         await app.state.redis.aclose()
 
 
@@ -92,33 +102,6 @@ class AdminAgentRequest(BaseModel):
     message: str
 
 
-async def _stream_agent_reply(chat_client, room_id: str, events) -> None:
-    """Drain a react_loop stream into Chat: batched `message_delta` frames,
-    a `message_reset` on Reset, one persisted `message_done` at the end."""
-    stream_id = str(uuid.uuid4())
-    full: list[str] = []
-    pending: list[str] = []
-
-    async def _flush() -> None:
-        if pending:
-            await chat_client.stream_delta(room_id, stream_id, "".join(pending))
-            pending.clear()
-
-    async for event in events:
-        if isinstance(event, Reset):
-            full.clear()
-            pending.clear()
-            await chat_client.stream_reset(room_id, stream_id)
-            continue
-        full.append(event.text)
-        pending.append(event.text)
-        if sum(len(part) for part in pending) >= _DELTA_FLUSH_CHARS:
-            await _flush()
-
-    await _flush()
-    await chat_client.stream_done(room_id, stream_id, "".join(full))
-
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     setup_observability("ai-assistant")
@@ -137,16 +120,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         enterprise=True, project=settings.gcp_project, location=settings.gcp_location
     )
     app.state.chat_client = ChatClient(settings.chat_service_url, 10.0, settings.internal_token_secret)
-    app.state.orders_client = OrdersClient(settings.orders_service_url, 10.0, settings.internal_token_secret)
-    # STR-146: this service's first actual MCP Gateway caller, and its first
-    # caller of auth-backend's refresh path — both only ever exercised by
-    # POST /agent/shopping below.
-    # 30s, not 10s: a search_products call makes the Gateway do a Gemini
-    # embedding round-trip, and the first one after a cold start (ADC token
-    # fetch + Vertex cold path) can take ~11s — well past a 10s timeout,
-    # whose httpx.ReadTimeout surfaces to the model as an empty-string error.
-    app.state.mcp_client = MCPGatewayClient(settings.mcp_gateway_url, 30.0)
     app.state.auth_backend_client = AuthBackendClient(settings.auth_backend_url, 10.0)
+
+    # ADK talks to Gemini through google-genai; point it at the same Vertex
+    # project/location as app.state.genai_client (ADC auth, no key).
+    os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
+    os.environ.setdefault("GOOGLE_CLOUD_PROJECT", settings.gcp_project)
+    os.environ.setdefault("GOOGLE_CLOUD_LOCATION", settings.gcp_location)
+
+    # The shopping + ops agents (ADK LlmAgent). Their tools are the MCP
+    # Gateway's, reached over the real MCP protocol; the header provider mints
+    # a fresh X-Internal-Token per MCP session from the ContextVar the agent
+    # endpoints set (see adk/token_context.py).
+    header_provider = make_header_provider(
+        app.state.auth_backend_client, settings.token_refresh_margin_seconds
+    )
+    app.state.shopping_agent = build_shopping_agent(
+        model=settings.chat_model,
+        mcp_gateway_url=settings.mcp_gateway_url,
+        header_provider=header_provider,
+        with_memory=settings.memory_enabled,
+    )
+    app.state.ops_agent = build_ops_agent(
+        model=settings.chat_model, mcp_gateway_url=settings.mcp_gateway_url, header_provider=header_provider
+    )
+    # The guest support agent — signed-out chat-widget visitors, driven by
+    # the chat-events Kafka consumer. Read-only catalogue + help tools, no
+    # memory; the consumer mints a guest-role token per message so the
+    # Gateway pins it to the guest tier (see consumers/chat_events.py).
+    app.state.guest_agent = build_guest_agent(
+        model=settings.chat_model, mcp_gateway_url=settings.mcp_gateway_url, header_provider=header_provider
+    )
+    app.state.adk_session_service = InMemorySessionService()
+    # Cross-session customer memory (durable prefs), pgvector-backed — the
+    # shopping agent's PreloadMemoryTool reads it each turn, and the endpoint
+    # feeds finished conversations back in. Ops agent gets no memory.
+    # MEMORY_ENABLED=false turns it off entirely (each turn otherwise costs
+    # several extra Gemini embedding calls — a real drain on a tight Vertex
+    # quota, and irrelevant to a search-focused demo).
+    app.state.memory_service = (
+        PgVectorMemoryService(
+            app.state.session_factory,
+            app.state.genai_client,
+            chat_model=settings.chat_model,
+            embedding_model=settings.embedding_model,
+            embedding_dimensions=settings.embedding_dimensions,
+        )
+        if settings.memory_enabled
+        else None
+    )
+    app.state.shopping_runner = Runner(
+        app_name=APP_NAME,
+        agent=app.state.shopping_agent,
+        session_service=app.state.adk_session_service,
+        memory_service=app.state.memory_service,
+    )
+    app.state.ops_runner = Runner(
+        app_name=APP_NAME, agent=app.state.ops_agent, session_service=app.state.adk_session_service
+    )
+    app.state.guest_runner = Runner(
+        app_name=APP_NAME, agent=app.state.guest_agent, session_service=app.state.adk_session_service
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -193,40 +227,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.chat_client.set_mode(payload.room_id, "human")
             return {"status": "rate_limited"}
 
-        # STR-148: without this, every message was handled as a completely
-        # isolated turn — see react_loop.py's own docstring for the bug
-        # this caused ("add it to my cart" right after a search had no
-        # antecedent for "it"), found via live verification, not any unit
-        # test (they all mock a single self-contained turn).
+        # STR-148: without this the agent handles every message as a
+        # completely isolated turn ("add it to my cart" right after a search
+        # has no antecedent for "it"). The history seeds the ADK session —
+        # see adk/session.prepare_session.
         history = await app.state.chat_client.get_recent_messages(
             payload.room_id, settings.conversation_history_limit
         )
 
-        # STR-XXX: stream the reply to Chat (and on to the customer's
-        # WebSocket) as the model produces it — see _stream_agent_reply.
-        await _stream_agent_reply(
-            app.state.chat_client,
-            payload.room_id,
-            run_shopping_agent_stream(
-                genai_client=app.state.genai_client,
-                mcp_client=app.state.mcp_client,
-                auth_backend_client=app.state.auth_backend_client,
-                chat_model=settings.chat_model,
-                message=payload.message,
+        session = await prepare_session(
+            app.state.adk_session_service,
+            app_name=APP_NAME,
+            user_id=claims.sub,
+            agent_name=SHOPPING_AGENT_NAME,
+            history=history,
+            context_note=viewing_context_note(
                 viewing_product_id=payload.viewing_product_id,
                 viewing_category_id=payload.viewing_category_id,
-                token=RefreshableToken(token),
-                history=history,
-                max_iterations=settings.max_react_iterations,
-                refresh_margin_seconds=settings.token_refresh_margin_seconds,
             ),
         )
+
+        # Stream the reply to Chat (and on to the customer's WebSocket) as the
+        # model produces it — see adk.streaming.stream_agent_reply.
+        token_handle = set_request_token(token)
+        try:
+            await stream_agent_reply(
+                app.state.chat_client,
+                payload.room_id,
+                run_agent_stream(
+                    app.state.shopping_runner,
+                    user_id=claims.sub,
+                    session_id=session.id,
+                    message=payload.message,
+                    author=SHOPPING_AGENT_NAME,
+                    max_llm_calls=settings.max_react_iterations * 2,
+                    fallback_reply=FALLBACK_REPLY,
+                ),
+                fallback=FALLBACK_REPLY,
+            )
+        finally:
+            reset_request_token(token_handle)
+
+        # Feed the finished conversation back into memory — best-effort, the
+        # reply has already been delivered. PgVectorMemoryService distils any
+        # durable customer facts and stores them for the next session.
+        if app.state.memory_service is not None:
+            updated = await app.state.adk_session_service.get_session(
+                app_name=APP_NAME, user_id=claims.sub, session_id=session.id
+            )
+            if updated is not None:
+                await app.state.memory_service.add_session_to_memory(updated)
         return {"status": "ok"}
 
     # STR-XXX: the internal ops assistant. Called by Chat (ws/room.py) only
     # when an admin sends a message in their own ops room (room_ops_<sub>),
     # forwarding the admin's own internal token. Read-only tools only (see
-    # react_loop.ADMIN_TOOL_NAMES); this handler independently rejects any
+    # adk.prompts.ADMIN_TOOL_NAMES); this handler independently rejects any
     # non-admin token as a fail-closed second check.
     @app.post("/agent/admin")
     async def admin_agent(
@@ -247,21 +303,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         history = await app.state.chat_client.get_recent_messages(
             payload.room_id, settings.conversation_history_limit
         )
-        await _stream_agent_reply(
-            app.state.chat_client,
-            payload.room_id,
-            run_admin_agent_stream(
-                genai_client=app.state.genai_client,
-                mcp_client=app.state.mcp_client,
-                auth_backend_client=app.state.auth_backend_client,
-                chat_model=settings.chat_model,
-                message=payload.message,
-                token=RefreshableToken(token),
-                history=history,
-                max_iterations=settings.max_react_iterations,
-                refresh_margin_seconds=settings.token_refresh_margin_seconds,
-            ),
+        session = await prepare_session(
+            app.state.adk_session_service,
+            app_name=APP_NAME,
+            user_id=claims.sub,
+            agent_name=OPS_AGENT_NAME,
+            history=history,
         )
+        token_handle = set_request_token(token)
+        try:
+            await stream_agent_reply(
+                app.state.chat_client,
+                payload.room_id,
+                run_agent_stream(
+                    app.state.ops_runner,
+                    user_id=claims.sub,
+                    session_id=session.id,
+                    message=payload.message,
+                    author=OPS_AGENT_NAME,
+                    max_llm_calls=settings.max_react_iterations * 2,
+                    fallback_reply=ADMIN_FALLBACK_REPLY,
+                ),
+                fallback=ADMIN_FALLBACK_REPLY,
+            )
+        finally:
+            reset_request_token(token_handle)
         return {"status": "ok"}
 
     return app

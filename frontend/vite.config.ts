@@ -23,6 +23,26 @@ export default defineConfig(({ mode }) => {
   return {
     define: processEnv,
     plugins: [react()],
+    // Dev server. When the app is reached through a reverse proxy / tunnel
+    // (nginx :8443, ngrok) rather than :5180 directly, Vite 6 rejects the
+    // unknown Host unless it's listed here, and HMR's own socket can't
+    // guess the public port — so allow the proxy hosts and (optionally)
+    // switch HMR off. Both come from the environment (see docker-compose).
+    server: {
+      // loadEnv() only reads .env files, so also check process.env for the
+      // values docker-compose injects.
+      allowedHosts: (
+        process.env.VITE_ALLOWED_HOSTS ??
+        env.VITE_ALLOWED_HOSTS ??
+        'localhost'
+      )
+        .split(',')
+        .map(h => h.trim()),
+      hmr:
+        (process.env.VITE_DISABLE_HMR ?? env.VITE_DISABLE_HMR) === 'true'
+          ? false
+          : true,
+    },
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),

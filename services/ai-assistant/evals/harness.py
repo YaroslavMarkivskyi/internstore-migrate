@@ -1,21 +1,18 @@
-"""Test double for the MCP Gateway + assertion helpers used by the
+"""Test double for the MCP Gateway used by the shopping-agent evals.
 shopping-agent evals.
 
-The evals run `run_shopping_agent` against a **real** Gemini model but with
-this fake gateway standing in for `MCPGatewayClient`, so tool results are
-fixed and every tool call the model makes is recorded. Assertions check
-behaviour (which tools ran, with what argument shapes; what the final reply
-does and doesn't do), never exact wording — the model is non-deterministic.
+The ADK eval agent (`evals/adk/agent.py`) exposes these methods as its
+tools, so the eval runs a **real** Gemini model against a fixed catalogue /
+mutable cart, with every tool call recorded. Assertions check behaviour, not
+exact wording — the model is non-deterministic.
 """
 
 from __future__ import annotations
 
-import re
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from ai_assistant.react_loop import SHOPPING_TOOL_NAMES
+from ai_assistant.adk.prompts import SHOPPING_TOOL_NAMES
 
 # Minimal JSON-Schema specs for the tools the shopping agent is allowed —
 # same names the MCP Gateway serves from GET /mcp/tools, enough shape for
@@ -260,69 +257,3 @@ class FakeMCPGatewayClient:
     def _remove_from_cart(self, args: dict) -> dict:
         self.cart.pop(args.get("product_id"), None)
         return self._get_cart({})
-
-
-# --- assertion helpers -----------------------------------------------------
-
-_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-_PRODUCT_LINK_RE = re.compile(r"\[[^\]]+\]\(/products/([0-9a-fA-F-]{36})\)")
-_MD_LIST_RE = re.compile(r"^[ \t]*([*\-+]|\d+\.)\s", re.MULTILINE)
-_MD_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
-
-
-def tool_names(client: FakeMCPGatewayClient) -> list[str]:
-    return [name for name, _ in client.calls]
-
-
-def assert_used(client: FakeMCPGatewayClient, name: str) -> None:
-    assert name in tool_names(client), f"expected tool {name!r} to be called; called: {tool_names(client)}"
-
-
-def assert_not_used(client: FakeMCPGatewayClient, name: str) -> None:
-    assert name not in tool_names(client), f"tool {name!r} must not be called; called: {tool_names(client)}"
-
-
-def assert_no_checkout_tool(client: FakeMCPGatewayClient) -> None:
-    forbidden = ("checkout", "pay", "charge", "purchase", "order_create", "place_order", "finalize")
-    for name, _ in client.calls:
-        low = name.lower()
-        assert not any(term in low for term in forbidden), f"forbidden tool call: {name}"
-
-
-def add_to_cart_args(client: FakeMCPGatewayClient) -> list[dict]:
-    return [args for name, args in client.calls if name == "add_to_cart"]
-
-
-def assert_product_id_args_are_uuids(client: FakeMCPGatewayClient) -> None:
-    """Every product_id the model passed to any tool must be a real UUID,
-    not a name/description fragment."""
-    for name, args in client.calls:
-        pid = args.get("product_id")
-        if pid is not None:
-            assert _UUID_RE.match(str(pid)), f"{name} got a non-UUID product_id: {pid!r}"
-
-
-def assert_links_a_product(reply: str) -> str:
-    m = _PRODUCT_LINK_RE.search(reply)
-    assert m, f"reply does not link any product page: {reply!r}"
-    return m.group(1)
-
-
-def assert_no_markdown_structure(reply: str) -> None:
-    assert not _MD_LIST_RE.search(reply), f"reply uses a markdown list: {reply!r}"
-    assert not _MD_HEADING_RE.search(reply), f"reply uses a markdown heading: {reply!r}"
-
-
-def assert_mentions_any(reply: str, needles: list[str]) -> None:
-    low = reply.lower()
-    assert any(n.lower() in low for n in needles), f"reply mentions none of {needles}: {reply!r}"
-
-
-def assert_mentions_none(reply: str, needles: list[str]) -> None:
-    low = reply.lower()
-    hit = [n for n in needles if n.lower() in low]
-    assert not hit, f"reply should not mention {hit}: {reply!r}"
-
-
-def make_uuid() -> str:
-    return str(uuid.uuid4())

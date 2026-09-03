@@ -2,7 +2,6 @@ import uuid
 
 from google import genai
 from google.genai import types
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_assistant.models import ProductEmbedding
@@ -73,16 +72,3 @@ async def delete_product_embedding(session: AsyncSession, payload: dict) -> None
         await session.delete(existing)
 
 
-async def search_similar_products(
-    session: AsyncSession, client: genai.Client, model: str, query_text: str, dimensions: int, limit: int
-) -> list[dict]:
-    vector = await embed_text(client, model, query_text, dimensions)
-    result = await session.execute(
-        select(ProductEmbedding.product_id, ProductEmbedding.name, ProductEmbedding.description)
-        # pgvector's <-> operator (Euclidean/L2 distance) — nearest first.
-        .order_by(ProductEmbedding.embedding.l2_distance(vector)).limit(limit)
-    )
-    return [
-        {"product_id": str(row.product_id), "name": row.name, "description": row.description}
-        for row in result
-    ]

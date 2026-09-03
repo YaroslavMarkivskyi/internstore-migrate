@@ -22,8 +22,13 @@ ROLE = "assistant"
 # internal-token forwarded in the header — this mirrors every other domain
 # service's copy of the same verifier (e.g. services/orders/src/orders/auth.py)
 # for that route specifically.
-def mint_internal_token(secret: str) -> str:
-    return jwt.encode({"sub": SUB, "role": ROLE, "iss": ISSUER}, secret, algorithm="HS256")
+def mint_internal_token(secret: str, *, sub: str = SUB, role: str = ROLE) -> str:
+    """Mint an internal token. Defaults to this service's own identity
+    (`ai-assistant` / `assistant`), used on outbound calls it makes as
+    itself. The guest support agent overrides both to present the guest's
+    own session id with role `guest`, so the Gateway pins it to the
+    read-only guest tool tier (see mcp_gateway/authz.py)."""
+    return jwt.encode({"sub": sub, "role": role, "iss": ISSUER}, secret, algorithm="HS256")
 
 
 class InternalClaims(BaseModel):

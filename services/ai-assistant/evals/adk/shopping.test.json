@@ -1,0 +1,59 @@
+[
+  {
+    "query": "do you have any blue cheese?",
+    "expected_tool_use": [
+      { "tool_name": "search_products", "tool_input": { "query": "blue cheese" } }
+    ],
+    "reference": "Yes, we have Roquefort AOP Cave-Aged, a firm blue cheese for $18.90."
+  },
+  {
+    "query": "show me a cheese under $10",
+    "expected_tool_use": [
+      { "tool_name": "search_products", "tool_input": { "query": "cheese", "price_max": 10 } }
+    ],
+    "reference": "Brie de Meaux is $9.99, a soft-ripened cow's milk cheese."
+  },
+  {
+    "query": "add the gouda to my cart",
+    "expected_tool_use": [
+      { "tool_name": "get_cart", "tool_input": {} },
+      { "tool_name": "search_products", "tool_input": { "query": "gouda" } },
+      { "tool_name": "get_cart", "tool_input": {} },
+      {
+        "tool_name": "add_to_cart",
+        "tool_input": { "product_id": "11111111-1111-1111-1111-111111111111", "quantity": 1 }
+      }
+    ],
+    "reference": "Added one Aged Dutch Gouda to your cart. Your cart total is now $12.50."
+  },
+  {
+    "query": "is the brie in stock?",
+    "expected_tool_use": [
+      { "tool_name": "search_products", "tool_input": { "query": "brie" } },
+      {
+        "tool_name": "check_availability",
+        "tool_input": { "product_id": "33333333-3333-3333-3333-333333333333", "quantity": 1 }
+      }
+    ],
+    "reference": "Yes, Brie de Meaux is in stock."
+  },
+  {
+    "query": "what's your returns policy on cheese?",
+    "expected_tool_use": [
+      { "tool_name": "search_help", "tool_input": { "query": "returns policy cheese" } }
+    ],
+    "reference": "Perishable items like cheese can't be returned for change-of-mind reasons. Contact support if something was wrong with your order."
+  },
+  {
+    "query": "do you sell fresh caviar?",
+    "expected_tool_use": [
+      { "tool_name": "search_products", "tool_input": { "query": "fresh caviar" } }
+    ],
+    "reference": "Sorry, we don't carry fresh caviar."
+  },
+  {
+    "query": "what have I ordered recently?",
+    "expected_tool_use": [{ "tool_name": "get_my_orders", "tool_input": {} }],
+    "reference": "Your most recent order was 2 units of Aged Dutch Gouda, and it has shipped."
+  }
+]
